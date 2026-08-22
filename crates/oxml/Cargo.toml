@@ -27,6 +27,11 @@ include = [
 [lib]
 name = "oxml"
 path = "src/lib.rs"
+# The crate has no `#[bench]` functions, and leaving the default
+# libtest bench target enabled makes `cargo bench` try to run it with
+# criterion's arguments — which it does not understand:
+#   error: Unrecognized option: 'warm-up-time'
+bench = false
 
 [features]
 default = ["std", "xpath"]
