@@ -1,0 +1,60 @@
+[package]
+name = "oxml"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "A pure Rust XML toolkit with zero unsafe code: parsing, an ergonomic tree, and XPath"
+documentation = "https://docs.rs/oxml"
+readme = "README.md"
+keywords = ["xml", "xpath", "parser", "tree", "safe"]
+categories = ["parser-implementations", "encoding", "data-structures"]
+autoexamples = false
+include = [
+    "/benches/**",
+    "/Cargo.toml",
+    "/examples/**",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/README.md",
+    "/src/**",
+    "/tests/**",
+]
+
+[lib]
+name = "oxml"
+path = "src/lib.rs"
+
+[features]
+default = ["std", "xpath"]
+std = []
+# XPath 1.0 evaluation. Separable because the tree alone is useful, and
+# a caller who only parses should not pay for the engine.
+xpath = []
+
+[dependencies]
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "parse"
+harness = false
+
+[[bench]]
+name = "xpath"
+harness = false
+
+[[example]]
+name = "parse_and_query"
+path = "examples/parse_and_query.rs"
+# The example demonstrates XPath and uses `std::error::Error`, so it is
+# only meaningful with both features. Declaring that here means
+# `--no-default-features` skips it instead of failing to compile.
+required-features = ["std", "xpath"]
+
+[lints]
+workspace = true

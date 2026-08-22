@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --all-features
+      - name: Test without default features
+        # The crate is `no_std`-capable and XPath is optional; if this
+        # is not built, both claims rot silently.
+        run: cargo test --no-default-features
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Docs
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          V=$(grep -m1 '^rust-version' Cargo.toml | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build at the declared MSRV
+        run: cargo build --all-features
+
+  unsafe:
+    name: Forbid unsafe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # `#![forbid(unsafe_code)]` already fails the build, but grepping
+      # for the attribute catches its removal in a diff, which is the
+      # change that would silently drop the guarantee.
+      - name: The crate must forbid unsafe code
+        run: |
+          if ! grep -q '#!\[forbid(unsafe_code)\]' crates/oxml/src/lib.rs; then
+            echo "::error::#![forbid(unsafe_code)] is missing from lib.rs"
+            exit 1
+          fi
+          echo "unsafe_code is forbidden"
+
+  bench:
+    name: Benchmarks compile and run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # A short measurement: this proves the benchmarks still run and
+      # produce numbers, without pretending a shared runner gives
+      # trustworthy timings.
+      - name: Run benchmarks briefly
+        run: cargo bench -- --warm-up-time 1 --measurement-time 2
+
+  examples:
+    name: Examples run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Every example must run
+        run: |
+          for f in crates/oxml/examples/*.rs; do
+            name=$(basename "$f" .rs)
+            echo "--- $name ---"
+            cargo run --example "$name"
+          done

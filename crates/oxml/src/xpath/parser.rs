@@ -1,0 +1,494 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Copyright (c) 2026 oxml. All rights reserved.
+
+//! Compiling `XPath` text into an [`Expr`].
+//!
+//! A recursive-descent parser following the `XPath` 1.0 grammar's
+//! precedence ladder: `or` binds loosest, then `and`, equality,
+//! relational, additive, multiplicative, unary, and finally paths.
+
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use super::ast::{Axis, BinaryOp, Expr, NodeTest, Step};
+
+/// Why an `XPath` expression could not be compiled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XPathError {
+    /// A human-readable description.
+    pub message: String,
+    /// Byte offset into the expression.
+    pub offset: usize,
+}
+
+impl core::fmt::Display for XPathError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "at {}: {}", self.offset, self.message)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for XPathError {}
+
+struct P<'a> {
+    s: &'a str,
+    b: &'a [u8],
+    i: usize,
+}
+
+/// Compile an `XPath` 1.0 expression.
+///
+/// # Errors
+///
+/// Returns [`XPathError`] if the expression is malformed.
+pub fn compile(expr: &str) -> Result<Expr, XPathError> {
+    let mut p = P {
+        s: expr,
+        b: expr.as_bytes(),
+        i: 0,
+    };
+    let e = p.parse_or()?;
+    p.ws();
+    if p.i < p.b.len() {
+        return Err(p.err("unexpected trailing input"));
+    }
+    Ok(e)
+}
+
+impl P<'_> {
+    fn err(&self, m: &str) -> XPathError {
+        XPathError {
+            message: m.to_owned(),
+            offset: self.i,
+        }
+    }
+
+    fn ws(&mut self) {
+        while self.i < self.b.len()
+            && matches!(self.b[self.i], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            self.i += 1;
+        }
+    }
+
+    fn eat(&mut self, tok: &str) -> bool {
+        self.ws();
+        if self.s[self.i..].starts_with(tok) {
+            self.i += tok.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Match a word operator, ensuring it is not the prefix of a name.
+    ///
+    /// Without the boundary check, `andover` would lex as `and` +
+    /// `over`, and a path step named `divide` would become a division.
+    fn eat_word(&mut self, w: &str) -> bool {
+        self.ws();
+        let rest = &self.s[self.i..];
+        if let Some(after) = rest.strip_prefix(w) {
+            if after.chars().next().is_none_or(|c| !is_name_char(c)) {
+                self.i += w.len();
+                return true;
+            }
+        }
+        false
+    }
+
+    fn peek(&mut self) -> Option<u8> {
+        self.ws();
+        self.b.get(self.i).copied()
+    }
+
+    fn parse_or(&mut self) -> Result<Expr, XPathError> {
+        let mut lhs = self.parse_and()?;
+        while self.eat_word("or") {
+            let rhs = self.parse_and()?;
+            lhs = bin(BinaryOp::Or, lhs, rhs);
+        }
+        Ok(lhs)
+    }
+
+    fn parse_and(&mut self) -> Result<Expr, XPathError> {
+        let mut lhs = self.parse_equality()?;
+        while self.eat_word("and") {
+            let rhs = self.parse_equality()?;
+            lhs = bin(BinaryOp::And, lhs, rhs);
+        }
+        Ok(lhs)
+    }
+
+    fn parse_equality(&mut self) -> Result<Expr, XPathError> {
+        let mut lhs = self.parse_relational()?;
+        loop {
+            let op = if self.eat("!=") {
+                BinaryOp::Ne
+            } else if self.eat("=") {
+                BinaryOp::Eq
+            } else {
+                break;
+            };
+            let rhs = self.parse_relational()?;
+            lhs = bin(op, lhs, rhs);
+        }
+        Ok(lhs)
+    }
+
+    fn parse_relational(&mut self) -> Result<Expr, XPathError> {
+        let mut lhs = self.parse_additive()?;
+        loop {
+            // `<=` before `<`, or the longer operator never matches.
+            let op = if self.eat("<=") {
+                BinaryOp::Le
+            } else if self.eat(">=") {
+                BinaryOp::Ge
+            } else if self.eat("<") {
+                BinaryOp::Lt
+            } else if self.eat(">") {
+                BinaryOp::Gt
+            } else {
+                break;
+            };
+            let rhs = self.parse_additive()?;
+            lhs = bin(op, lhs, rhs);
+        }
+        Ok(lhs)
+    }
+
+    fn parse_additive(&mut self) -> Result<Expr, XPathError> {
+        let mut lhs = self.parse_multiplicative()?;
+        loop {
+            let op = if self.eat("+") {
+                BinaryOp::Add
+            } else if self.eat("-") {
+                BinaryOp::Sub
+            } else {
+                break;
+            };
+            let rhs = self.parse_multiplicative()?;
+            lhs = bin(op, lhs, rhs);
+        }
+        Ok(lhs)
+    }
+
+    fn parse_multiplicative(&mut self) -> Result<Expr, XPathError> {
+        let mut lhs = self.parse_unary()?;
+        loop {
+            let op = if self.eat("*") {
+                BinaryOp::Mul
+            } else if self.eat_word("div") {
+                BinaryOp::Div
+            } else if self.eat_word("mod") {
+                BinaryOp::Mod
+            } else {
+                break;
+            };
+            let rhs = self.parse_unary()?;
+            lhs = bin(op, lhs, rhs);
+        }
+        Ok(lhs)
+    }
+
+    fn parse_unary(&mut self) -> Result<Expr, XPathError> {
+        if self.eat("-") {
+            let e = self.parse_unary()?;
+            return Ok(Expr::Negate(Box::new(e)));
+        }
+        self.parse_union()
+    }
+
+    fn parse_union(&mut self) -> Result<Expr, XPathError> {
+        let mut lhs = self.parse_primary()?;
+        while self.eat("|") {
+            let rhs = self.parse_primary()?;
+            lhs = bin(BinaryOp::Union, lhs, rhs);
+        }
+        Ok(lhs)
+    }
+
+    fn parse_primary(&mut self) -> Result<Expr, XPathError> {
+        self.ws();
+        match self.peek() {
+            Some(b'(') => {
+                self.i += 1;
+                let e = self.parse_or()?;
+                if !self.eat(")") {
+                    return Err(self.err("expected )"));
+                }
+                Ok(e)
+            }
+            Some(b'\'' | b'"') => self.parse_literal(),
+            Some(c) if c.is_ascii_digit() || c == b'.' => {
+                // `.` is ambiguous: `.5` is a number, `.` and `..` are
+                // steps. Only commit to a number if a digit follows.
+                if c == b'.'
+                    && !self.b.get(self.i + 1).is_some_and(u8::is_ascii_digit)
+                {
+                    self.parse_path()
+                } else {
+                    self.parse_number()
+                }
+            }
+            _ => self.parse_path_or_function(),
+        }
+    }
+
+    fn parse_literal(&mut self) -> Result<Expr, XPathError> {
+        let quote = self.b[self.i];
+        self.i += 1;
+        let start = self.i;
+        while self.i < self.b.len() && self.b[self.i] != quote {
+            self.i += 1;
+        }
+        if self.i >= self.b.len() {
+            return Err(self.err("unterminated string literal"));
+        }
+        let v = self.s[start..self.i].to_owned();
+        self.i += 1;
+        Ok(Expr::Literal(v))
+    }
+
+    fn parse_number(&mut self) -> Result<Expr, XPathError> {
+        let start = self.i;
+        while self.i < self.b.len()
+            && (self.b[self.i].is_ascii_digit() || self.b[self.i] == b'.')
+        {
+            self.i += 1;
+        }
+        self.s[start..self.i]
+            .parse::<f64>()
+            .map(Expr::Number)
+            .map_err(|_| self.err("invalid number"))
+    }
+
+    fn parse_path_or_function(&mut self) -> Result<Expr, XPathError> {
+        let save = self.i;
+        if let Some(name) = self.try_name() {
+            self.ws();
+            if self.peek() == Some(b'(')
+                && !matches!(
+                    name.as_str(),
+                    "text" | "comment" | "node" | "processing-instruction"
+                )
+            {
+                self.i += 1;
+                let mut args = Vec::new();
+                if self.peek() != Some(b')') {
+                    loop {
+                        args.push(self.parse_or()?);
+                        if !self.eat(",") {
+                            break;
+                        }
+                    }
+                }
+                if !self.eat(")") {
+                    return Err(self.err("expected ) after arguments"));
+                }
+                return Ok(Expr::Function { name, args });
+            }
+        }
+        self.i = save;
+        self.parse_path()
+    }
+
+    fn parse_path(&mut self) -> Result<Expr, XPathError> {
+        self.ws();
+        let mut absolute = false;
+        let mut steps = Vec::new();
+
+        if self.s[self.i..].starts_with("//") {
+            self.i += 2;
+            absolute = true;
+            steps.push(Step {
+                axis: Axis::DescendantOrSelf,
+                test: NodeTest::Any,
+                predicates: Vec::new(),
+            });
+        } else if self.peek() == Some(b'/') {
+            self.i += 1;
+            absolute = true;
+            // A lone `/` selects the root and has no steps.
+            if self.at_path_end() {
+                return Ok(Expr::Path { absolute, steps });
+            }
+        }
+
+        loop {
+            steps.push(self.parse_step()?);
+            self.ws();
+            if self.s[self.i..].starts_with("//") {
+                self.i += 2;
+                steps.push(Step {
+                    axis: Axis::DescendantOrSelf,
+                    test: NodeTest::Any,
+                    predicates: Vec::new(),
+                });
+            } else if self.peek() == Some(b'/') {
+                self.i += 1;
+            } else {
+                break;
+            }
+        }
+        Ok(Expr::Path { absolute, steps })
+    }
+
+    fn at_path_end(&mut self) -> bool {
+        match self.peek() {
+            None => true,
+            Some(c) => {
+                !(c.is_ascii_alphanumeric()
+                    || matches!(c, b'_' | b'*' | b'@' | b'.' | b':'))
+            }
+        }
+    }
+
+    fn parse_step(&mut self) -> Result<Step, XPathError> {
+        self.ws();
+        // Abbreviations first: `..` before `.`, or `..` lexes as two.
+        if self.s[self.i..].starts_with("..") {
+            self.i += 2;
+            return Ok(Step {
+                axis: Axis::Parent,
+                test: NodeTest::Any,
+                predicates: self.parse_predicates()?,
+            });
+        }
+        if self.peek() == Some(b'.') {
+            self.i += 1;
+            return Ok(Step {
+                axis: Axis::SelfAxis,
+                test: NodeTest::Any,
+                predicates: self.parse_predicates()?,
+            });
+        }
+
+        let axis = if self.eat("@") {
+            Axis::Attribute
+        } else {
+            let save = self.i;
+            match self.try_name() {
+                Some(n) if self.s[self.i..].starts_with("::") => {
+                    self.i += 2;
+                    axis_from_name(&n)
+                        .ok_or_else(|| self.err("unknown axis"))?
+                }
+                _ => {
+                    self.i = save;
+                    Axis::Child
+                }
+            }
+        };
+
+        let test = self.parse_node_test()?;
+        let predicates = self.parse_predicates()?;
+        Ok(Step {
+            axis,
+            test,
+            predicates,
+        })
+    }
+
+    fn parse_node_test(&mut self) -> Result<NodeTest, XPathError> {
+        self.ws();
+        if self.eat("*") {
+            return Ok(NodeTest::Wildcard);
+        }
+        let name = self
+            .try_name()
+            .ok_or_else(|| self.err("expected a node test"))?;
+        self.ws();
+        if self.peek() == Some(b'(') {
+            self.i += 1;
+            if !self.eat(")") {
+                return Err(self.err("expected ()"));
+            }
+            return match name.as_str() {
+                "text" => Ok(NodeTest::Text),
+                "comment" => Ok(NodeTest::Comment),
+                "node" => Ok(NodeTest::Any),
+                _ => Err(self.err("unknown node type")),
+            };
+        }
+        // A prefixed name matches on its local part: prefixes are
+        // document-scoped, and binding them here would need a context
+        // this API does not take.
+        let local = name.rsplit(':').next().unwrap_or(&name).to_string();
+        Ok(NodeTest::Name(local))
+    }
+
+    fn parse_predicates(&mut self) -> Result<Vec<Expr>, XPathError> {
+        let mut out = Vec::new();
+        while self.eat("[") {
+            out.push(self.parse_or()?);
+            if !self.eat("]") {
+                return Err(self.err("expected ]"));
+            }
+        }
+        Ok(out)
+    }
+
+    fn try_name(&mut self) -> Option<String> {
+        self.ws();
+        let rest = &self.s[self.i..];
+        let mut end = 0;
+        for (idx, c) in rest.char_indices() {
+            if idx == 0 {
+                if !is_name_start(c) {
+                    return None;
+                }
+            } else if !is_name_char(c) {
+                break;
+            }
+            // A `:` that is doubled is an axis separator, not part of
+            // the name. Without this the name swallows `parent::a`
+            // whole, the `::` test then fails, and the step silently
+            // degrades to the child axis.
+            if c == ':' && rest[idx + 1..].starts_with(':') {
+                break;
+            }
+            end = idx + c.len_utf8();
+        }
+        if end == 0 {
+            return None;
+        }
+        let name = rest[..end].to_owned();
+        self.i += end;
+        Some(name)
+    }
+}
+
+fn bin(op: BinaryOp, lhs: Expr, rhs: Expr) -> Expr {
+    Expr::Binary {
+        op,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    }
+}
+
+fn axis_from_name(n: &str) -> Option<Axis> {
+    Some(match n {
+        "child" => Axis::Child,
+        "descendant" => Axis::Descendant,
+        "descendant-or-self" => Axis::DescendantOrSelf,
+        "parent" => Axis::Parent,
+        "ancestor" => Axis::Ancestor,
+        "ancestor-or-self" => Axis::AncestorOrSelf,
+        "self" => Axis::SelfAxis,
+        "attribute" => Axis::Attribute,
+        "following-sibling" => Axis::FollowingSibling,
+        "preceding-sibling" => Axis::PrecedingSibling,
+        _ => return None,
+    })
+}
+
+fn is_name_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_'
+}
+
+fn is_name_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':')
+}
