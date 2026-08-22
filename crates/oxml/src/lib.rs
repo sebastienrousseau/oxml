@@ -98,6 +98,20 @@ pub mod tree;
 #[cfg_attr(docsrs, doc(cfg(feature = "xpath")))]
 pub mod xpath;
 
+/// The README's examples, compiled as doctests.
+///
+/// `include_str!` rather than a copy: a snapshot of the README in a
+/// test file drifts from the README the moment either is edited, and a
+/// check that silently stops checking is worse than no check. This way
+/// every ```rust block in the README is compiled and run by
+/// `cargo test`, and a broken example fails the build.
+/// Gated on the features the README demonstrates: its examples use
+/// XPath, so under `--no-default-features` they would fail to compile
+/// for a reason that says nothing about the crate.
+#[cfg(all(doctest, feature = "xpath", feature = "std"))]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
+
 pub use error::{Error, ErrorKind, Result};
 pub use parser::parse;
 pub use tree::{Attribute, Document, ExpandedName, NodeId, NodeKind};
