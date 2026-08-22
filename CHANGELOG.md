@@ -10,7 +10,7 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
-## [Unreleased]
+## [0.0.2] - 2026-08-22
 
 ### Added
 
@@ -43,3 +43,5 @@ silent:
   O(n²). `//title` over a 2,000-element document took **10.8 ms**;
   sorting instead brought it to **0.49 ms**, a 22× improvement with no
   change in results.
+
+[0.0.2]: https://github.com/sebastienrousseau/oxml/releases/tag/v0.0.2
