@@ -46,14 +46,18 @@ fn attr_heavy(n: usize) -> String {
 
 fn bench(c: &mut Criterion) {
     let wide_doc = wide(1000);
-    let deep_doc = deep(500);
+    // Kept just inside `MAX_DEPTH`. At 500 this exceeded the limit
+    // added in 0.0.4 and the benchmark panicked on `unwrap` — which
+    // nothing noticed locally, because benches are not part of
+    // `cargo test`.
+    let deep_doc = deep(oxml::MAX_DEPTH - 1);
     let attr_doc = attr_heavy(1000);
 
     let mut group = c.benchmark_group("parse");
     let _ = group.bench_function("wide_1000", |b| {
         b.iter(|| oxml::parse(black_box(&wide_doc)).unwrap());
     });
-    let _ = group.bench_function("deep_500", |b| {
+    let _ = group.bench_function("deep_max", |b| {
         b.iter(|| oxml::parse(black_box(&deep_doc)).unwrap());
     });
     let _ = group.bench_function("attributes_1000", |b| {
