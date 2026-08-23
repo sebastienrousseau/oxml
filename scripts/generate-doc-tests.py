@@ -61,9 +61,22 @@ def main() -> int:
                 skipped += 1
                 continue
             name = re.sub(r"[^a-z0-9]+", "_", path.relative_to(DOC).as_posix().lower())
-            body = "\n".join(f"    {l}" for l in source.splitlines())
+            # Indent, but never leave trailing whitespace on a blank
+            # line: `cargo fmt` strips it, so emitting it means
+            # generate -> fmt -> generate never converges and CI's
+            # regenerate-and-diff check fails on every commit.
+            body = "\n".join(
+                f"    {l}".rstrip() for l in source.splitlines()
+            )
             parts.append(
                 f"/// From `doc/{path.relative_to(DOC).as_posix()}`, line {line}.\n"
+                # `rustfmt` would reflow the body, and the body is a
+                # verbatim copy of the documented snippet. Reformatting
+                # it means the file no longer matches what the generator
+                # produces, so CI's regenerate-and-diff check fails on
+                # every commit -- and a reader comparing the test to the
+                # document sees two different texts.
+                f"#[rustfmt::skip]\n"
                 f"#[test]\n"
                 f"fn {name.strip('_')}_line_{line}() {{\n{body}\n}}\n"
             )

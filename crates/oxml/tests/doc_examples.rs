@@ -12,6 +12,7 @@
 #![allow(unused_variables, unused_imports, clippy::all, clippy::pedantic)]
 
 /// From `doc/MIGRATION-FROM-LIBXML.md`, line 56.
+#[rustfmt::skip]
 #[test]
 fn migration_from_libxml_md_line_56() {
     use oxml::parse;
@@ -23,6 +24,7 @@ fn migration_from_libxml_md_line_56() {
 }
 
 /// From `doc/MIGRATION-FROM-QUICK-XML.md`, line 55.
+#[rustfmt::skip]
 #[test]
 fn migration_from_quick_xml_md_line_55() {
     use oxml::{XPath, parse};
@@ -30,17 +32,13 @@ fn migration_from_quick_xml_md_line_55() {
     let xml = "<r><book><title>Dune</title></book><book><title>Germinal</title></book></r>";
     let doc = parse(xml).unwrap();
     let q = XPath::compile("//title").unwrap();
-    let titles: Vec<_> = q
-        .evaluate(&doc)
-        .nodes()
-        .unwrap()
-        .iter()
-        .map(|&n| doc.text(n))
-        .collect();
+    let titles: Vec<_> = q.evaluate(&doc).nodes().unwrap()
+        .iter().map(|&n| doc.text(n)).collect();
     assert_eq!(titles, ["Dune", "Germinal"]);
 }
 
 /// From `doc/MIGRATION-FROM-ROXMLTREE.md`, line 51.
+#[rustfmt::skip]
 #[test]
 fn migration_from_roxmltree_md_line_51() {
     use oxml::parse;
@@ -52,6 +50,7 @@ fn migration_from_roxmltree_md_line_51() {
 }
 
 /// From `doc/MIGRATION-FROM-ROXMLTREE.md`, line 64.
+#[rustfmt::skip]
 #[test]
 fn migration_from_roxmltree_md_line_64() {
     use oxml::parse;
@@ -63,6 +62,7 @@ fn migration_from_roxmltree_md_line_64() {
 }
 
 /// From `doc/MIGRATION-FROM-ROXMLTREE.md`, line 82.
+#[rustfmt::skip]
 #[test]
 fn migration_from_roxmltree_md_line_82() {
     use oxml::{XPath, parse};
@@ -76,17 +76,13 @@ fn migration_from_roxmltree_md_line_82() {
     //      .collect::<Vec<_>>()
 
     let q = XPath::compile("//a/@href").unwrap();
-    let hrefs: Vec<_> = q
-        .evaluate(&doc)
-        .nodes()
-        .unwrap()
-        .iter()
-        .map(|&n| doc.text(n))
-        .collect();
+    let hrefs: Vec<_> = q.evaluate(&doc).nodes().unwrap()
+        .iter().map(|&n| doc.text(n)).collect();
     assert_eq!(hrefs, ["one", "two"]);
 }
 
 /// From `doc/MIGRATION-FROM-SXD.md`, line 44.
+#[rustfmt::skip]
 #[test]
 fn migration_from_sxd_md_line_44() {
     use oxml::{XPath, parse};
@@ -94,11 +90,12 @@ fn migration_from_sxd_md_line_44() {
     let doc = parse("<r><a/><a/></r>").unwrap();
 
     // sxd: evaluate_xpath(&doc, "count(//a)")  -- parses every time
-    let q = XPath::compile("count(//a)").unwrap(); // once
-    assert_eq!(q.evaluate(&doc).to_str(&doc), "2"); // many
+    let q = XPath::compile("count(//a)").unwrap();   // once
+    assert_eq!(q.evaluate(&doc).to_str(&doc), "2");  // many
 }
 
 /// From `doc/MIGRATION-FROM-SXD.md`, line 63.
+#[rustfmt::skip]
 #[test]
 fn migration_from_sxd_md_line_63() {
     use oxml::{XPath, parse};
@@ -106,17 +103,16 @@ fn migration_from_sxd_md_line_63() {
     let doc = parse("<r><a>text</a></r>").unwrap();
     let v = XPath::compile("//a").unwrap().evaluate(&doc);
     assert_eq!(v.to_str(&doc), "text");
-    assert!(v.to_boolean()); // no document needed
+    assert!(v.to_boolean());          // no document needed
 }
 
 /// From `doc/MIGRATION-FROM-SXD.md`, line 85.
+#[rustfmt::skip]
 #[test]
 fn migration_from_sxd_md_line_85() {
     use oxml::{XPath, parse};
 
-    let doc =
-        parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#)
-            .unwrap();
+    let doc = parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#).unwrap();
 
     // Both of these select BOTH elements. The prefix is ignored.
     for expr in ["//x:item", "//item"] {
@@ -130,6 +126,7 @@ fn migration_from_sxd_md_line_85() {
 }
 
 /// From `doc/SECURITY-MODEL.md`, line 39.
+#[rustfmt::skip]
 #[test]
 fn security_model_md_line_39() {
     let src = r#"<!DOCTYPE a [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><a>&xxe;</a>"#;
@@ -138,18 +135,20 @@ fn security_model_md_line_39() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 67.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_67() {
     use oxml::parse;
 
     let doc = parse("<r><a/><b/></r>").unwrap();
 
-    let root = doc.root(); // the document node
-    let element = doc.root_element().unwrap(); // <r>
+    let root = doc.root();                       // the document node
+    let element = doc.root_element().unwrap();   // <r>
     assert_ne!(root, element);
 }
 
 /// From `doc/USER-GUIDE.md`, line 94.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_94() {
     use oxml::parse;
@@ -163,6 +162,7 @@ fn user_guide_md_line_94() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 114.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_114() {
     use oxml::parse;
@@ -173,6 +173,7 @@ fn user_guide_md_line_114() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 130.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_130() {
     use oxml::parse;
@@ -193,6 +194,7 @@ fn user_guide_md_line_130() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 152.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_152() {
     use oxml::{ExpandedName, parse};
@@ -208,6 +210,7 @@ fn user_guide_md_line_152() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 174.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_174() {
     use oxml::parse;
@@ -221,17 +224,18 @@ fn user_guide_md_line_174() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 196.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_196() {
     use oxml::{XPath, parse};
 
-    let doc =
-        parse("<shop><item price='9.99'/><item price='4.50'/></shop>").unwrap();
+    let doc = parse("<shop><item price='9.99'/><item price='4.50'/></shop>").unwrap();
     let total = XPath::compile("sum(//item/@price)").unwrap();
     assert_eq!(total.evaluate(&doc).to_str(&doc), "14.49");
 }
 
 /// From `doc/USER-GUIDE.md`, line 210.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_210() {
     use oxml::{XPath, parse, xpath::Value};
@@ -240,17 +244,16 @@ fn user_guide_md_line_210() {
     let nodes = XPath::compile("//a").unwrap().evaluate(&doc);
     assert!(matches!(nodes, Value::NodeSet(_)));
     assert_eq!(nodes.nodes().unwrap().len(), 2);
-    assert!(nodes.to_boolean()); // non-empty
+    assert!(nodes.to_boolean());              // non-empty
 }
 
 /// From `doc/USER-GUIDE.md`, line 227.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_227() {
     use oxml::{XPath, parse};
 
-    let doc =
-        parse("<shop><item p='1'>Tea</item><item p='2'>Cocoa</item></shop>")
-            .unwrap();
+    let doc = parse("<shop><item p='1'>Tea</item><item p='2'>Cocoa</item></shop>").unwrap();
     let rows = XPath::compile("//item").unwrap();
     let price = XPath::compile("@p").unwrap();
     let mut total = 0.0;
@@ -261,6 +264,7 @@ fn user_guide_md_line_227() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 245.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_245() {
     use oxml::{ErrorKind, parse};
@@ -272,6 +276,7 @@ fn user_guide_md_line_245() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 267.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_267() {
     use oxml::{Limits, parse_with};
@@ -287,6 +292,7 @@ fn user_guide_md_line_267() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 282.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_282() {
     use oxml::parse_bytes;
@@ -296,6 +302,7 @@ fn user_guide_md_line_282() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 316.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_316() {
     use oxml::parse;
@@ -313,6 +320,7 @@ fn user_guide_md_line_316() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 335.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_335() {
     use oxml::{XPath, parse};
@@ -330,6 +338,7 @@ fn user_guide_md_line_335() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 352.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_352() {
     use oxml::parse;
@@ -342,6 +351,7 @@ fn user_guide_md_line_352() {
 }
 
 /// From `doc/USER-GUIDE.md`, line 364.
+#[rustfmt::skip]
 #[test]
 fn user_guide_md_line_364() {
     use oxml::parse;
