@@ -151,7 +151,13 @@ pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
         input,
         bytes: input.as_bytes(),
         pos: 0,
-        doc: Document::new(),
+        // One `<` per element, comment or processing instruction, and
+        // text nodes are bounded by them. Counting is a single pass
+        // over bytes at multiple GB/s; the reallocation it avoids is
+        // not.
+        doc: Document::with_capacity(
+            input.bytes().filter(|b| *b == b'<').count() * 2,
+        ),
         ns: Namespaces::default(),
         depth: 0,
         limits,

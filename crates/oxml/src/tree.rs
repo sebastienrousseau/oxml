@@ -130,14 +130,21 @@ pub struct Document {
 }
 
 impl Document {
-    pub(crate) fn new() -> Self {
-        Self {
-            nodes: alloc::vec![Node {
-                kind: NodeKind::Root,
-                parent: None,
-                children: Vec::new(),
-            }],
-        }
+    /// A document sized for roughly `nodes` entries.
+    ///
+    /// The parser can estimate the node count in one cheap pass before
+    /// parsing — every element, comment and processing instruction
+    /// begins with `<`. Without this the arena reallocates and copies
+    /// on the way to a million nodes, and each growth is an allocation
+    /// plus a memcpy of everything so far.
+    pub(crate) fn with_capacity(nodes: usize) -> Self {
+        let mut v = Vec::with_capacity(nodes.saturating_add(1));
+        v.push(Node {
+            kind: NodeKind::Root,
+            parent: None,
+            children: Vec::new(),
+        });
+        Self { nodes: v }
     }
 
     /// The document root.
