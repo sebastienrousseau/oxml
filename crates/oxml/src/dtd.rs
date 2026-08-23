@@ -694,17 +694,6 @@ fn is_pubid_char(c: char) -> bool {
         || "-'()+,./:=?;!*#@$_%".contains(c)
 }
 
-/// Check an `EntityValue` at the point of declaration.
-///
-/// Two well-formedness constraints apply here and are easy to miss
-/// because the value may never be referenced:
-///
-/// * every character reference in it must be well-formed — `&#002f;` is
-///   not a decimal number;
-/// * a parameter-entity reference may not appear in an entity value in
-///   the **internal** subset (`WFC: PEs in Internal Subset`). In the
-///   external subset it is permitted, so this only applies while the
-///   declaration is known to be internal.
 /// Check an `<!ATTLIST>` default value.
 ///
 /// A default is an `AttValue`, and the well-formedness constraints that
@@ -814,6 +803,17 @@ fn is_reference_name(name: &str) -> bool {
         && chars.all(crate::parser::is_name_char)
 }
 
+/// Check an `EntityValue` at the point of declaration.
+///
+/// Two well-formedness constraints apply here and are easy to miss
+/// because the value may never be referenced:
+///
+/// * every character reference in it must be well-formed — `&#002f;` is
+///   not a decimal number;
+/// * a parameter-entity reference may not appear in an entity value in
+///   the **internal** subset (`WFC: PEs in Internal Subset`). In the
+///   external subset it is permitted, so this only applies while the
+///   declaration is known to be internal.
 fn validate_entity_value(
     text: &str,
     offset: usize,
