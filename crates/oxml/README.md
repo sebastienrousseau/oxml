@@ -41,6 +41,7 @@
 
 - [Attributes are nodes](#attributes-are-nodes) — why `@lang` returns what you expect
 - [Namespaces resolve by URI](#namespaces-resolve-by-uri) — the element/attribute asymmetry
+- [XPath name tests ignore namespace prefixes](#xpath-name-tests-ignore-namespace-prefixes) — a known defect
 - [Number formatting](#number-formatting) — why `sum()` prints `17.49`
 - [Entity expansion is not supported](#entity-expansion-is-not-supported) — and that is the point
 
@@ -390,6 +391,39 @@ An unprefixed **element** takes the default namespace. An unprefixed
 **attribute** is in no namespace at all — not its element's. That
 asymmetry is the classic source of namespace bugs, so it is an explicit
 parameter in the parser rather than an assumption.
+
+## XPath name tests ignore namespace prefixes
+
+**A known defect, and the one most likely to give you a wrong answer
+without an error.** In a path step, oxml matches a name test on its
+local part alone. The prefix is not resolved against the document's
+bindings, so `//x:item` selects every `item` whatever its namespace:
+
+```rust
+use oxml::{XPath, parse};
+
+let doc = parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#).unwrap();
+
+// Both select BOTH elements.
+for expr in ["//x:item", "//item"] {
+    let found = XPath::compile(expr).unwrap().evaluate(&doc);
+    assert_eq!(found.nodes().unwrap().len(), 2, "{expr}");
+}
+```
+
+Namespaces *are* resolved correctly in the tree — `element_name`
+returns the URI, and `ExpandedName` comparison works. It is only the
+name test in an expression that ignores them.
+
+Until this is fixed, select by namespace explicitly:
+
+```rust
+use oxml::{XPath, parse};
+
+let doc = parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#).unwrap();
+let q = XPath::compile("//*[namespace-uri()='urn:u' and local-name()='item']").unwrap();
+assert_eq!(q.evaluate(&doc).nodes().unwrap().len(), 1);
+```
 
 ## Number formatting
 

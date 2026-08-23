@@ -96,5 +96,10 @@ name = "decode_bytes"
 path = "examples/decode_bytes.rs"
 required-features = ["std"]
 
+[[test]]
+name = "doc_examples"
+path = "tests/doc_examples.rs"
+required-features = ["std", "xpath"]
+
 [lints]
 workspace = true
