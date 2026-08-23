@@ -31,6 +31,7 @@ pub mod baseline;
 pub mod catalog;
 pub mod outcome;
 pub mod runner;
+pub mod sha256;
 
 use std::path::{Path, PathBuf};
 
