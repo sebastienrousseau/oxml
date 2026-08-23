@@ -11,14 +11,23 @@ oxml = { path = "../crates/oxml" }
 [dev-dependencies]
 oxml = { path = "../crates/oxml" }
 
+# No `#[bench]` functions here, and the default libtest bench target
+# does not understand criterion's arguments:
+#   error: Unrecognized option: 'warm-up-time'
+[lib]
+bench = false
+
 [[bin]]
 name = "download"
 path = "src/bin/download.rs"
+bench = false
 
 [[bin]]
 name = "report"
 path = "src/bin/report.rs"
+bench = false
 
 [[test]]
 name = "w3c_xml"
 path = "tests/w3c_xml.rs"
+bench = false
