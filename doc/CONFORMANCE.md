@@ -20,8 +20,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2419 pass, 138 fail, 0 panic, 28 unsupported, 0 blocked
-         94.6% of 2557 decided (98.9% coverage of 2585)
+overall  2428 pass, 129 fail, 0 panic, 28 unsupported, 0 blocked
+         95.0% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -59,7 +59,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-138 failures, and **every one of them is the parser being too
+129 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -69,21 +69,24 @@ contains:
 
 | The document has | Count |
 |---|---|
-| An internal subset only | 70 |
 | An external subset (`SYSTEM`/`PUBLIC`) | 63 |
+| An internal subset only | 61 |
 | No `DOCTYPE` at all | 5 |
 
-Only the middle group needs the external subset. **The other 75 are
+Only the first group needs the external subset. **The other 66 are
 rules oxml could enforce today.**
 
 That categorisation is worth doing before assuming otherwise. This
 document once said "the bulk need the external DTD subset", which was a
 guess and was wrong: the split was 84 internal-only against 63
 external. Counting instead of guessing found 16 failures with no
-`DOCTYPE` at all and a further set that needed only declarations
-already parsed. **25 of them have since been fixed**, taking the
-failure count from 163 to 138, and the external-subset group has not
-moved at all — it was 63 then and it is 63 now.
+`DOCTYPE` at all and a further set needing only declarations already
+parsed.
+
+**34 have since been fixed, taking the count from 163 to 129 — and the
+external-subset group has not moved once. 63 then, 63 now.** Every
+single fix was a rule the parser already had the information to
+enforce; not one of them needed a feature.
 
 That asymmetry matters. A parser that wrongly accepts produces a tree
 from a document another implementation would reject, so two systems

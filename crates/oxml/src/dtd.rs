@@ -336,7 +336,7 @@ impl<'a> DtdParser<'a> {
         }
         if self.starts_with("<!ATTLIST") {
             self.pos += "<!ATTLIST".len();
-            return self.parse_attlist_decl();
+            return self.parse_attlist_decl(dtd);
         }
         if self.starts_with("<!ENTITY") {
             self.pos += "<!ENTITY".len();
@@ -471,7 +471,7 @@ impl<'a> DtdParser<'a> {
         }
     }
 
-    fn parse_attlist_decl(&mut self) -> Result<(), DtdError> {
+    fn parse_attlist_decl(&mut self, dtd: &Dtd) -> Result<(), DtdError> {
         self.require_ws()?;
         let _ = self.name()?;
         loop {
@@ -488,7 +488,7 @@ impl<'a> DtdParser<'a> {
             self.require_ws()?;
             self.parse_att_type()?;
             self.require_ws()?;
-            let _ = self.parse_default_decl()?;
+            let _ = self.parse_default_decl(dtd)?;
         }
     }
 
@@ -564,7 +564,10 @@ impl<'a> DtdParser<'a> {
         Ok(text)
     }
 
-    fn parse_default_decl(&mut self) -> Result<DefaultDecl, DtdError> {
+    fn parse_default_decl(
+        &mut self,
+        dtd: &Dtd,
+    ) -> Result<DefaultDecl, DtdError> {
         if self.peek() == Some(b'#') {
             self.pos += 1;
             let kw = self.name()?;
@@ -573,13 +576,17 @@ impl<'a> DtdParser<'a> {
                 "IMPLIED" => Ok(DefaultDecl::Implied),
                 "FIXED" => {
                     self.require_ws()?;
-                    let _ = self.quoted()?;
+                    let start = self.pos;
+                    let text = self.quoted()?;
+                    validate_attribute_default(text, start, dtd)?;
                     Ok(DefaultDecl::Fixed)
                 }
                 _ => Err((self.pos, "expected #REQUIRED, #IMPLIED or #FIXED")),
             };
         }
-        let _ = self.quoted()?;
+        let start = self.pos;
+        let text = self.quoted()?;
+        validate_attribute_default(text, start, dtd)?;
         Ok(DefaultDecl::Value)
     }
 
@@ -698,6 +705,115 @@ fn is_pubid_char(c: char) -> bool {
 ///   the **internal** subset (`WFC: PEs in Internal Subset`). In the
 ///   external subset it is permitted, so this only applies while the
 ///   declaration is known to be internal.
+/// Check an `<!ATTLIST>` default value.
+///
+/// A default is an `AttValue`, and the well-formedness constraints that
+/// apply to an attribute value in a document apply to it here -- at the
+/// point of *declaration*, whether or not any element ever uses the
+/// default. None of them were checked, because the value was parsed
+/// with `quoted()` and thrown away.
+///
+/// `visiting` carries the entity names currently being expanded, so a
+/// cycle is reported rather than followed.
+fn validate_attribute_default(
+    text: &str,
+    offset: usize,
+    dtd: &Dtd,
+) -> Result<(), DtdError> {
+    let mut visiting = Vec::new();
+    check_att_value(text, offset, dtd, &mut visiting)
+}
+
+fn check_att_value<'n>(
+    text: &'n str,
+    offset: usize,
+    dtd: &'n Dtd,
+    visiting: &mut Vec<&'n str>,
+) -> Result<(), DtdError> {
+    // `AttValue ::= '"' ([^<&"] | Reference)* '"'`. A literal `<` is
+    // forbidden here exactly as it is in a document.
+    if text.contains('<') {
+        return Err((offset, "`<` is not allowed in an attribute value"));
+    }
+
+    let mut rest = text;
+    while let Some(i) = rest.find('&') {
+        let tail = &rest[i + 1..];
+        let Some(semi) = tail.find(';') else {
+            return Err((offset, "unterminated reference in a default value"));
+        };
+        let name = &tail[..semi];
+        rest = &tail[semi + 1..];
+
+        // Character references stand for characters and are always
+        // fine; `validate_entity_value`'s rules cover their syntax.
+        if name.starts_with('#') || decode_predefined_name(name) {
+            continue;
+        }
+
+        // `WFC: No Recursion`.
+        if visiting.contains(&name) {
+            return Err((
+                offset,
+                "an entity in a default value refers to itself",
+            ));
+        }
+
+        match dtd.general.get(name) {
+            // `WFC: Entity Declared`. The map holds what has been
+            // declared *so far*, so an entity declared later in the
+            // subset is absent here -- which is the rule: a reference
+            // must not precede its declaration.
+            None => {
+                if !dtd.incomplete {
+                    return Err((
+                        offset,
+                        "a default value references an entity that is not \
+                         declared, or is declared after it",
+                    ));
+                }
+            }
+            // `WFC: No External Entity References`.
+            Some(EntityValue::External) => {
+                return Err((
+                    offset,
+                    "a default value may not reference an external entity",
+                ));
+            }
+            // `WFC: Parsed Entity`.
+            Some(EntityValue::Unparsed) => {
+                return Err((
+                    offset,
+                    "a default value may not reference an unparsed entity",
+                ));
+            }
+            Some(EntityValue::Internal(inner)) => {
+                visiting.push(name);
+                check_att_value(inner, offset, dtd, visiting)?;
+                let _ = visiting.pop();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether `name` is one of the five entities every parser predefines.
+fn decode_predefined_name(name: &str) -> bool {
+    matches!(name, "lt" | "gt" | "amp" | "apos" | "quot")
+}
+
+/// Whether `name` is a `Name`, for a reference appearing in a literal.
+///
+/// Uses the fifth-edition rules regardless of the document's declared
+/// edition. The two differ only in which exotic characters may start a
+/// name, and a reference whose name is invalid under both -- which is
+/// what this exists to catch -- is rejected either way.
+fn is_reference_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(crate::parser::is_name_start)
+        && chars.all(crate::parser::is_name_char)
+}
+
 fn validate_entity_value(
     text: &str,
     offset: usize,
@@ -733,6 +849,13 @@ fn validate_entity_value(
             if dec.is_empty() || !dec.chars().all(|c| c.is_ascii_digit()) {
                 return Err((offset, "malformed decimal character reference"));
             }
+        } else if !is_reference_name(name) {
+            // Not a character reference, so it is an entity reference
+            // and its name must be a `Name`. `&49;` is neither: it has
+            // no `#`, and `49` cannot start a name. Nothing checked
+            // this, so it read as a reference to an entity that could
+            // not exist.
+            return Err((offset, "not a valid entity reference name"));
         }
     }
     Ok(())

@@ -261,3 +261,122 @@ mod internal_subset {
         assert_eq!(doc.text(root), "hi");
     }
 }
+
+/// An `<!ATTLIST>` default value is an `AttValue`, and the constraints
+/// on one apply at the point of *declaration* -- whether or not any
+/// element ever uses the default.
+///
+/// None of them were checked, because the value was parsed with
+/// `quoted()` and thrown away. Six W3C failures were this one omission.
+mod attlist_defaults {
+    use super::parse;
+
+    /// `<!DOCTYPE d [ … ]><d></d>` around an internal subset.
+    fn doc(subset: &str) -> String {
+        format!("<!DOCTYPE d [{subset}]><d></d>")
+    }
+
+    #[test]
+    fn an_entity_must_be_declared_before_it_is_used() {
+        // `WFC: Entity Declared` -- the declaration must not come
+        // *after* the reference. Declaring it later reads naturally and
+        // is not allowed.
+        assert!(
+            parse(&doc(r#"<!ATTLIST d a CDATA "&e;"><!ENTITY e "v">"#))
+                .is_err()
+        );
+        // The other way round is fine.
+        assert!(
+            parse(&doc(r#"<!ENTITY e "v"><!ATTLIST d a CDATA "&e;">"#)).is_ok()
+        );
+    }
+
+    #[test]
+    fn an_undeclared_entity_is_rejected() {
+        assert!(parse(&doc(r#"<!ATTLIST d a CDATA "&foo;">"#)).is_err());
+    }
+
+    #[test]
+    fn an_entity_may_not_refer_to_itself_however_indirectly() {
+        // `WFC: No Recursion`. Three entities forming a cycle, reached
+        // through a default value -- so the cycle is only visible if
+        // the expansion is actually followed.
+        let cycle =
+            r#"<!ENTITY e1 "&e2;"><!ENTITY e2 "&e3;"><!ENTITY e3 "&e1;">"#;
+        for default in [
+            r#"<!ATTLIST d a CDATA "&e1;">"#,
+            r#"<!ATTLIST d a CDATA #FIXED "&e1;">"#,
+        ] {
+            assert!(
+                parse(&doc(&format!("{cycle}{default}"))).is_err(),
+                "{default}"
+            );
+        }
+    }
+
+    #[test]
+    fn nesting_without_a_cycle_is_fine() {
+        // The recursion check must follow expansions without treating
+        // depth as a cycle.
+        let subset =
+            r#"<!ENTITY x "1"><!ENTITY y "&x;2"><!ATTLIST d a CDATA "&y;">"#;
+        assert!(parse(&doc(subset)).is_ok());
+    }
+
+    #[test]
+    fn an_unparsed_or_external_entity_may_not_be_referenced() {
+        let unparsed =
+            r#"<!ENTITY e SYSTEM "nul" NDATA n><!ATTLIST d a CDATA "&e;">"#;
+        let external =
+            r#"<!ENTITY e SYSTEM "x.ent"><!ATTLIST d a CDATA "&e;">"#;
+        assert!(parse(&doc(unparsed)).is_err(), "unparsed");
+        assert!(parse(&doc(external)).is_err(), "external");
+    }
+
+    #[test]
+    fn a_literal_less_than_is_rejected_here_too() {
+        // `AttValue ::= '"' ([^<&"] | Reference)* '"'` -- the same
+        // production, so the same rule.
+        assert!(parse(&doc(r#"<!ATTLIST d a CDATA "1 < 2">"#)).is_err());
+        assert!(parse(&doc(r#"<!ATTLIST d a CDATA "1 &lt; 2">"#)).is_ok());
+    }
+
+    #[test]
+    fn ordinary_defaults_still_work() {
+        for subset in [
+            r#"<!ATTLIST d a CDATA "plain">"#,
+            r#"<!ATTLIST d a CDATA "a &amp; b">"#,
+            r#"<!ATTLIST d a CDATA "&#65;">"#,
+            r"<!ATTLIST d a CDATA #IMPLIED>",
+            r"<!ATTLIST d a CDATA #REQUIRED>",
+        ] {
+            assert!(parse(&doc(subset)).is_ok(), "{subset}");
+        }
+    }
+}
+
+/// A reference that is not a character reference names an entity, and
+/// the name has to be one.
+mod reference_names {
+    use super::parse;
+
+    #[test]
+    fn a_reference_name_must_be_a_name() {
+        // `&49;` has no `#`, so it is an entity reference -- and `49`
+        // cannot start a name. Nothing checked this, so it read as a
+        // reference to an entity that could not exist.
+        let subset = r#"<!ELEMENT r EMPTY><!ENTITY a "bad: &49;">"#;
+        assert!(parse(&format!("<!DOCTYPE r [{subset}]><r/>")).is_err());
+    }
+
+    #[test]
+    fn the_legal_forms_are_unaffected() {
+        for value in ["ok: &amp;", "ok: &#49;", "ok: &#x31;"] {
+            let subset = format!(r#"<!ELEMENT r EMPTY><!ENTITY a "{value}">"#);
+            assert!(
+                parse(&format!("<!DOCTYPE r [{subset}]><r/>")).is_ok(),
+                "{value}"
+            );
+        }
+    }
+}

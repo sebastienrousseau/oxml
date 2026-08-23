@@ -1,4 +1,4 @@
-#counts	pass=2419	fail=138	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2428	fail=129	panic=0	unsupported=28	blocked=0	total=2585
 sun	cond01	fail	accepted a document that is not well-formed
 sun	cond02	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
@@ -64,9 +64,7 @@ ibm	ibm-not-wf-P64-ibm64n02.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P64-ibm64n03.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P65-ibm65n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P65-ibm65n02.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n03.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n06.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P68-ibm68n07.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P74-ibm74n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P75-ibm75n07.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P76-ibm76n03.xml	fail	accepted a document that is not well-formed
@@ -93,11 +91,6 @@ xmltest	not-wf-not-sa-009	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-069	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-074	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-077	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-078	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-079	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-080	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-082	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-084	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-089	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-090	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-091	fail	accepted a document that is not well-formed
@@ -112,7 +105,6 @@ xmltest	not-wf-sa-140	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-141	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-147	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-153	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-180	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-182	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-185	fail	accepted a document that is not well-formed
 sun	not-wf-sa03	fail	accepted a document that is not well-formed
@@ -143,7 +135,6 @@ eduni	rmt-003	fail	accepted a document that is not well-formed
 eduni	rmt-004	fail	accepted a document that is not well-formed
 eduni	rmt-005	fail	accepted a document that is not well-formed
 eduni	rmt-e2e-38	fail	accepted a document that is not well-formed
-eduni	rmt-e3e-12	fail	accepted a document that is not well-formed
 eduni	rmt-ns-e1.0-13a	fail	accepted a document that is not well-formed
 eduni	rmt-ns-e1.0-13b	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-012	fail	accepted a document that is not well-formed

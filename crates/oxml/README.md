@@ -285,7 +285,7 @@ Two architectural choices motivate the design:
 
 **Verification**
 
-- 2,419 of 2,557 decided W3C conformance tests pass (94.6%), with
+- 2,428 of 2,557 decided W3C conformance tests pass (95.0%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
 - Over 240 tests and 16 doctests; 97.4% line coverage, gated in CI
 - Five fuzz targets, Miri, property tests, and a feature powerset build
