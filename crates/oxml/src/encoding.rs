@@ -184,52 +184,33 @@ fn trim_start(mut b: &[u8]) -> &[u8] {
 }
 
 /// Decode UTF-16, handling surrogate pairs.
+///
+/// The surrogate arithmetic is delegated to `core`, so the only failure
+/// this function decides for itself is a byte count that cannot be a
+/// whole number of code units. Offsets point at the first byte of the
+/// offending unit.
 fn utf16(bytes: &[u8], big_endian: bool) -> Result<String> {
     if bytes.len() % 2 != 0 {
         return Err(Error::new(ErrorKind::MalformedEncoding, bytes.len() - 1));
     }
-    let mut out = String::with_capacity(bytes.len() / 2);
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        let unit = if big_endian {
-            u16::from_be_bytes([bytes[i], bytes[i + 1]])
+    #[allow(clippy::chunks_exact_to_as_chunks)] // `as_chunks` is unstable on MSRV
+    let units = bytes.chunks_exact(2).map(|pair| {
+        let pair = [pair[0], pair[1]];
+        if big_endian {
+            u16::from_be_bytes(pair)
         } else {
-            u16::from_le_bytes([bytes[i], bytes[i + 1]])
-        };
-        i += 2;
-        // A non-BMP character is a surrogate *pair*; neither half is a
-        // character on its own.
-        if (0xD800..0xDC00).contains(&unit) {
-            if i + 1 >= bytes.len() {
-                return Err(Error::new(ErrorKind::MalformedEncoding, i));
-            }
-            let low = if big_endian {
-                u16::from_be_bytes([bytes[i], bytes[i + 1]])
-            } else {
-                u16::from_le_bytes([bytes[i], bytes[i + 1]])
-            };
-            i += 2;
-            if !(0xDC00..0xE000).contains(&low) {
-                return Err(Error::new(ErrorKind::MalformedEncoding, i));
-            }
-            let cp = 0x1_0000
-                + ((u32::from(unit) - 0xD800) << 10)
-                + (u32::from(low) - 0xDC00);
-            out.push(
-                char::from_u32(cp).ok_or_else(|| {
-                    Error::new(ErrorKind::MalformedEncoding, i)
-                })?,
-            );
-        } else if (0xDC00..0xE000).contains(&unit) {
-            // An unpaired low surrogate.
-            return Err(Error::new(ErrorKind::MalformedEncoding, i));
-        } else {
-            out.push(
-                char::from_u32(u32::from(unit)).ok_or_else(|| {
-                    Error::new(ErrorKind::MalformedEncoding, i)
-                })?,
-            );
+            u16::from_le_bytes(pair)
         }
+    });
+
+    let mut out = String::with_capacity(bytes.len() / 2);
+    let mut offset = 0;
+    for unit in char::decode_utf16(units) {
+        // An unpaired surrogate is not a character in any encoding, and
+        // silently substituting U+FFFD would hide a corrupt document.
+        let c = unit.map_err(|_| Error::new(ErrorKind::MalformedEncoding, offset))?;
+        offset += c.len_utf16() * 2;
+        out.push(c);
     }
     Ok(out)
 }
@@ -238,4 +219,242 @@ fn utf16(bytes: &[u8], big_endian: bool) -> Result<String> {
 /// value. Cannot fail.
 fn latin1(bytes: &[u8]) -> String {
     bytes.iter().map(|&b| char::from(b)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Encode `text` as UTF-16 with a byte-order mark.
+    fn utf16_bom(text: &str, big_endian: bool) -> alloc::vec::Vec<u8> {
+        let mut out = if big_endian {
+            alloc::vec![0xFE, 0xFF]
+        } else {
+            alloc::vec![0xFF, 0xFE]
+        };
+        for unit in text.encode_utf16() {
+            let b = if big_endian {
+                unit.to_be_bytes()
+            } else {
+                unit.to_le_bytes()
+            };
+            out.extend_from_slice(&b);
+        }
+        out
+    }
+
+    #[test]
+    fn utf8_is_borrowed_not_copied() {
+        // The zero-copy path is the whole reason UTF-8 is special-cased;
+        // if this starts allocating, the fast path is gone.
+        let bytes = b"<a>hello</a>";
+        match decode(bytes).expect("valid utf-8") {
+            Cow::Borrowed(s) => assert_eq!(s, "<a>hello</a>"),
+            Cow::Owned(_) => panic!("UTF-8 input must not be transcoded"),
+        }
+    }
+
+    #[test]
+    fn a_utf8_bom_is_stripped_and_is_not_content() {
+        let mut bytes = alloc::vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(b"<a/>");
+        assert_eq!(decode(&bytes).expect("valid"), "<a/>");
+    }
+
+    #[test]
+    fn utf16_decodes_in_both_byte_orders() {
+        for big_endian in [true, false] {
+            let bytes = utf16_bom("<a>héllo</a>", big_endian);
+            assert_eq!(
+                decode(&bytes).expect("valid utf-16"),
+                "<a>héllo</a>",
+                "big_endian={big_endian}"
+            );
+        }
+    }
+
+    #[test]
+    fn utf16_surrogate_pairs_decode_to_one_character() {
+        // Non-BMP characters arrive as a pair; neither half is a
+        // character on its own.
+        for big_endian in [true, false] {
+            let bytes = utf16_bom("<a>😀</a>", big_endian);
+            assert_eq!(decode(&bytes).expect("valid"), "<a>😀</a>");
+        }
+    }
+
+    #[test]
+    fn utf16_is_detected_without_a_bom() {
+        // An XML document must begin with `<`, which in UTF-16 is a
+        // NUL-adjacent pair — enough to tell the byte order.
+        let be: alloc::vec::Vec<u8> =
+            "<a/>".encode_utf16().flat_map(u16::to_be_bytes).collect();
+        let le: alloc::vec::Vec<u8> =
+            "<a/>".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(decode(&be).expect("be"), "<a/>");
+        assert_eq!(decode(&le).expect("le"), "<a/>");
+    }
+
+    #[test]
+    fn malformed_utf16_is_rejected_rather_than_replaced() {
+        // An odd byte count cannot be UTF-16 at all.
+        let odd = alloc::vec![0xFF, 0xFE, 0x3C, 0x00, 0x41];
+        assert!(decode(&odd).is_err(), "odd length");
+
+        // A lone high surrogate, and a lone low one.
+        let lone_high = alloc::vec![0xFF, 0xFE, 0x00, 0xD8, 0x41, 0x00];
+        assert!(decode(&lone_high).is_err(), "lone high surrogate");
+        let lone_low = alloc::vec![0xFF, 0xFE, 0x00, 0xDC];
+        assert!(decode(&lone_low).is_err(), "lone low surrogate");
+    }
+
+    #[test]
+    fn latin1_maps_every_byte_to_its_code_point() {
+        let mut bytes =
+            b"<?xml version='1.0' encoding='iso-8859-1'?><a>".to_vec();
+        bytes.push(0xE9); // é in Latin-1
+        bytes.extend_from_slice(b"</a>");
+        let text = decode(&bytes).expect("valid latin-1");
+        assert!(text.ends_with("<a>é</a>"), "{text}");
+    }
+
+    #[test]
+    fn invalid_utf8_claiming_to_be_utf8_is_rejected() {
+        // A lone continuation byte is not valid UTF-8, and the document
+        // says it is UTF-8, so this is malformed rather than merely
+        // undecodable.
+        let bytes = alloc::vec![b'<', b'a', b'>', 0x80, b'<', b'/', b'a', b'>'];
+        let err = decode(&bytes).expect_err("not valid utf-8");
+        assert_eq!(err.kind, ErrorKind::MalformedEncoding);
+    }
+
+    #[test]
+    fn an_illegal_encoding_name_is_a_wellformedness_error() {
+        // `EncName ::= [A-Za-z] ([A-Za-z0-9._] | '-')*`. These are not
+        // "an encoding we lack" — they are malformed documents.
+        for bad in ["UTF~8", "utf:8", "-UTF-8", ".UTF-8", "8-UTF", "a/b", ""] {
+            assert!(!is_legal_encoding_name(bad), "{bad} should be illegal");
+        }
+        for good in ["UTF-8", "utf8", "ISO-8859-1", "Shift_JIS", "x.y-z9"] {
+            assert!(is_legal_encoding_name(good), "{good} should be legal");
+        }
+    }
+
+    #[test]
+    fn a_malformed_name_and_an_unsupported_one_are_different_errors() {
+        // The distinction matters: one is the document's fault, the
+        // other is ours, and a conformance runner must score them
+        // differently.
+        let malformed =
+            b"<?xml version='1.0' encoding='UTF~8'?><a/>".as_slice();
+        assert_eq!(
+            decode(malformed).expect_err("illegal name").kind,
+            ErrorKind::MalformedEncoding
+        );
+
+        let unsupported =
+            b"<?xml version='1.0' encoding='Shift_JIS'?><a/>".as_slice();
+        assert_eq!(
+            decode(unsupported).expect_err("not supported").kind,
+            ErrorKind::UnsupportedEncoding
+        );
+    }
+
+    #[test]
+    fn encoding_names_resolve_case_insensitively() {
+        for (name, want) in [
+            ("UTF-8", Encoding::Utf8),
+            ("utf-8", Encoding::Utf8),
+            ("UtF8", Encoding::Utf8),
+            ("us-ascii", Encoding::Utf8),
+            ("UTF-16BE", Encoding::Utf16Be),
+            ("utf-16le", Encoding::Utf16Le),
+            ("ISO-8859-1", Encoding::Latin1),
+            ("latin1", Encoding::Latin1),
+        ] {
+            assert_eq!(Encoding::from_name(name), Some(want), "{name}");
+        }
+        assert_eq!(Encoding::from_name("Shift_JIS"), None);
+    }
+
+    #[test]
+    fn a_bom_overrides_a_conflicting_declaration() {
+        // The specification makes the mark authoritative, and a
+        // document that disagrees with itself is common in the wild.
+        let mut bytes = alloc::vec![0xFF, 0xFE];
+        for unit in "<?xml version='1.0' encoding='UTF-8'?><a/>".encode_utf16()
+        {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        let text = decode(&bytes).expect("BOM wins");
+        assert!(text.ends_with("<a/>"), "{text}");
+    }
+
+    #[test]
+    fn a_document_with_no_declaration_defaults_to_utf8() {
+        assert!(matches!(
+            decode(b"<a>plain</a>").expect("valid"),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn a_declaration_that_does_not_parse_leaves_the_default_in_place() {
+        // Every one of these is a declaration the encoding scanner
+        // cannot make sense of. None of them is an *encoding* error:
+        // the document simply hasn't named an encoding, so UTF-8
+        // applies and any real problem surfaces in the parser instead.
+        for decl in [
+            "<?xml version='1.0'",         // never terminated
+            "<?xml version='1.0'?>",       // no encoding pseudo-attribute
+            "<?xml encoding?>",            // no `=`
+            "<?xml encoding=?>",           // no value at all
+            "<?xml encoding=UTF-8?>",      // unquoted value
+            "<?xml encoding='UTF-8?>",     // never closed
+            "<?xmlno-space?>",             // not a declaration
+        ] {
+            let bytes = alloc::format!("{decl}<a/>");
+            assert!(
+                matches!(decode(bytes.as_bytes()), Ok(Cow::Borrowed(_))),
+                "{decl} should fall back to UTF-8"
+            );
+        }
+    }
+
+    #[test]
+    fn whitespace_is_allowed_around_the_equals_sign() {
+        let bytes = b"<?xml version='1.0' encoding \t=\r\n 'iso-8859-1'?><a/>";
+        assert!(
+            matches!(decode(bytes.as_slice()), Ok(Cow::Owned(_))),
+            "spaced-out declaration should still select Latin-1"
+        );
+    }
+
+    #[test]
+    fn a_truncated_surrogate_pair_at_end_of_input_is_rejected() {
+        // The high half arrives and the buffer simply stops. This is a
+        // different code path from a high half followed by a non-low
+        // unit, and truncation is the likelier real-world failure.
+        let bytes = alloc::vec![0xFF, 0xFE, 0x3D, 0xD8];
+        assert!(decode(&bytes).is_err(), "truncated pair");
+    }
+
+    #[test]
+    fn a_declaration_may_claim_utf16_while_the_bytes_are_not() {
+        // An ASCII declaration announcing UTF-16 contradicts itself:
+        // were the document really UTF-16, the declaration would be
+        // too. The bytes are decoded as declared, and fail.
+        let bytes = b"<?xml version='1.0' encoding='UTF-16'?><a/>";
+        assert_eq!(
+            decode(bytes.as_slice()).expect_err("odd length").kind,
+            ErrorKind::MalformedEncoding
+        );
+        // Even byte count, so it decodes -- into mojibake, not `<a/>`.
+        for label in ["UTF-16LE", "UTF-16BE"] {
+            let src =
+                alloc::format!("<?xml version='1.0' encoding='{label}'?><a/> ");
+            let text = decode(src.as_bytes()).expect("even length");
+            assert!(!text.contains("<a/>"), "{label}: {text}");
+        }
+    }
 }
