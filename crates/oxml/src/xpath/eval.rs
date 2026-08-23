@@ -316,8 +316,11 @@ fn test_matches(
             (NodeTest::Wildcard | NodeTest::Any, Some(NodeKind::Attr(_))) => {
                 true
             }
-            (NodeTest::Name(n), Some(NodeKind::Attr(a))) => {
-                doc.name(a.name).is_some_and(|name| &name.local == n)
+            (NodeTest::Name { namespace, local }, Some(NodeKind::Attr(a))) => {
+                doc.name(a.name).is_some_and(|name| {
+                    &name.local == local
+                        && name.namespace.as_deref() == namespace.as_deref()
+                })
             }
             _ => false,
         };
@@ -325,8 +328,11 @@ fn test_matches(
     match test {
         NodeTest::Any => true,
         NodeTest::Wildcard => doc.is_element(node),
-        NodeTest::Name(n) => {
-            doc.element_name(node).is_some_and(|e| &e.local == n)
+        NodeTest::Name { namespace, local } => {
+            doc.element_name(node).is_some_and(|e| {
+                &e.local == local
+                    && e.namespace.as_deref() == namespace.as_deref()
+            })
         }
         NodeTest::Text => {
             matches!(doc.kind(node), Some(NodeKind::Text(_)))

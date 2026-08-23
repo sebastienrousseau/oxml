@@ -19,8 +19,12 @@ const DOC: &str = "\
 </r>";
 
 fn val(expr: &str) -> String {
+    // `m` is bound for every expression here, because a prefix in an
+    // expression resolves against the expression's own bindings and
+    // not the document's declarations -- an unbound one is a compile
+    // error rather than a match on the local part alone.
     let doc = parse(DOC).expect("well-formed");
-    XPath::compile(expr)
+    XPath::compile_with_namespaces(expr, &[("m", "urn:m")])
         .unwrap_or_else(|e| panic!("`{expr}` failed to compile: {e}"))
         .evaluate(&doc)
         .to_str(&doc)
@@ -220,15 +224,18 @@ fn name_functions_describe_attributes_and_pis_not_only_elements() {
         // Text, comments and the root have neither.
         ("local-name(/)", ""),
     ] {
-        let value = XPath::compile(expr).expect("compiles").evaluate(&doc);
+        let value = XPath::compile_with_namespaces(expr, &[("m", "urn:u")])
+            .expect("compiles")
+            .evaluate(&doc);
         assert_eq!(value.to_str(&doc), want, "{expr}");
     }
 }
 
-/// Selecting an attribute by its namespace.
+/// Selecting an attribute by its namespace with `namespace-uri()`.
 ///
-/// This is the documented workaround for name tests not resolving
-/// prefixes, so it has to actually work.
+/// Once the workaround for name tests not resolving prefixes; now the
+/// way to select on a namespace without naming a prefix at all, which
+/// is still useful when the URI is known and the prefix is not.
 #[test]
 fn attributes_can_be_selected_by_namespace_uri() {
     let doc = parse(r#"<r xmlns:m="urn:u"><x m:a="A" b="B"/></r>"#)
@@ -245,4 +252,92 @@ fn attributes_can_be_selected_by_namespace_uri() {
         .evaluate(&doc);
     assert_eq!(plain.nodes().expect("a node-set").len(), 1);
     assert_eq!(plain.to_str(&doc), "B");
+}
+
+/// A prefix in an expression resolves against the expression's own
+/// bindings, not the document's declarations.
+///
+/// Before 0.0.4 a prefixed name test matched on its local part alone,
+/// so `//m:a` selected every `a` whatever its namespace. That is a
+/// wrong answer with no error attached, which is the worst way for a
+/// query engine to fail: nothing distinguishes it from a document that
+/// really does contain those nodes.
+#[test]
+fn a_prefixed_name_test_matches_only_that_namespace() {
+    let doc = parse(r#"<r xmlns:m="urn:u"><m:a>yes</m:a><a>no</a></r>"#)
+        .expect("well-formed");
+
+    let bound = XPath::compile_with_namespaces("//m:a", &[("m", "urn:u")])
+        .expect("compiles");
+    let found = bound.evaluate(&doc);
+    assert_eq!(found.nodes().expect("a node-set").len(), 1);
+    assert_eq!(found.to_str(&doc), "yes");
+}
+
+#[test]
+fn only_the_uri_matters_never_the_prefix() {
+    // The expression may use a different prefix from the document, and
+    // a document that renames its prefixes still matches. This is the
+    // reason resolution happens against the expression's bindings.
+    let doc =
+        parse(r#"<r xmlns:m="urn:u"><m:a>yes</m:a></r>"#).expect("well-formed");
+    let other = parse(r#"<r xmlns:zz="urn:u"><zz:a>yes</zz:a></r>"#)
+        .expect("well-formed");
+
+    let query = XPath::compile_with_namespaces("//q:a", &[("q", "urn:u")])
+        .expect("compiles");
+    assert_eq!(query.evaluate(&doc).to_str(&doc), "yes");
+    assert_eq!(query.evaluate(&other).to_str(&other), "yes");
+}
+
+#[test]
+fn an_unbound_prefix_is_a_compile_error() {
+    // Loud, rather than a match on the local part.
+    let error = XPath::compile("//m:a").expect_err("unbound");
+    assert!(
+        error.message.contains("unbound namespace prefix"),
+        "{}",
+        error.message
+    );
+    // Binding a different prefix does not help.
+    let error = XPath::compile_with_namespaces("//m:a", &[("q", "urn:u")])
+        .expect_err("still unbound");
+    assert!(error.message.contains("unbound"), "{}", error.message);
+}
+
+#[test]
+fn the_xml_prefix_is_bound_without_being_declared() {
+    // Bound by specification, in expressions as in documents.
+    let doc = parse(r#"<r><a xml:lang="en">x</a></r>"#).expect("well-formed");
+    let query = XPath::compile("//@xml:lang").expect("compiles");
+    assert_eq!(query.evaluate(&doc).to_str(&doc), "en");
+}
+
+#[test]
+fn an_unprefixed_name_test_matches_no_namespace_only() {
+    // XPath 1.0's classic surprise, and what every conforming engine
+    // does: a default namespace does not apply to node tests.
+    let doc = parse(r#"<r xmlns:m="urn:u"><m:a>ns</m:a><a>plain</a></r>"#)
+        .expect("well-formed");
+    let found = XPath::compile("//a").expect("compiles").evaluate(&doc);
+    assert_eq!(found.nodes().expect("a node-set").len(), 1);
+    assert_eq!(found.to_str(&doc), "plain");
+
+    // So a document with a default namespace matches nothing by a bare
+    // name -- the case that surprises people.
+    let defaulted = parse(r#"<r xmlns="urn:u"><item/></r>"#).expect("ok");
+    let bare = XPath::compile("//item").expect("compiles");
+    assert_eq!(bare.evaluate(&defaulted).nodes().expect("set").len(), 0);
+
+    let prefixed =
+        XPath::compile_with_namespaces("//x:item", &[("x", "urn:u")])
+            .expect("compiles");
+    assert_eq!(prefixed.evaluate(&defaulted).nodes().expect("set").len(), 1);
+}
+
+#[test]
+fn a_wildcard_still_ignores_namespaces() {
+    let doc = parse(r#"<r xmlns:m="urn:u"><m:a/><a/></r>"#).expect("ok");
+    let all = XPath::compile("//*").expect("compiles").evaluate(&doc);
+    assert_eq!(all.nodes().expect("a node-set").len(), 3, "r, m:a, a");
 }

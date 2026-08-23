@@ -106,23 +106,17 @@ fn migration_from_sxd_md_line_63() {
     assert!(v.to_boolean());          // no document needed
 }
 
-/// From `doc/MIGRATION-FROM-SXD.md`, line 85.
+/// From `doc/MIGRATION-FROM-SXD.md`, line 84.
 #[rustfmt::skip]
 #[test]
-fn migration_from_sxd_md_line_85() {
+fn migration_from_sxd_md_line_84() {
     use oxml::{XPath, parse};
 
-    let doc = parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#).unwrap();
+    let doc = parse(r#"<r xmlns:m="urn:u"><m:a>yes</m:a><a>no</a></r>"#).unwrap();
 
-    // Both of these select BOTH elements. The prefix is ignored.
-    for expr in ["//x:item", "//item"] {
-        let v = XPath::compile(expr).unwrap().evaluate(&doc);
-        assert_eq!(v.nodes().unwrap().len(), 2, "{expr}");
-    }
-
-    // To select by namespace, test it explicitly.
-    let ns = XPath::compile("//*[namespace-uri()='urn:u']").unwrap();
-    assert_eq!(ns.evaluate(&doc).nodes().unwrap().len(), 1);
+    // sxd: Context::new().set_namespace("m", "urn:u")
+    let q = XPath::compile_with_namespaces("//m:a", &[("m", "urn:u")]).unwrap();
+    assert_eq!(q.evaluate(&doc).to_str(&doc), "yes");
 }
 
 /// From `doc/SECURITY-MODEL.md`, line 39.

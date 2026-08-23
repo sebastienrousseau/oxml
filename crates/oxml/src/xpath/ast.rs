@@ -37,8 +37,20 @@ pub enum Axis {
 pub enum NodeTest {
     /// `*` — any element (or any attribute on the attribute axis).
     Wildcard,
-    /// A local name, matched ignoring namespace.
-    Name(String),
+    /// A name test, resolved at compile time.
+    ///
+    /// `namespace` is the URI the expression's prefix was bound to, or
+    /// `None` for an unprefixed name. Per `XPath` 1.0 an unprefixed name
+    /// test matches only nodes in **no** namespace: the default
+    /// namespace of the expression context does not apply to node
+    /// tests. That is the classic surprise of `XPath` 1.0 and it is what
+    /// every conforming engine does.
+    Name {
+        /// The namespace URI, if the name was prefixed.
+        namespace: Option<String>,
+        /// The local part.
+        local: String,
+    },
     /// `text()`
     Text,
     /// `comment()`

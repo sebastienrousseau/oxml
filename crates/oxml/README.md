@@ -41,7 +41,7 @@
 
 - [Attributes are nodes](#attributes-are-nodes) — why `@lang` returns what you expect
 - [Namespaces resolve by URI](#namespaces-resolve-by-uri) — the element/attribute asymmetry
-- [XPath name tests ignore namespace prefixes](#xpath-name-tests-ignore-namespace-prefixes) — a known defect
+- [XPath name tests resolve namespaces](#xpath-name-tests-resolve-namespaces) — and unprefixed names match no namespace
 - [Number formatting](#number-formatting) — why `sum()` prints `17.49`
 - [Entity expansion is not supported](#entity-expansion-is-not-supported) — and that is the point
 
@@ -393,41 +393,56 @@ An unprefixed **element** takes the default namespace. An unprefixed
 asymmetry is the classic source of namespace bugs, so it is an explicit
 parameter in the parser rather than an assumption.
 
-## XPath name tests ignore namespace prefixes
+## XPath name tests resolve namespaces
 
-**A known defect, and the one most likely to give you a wrong answer
-without an error.** In a path step, oxml matches a name test on its
-local part alone. The prefix is not resolved against the document's
-bindings, so `//x:item` selects every `item` whatever its namespace:
-
-```rust
-use oxml::{XPath, parse};
-
-let doc = parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#).unwrap();
-
-// Both select BOTH elements.
-for expr in ["//x:item", "//item"] {
-    let found = XPath::compile(expr).unwrap().evaluate(&doc);
-    assert_eq!(found.nodes().unwrap().len(), 2, "{expr}");
-}
-```
-
-Namespaces *are* resolved correctly in the tree — `element_name`
-returns the URI, and `ExpandedName` comparison works. It is only the
-name test in an expression that ignores them.
-
-The same applies to attributes: `//@isbn` and `//@m:isbn` both select a
-namespaced attribute.
-
-Until this is fixed, select by namespace explicitly:
+A prefix in an expression is resolved against **the expression's own
+bindings**, not the document's declarations. The same prefix can mean
+different things in the two, and resolving against the document would
+make an expression's meaning depend on which document it ran against.
 
 ```rust
 use oxml::{XPath, parse};
 
-let doc = parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#).unwrap();
-let q = XPath::compile("//*[namespace-uri()='urn:u' and local-name()='item']").unwrap();
-assert_eq!(q.evaluate(&doc).nodes().unwrap().len(), 1);
+let doc = parse(r#"<r xmlns:m="urn:u"><m:a>yes</m:a><a>no</a></r>"#).unwrap();
+
+let q = XPath::compile_with_namespaces("//m:a", &[("m", "urn:u")]).unwrap();
+assert_eq!(q.evaluate(&doc).to_str(&doc), "yes");
+
+// Only the URI matters. The expression may use a different prefix from
+// the document, and a document that renames its prefixes still matches.
+let q = XPath::compile_with_namespaces("//q:a", &[("q", "urn:u")]).unwrap();
+assert_eq!(q.evaluate(&doc).to_str(&doc), "yes");
 ```
+
+**An unbound prefix is a compile error**, not a silent match:
+
+```rust
+use oxml::XPath;
+
+let err = XPath::compile("//m:a").unwrap_err();
+assert!(err.message.contains("unbound namespace prefix"));
+```
+
+That matters more than it looks. Until 0.0.4 a prefixed name test
+matched on its local part alone, so `//m:a` selected every `a`
+whatever its namespace — a wrong answer with no error attached, which
+is the worst way for a query engine to fail.
+
+### Unprefixed names match no namespace
+
+```rust
+use oxml::{XPath, parse};
+
+let doc = parse(r#"<r xmlns:m="urn:u"><m:a>yes</m:a><a>no</a></r>"#).unwrap();
+let q = XPath::compile("//a").unwrap();
+assert_eq!(q.evaluate(&doc).to_str(&doc), "no");
+```
+
+This is XPath 1.0's classic surprise and every conforming engine
+behaves this way: a default namespace in the expression context does
+**not** apply to node tests. If your document declares
+`xmlns="urn:u"` on its root, `//item` matches nothing — bind a prefix
+to that URI and write `//x:item`.
 
 ## Number formatting
 

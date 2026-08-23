@@ -86,6 +86,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    println!("\n== namespaces ==");
+    // A prefix in an expression resolves against the expression's own
+    // bindings, never the document's declarations. The two can use
+    // different prefixes for the same URI, and only the URI matters.
+    let ns = parse(
+        r#"<r xmlns:m="urn:u"><m:item>ns</m:item><item>plain</item></r>"#,
+    )?;
+    let bound = XPath::compile_with_namespaces("//q:item", &[("q", "urn:u")])?;
+    println!(
+        "  //q:item bound to urn:u -> {:?}",
+        bound.evaluate(&ns).to_str(&ns)
+    );
+
+    // An unprefixed name test matches nodes in *no* namespace. This is
+    // XPath 1.0's classic surprise: a default namespace does not apply
+    // to node tests.
+    let bare = XPath::compile("//item")?;
+    println!(
+        "  //item (no namespace)    -> {:?}",
+        bare.evaluate(&ns).to_str(&ns)
+    );
+
+    // An unbound prefix is refused rather than quietly matching on the
+    // local part, which is what this used to do.
+    match XPath::compile("//m:item") {
+        Ok(_) => println!("  unexpectedly compiled"),
+        Err(e) => println!("  //m:item unbound         -> {e}"),
+    }
+
     println!("\n== the compiled form ==");
     // `expr` exposes the parsed syntax tree, which is useful for
     // caching keys, static analysis, or simply showing what an

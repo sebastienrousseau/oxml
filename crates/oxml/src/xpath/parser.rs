@@ -9,7 +9,7 @@
 
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::ast::{Axis, BinaryOp, Expr, NodeTest, Step};
@@ -41,6 +41,14 @@ struct P<'a> {
     /// and an expression is untrusted input in every front end of this
     /// crate. Bounded by [`crate::MAX_DEPTH`].
     depth: usize,
+    /// Prefix-to-URI bindings for name tests.
+    ///
+    /// `XPath` 1.0 resolves a prefix against the *expression's* context,
+    /// not the document's declarations -- the same prefix can mean
+    /// different things in the two, and resolving against the document
+    /// would make an expression's meaning depend on which document it
+    /// ran against.
+    namespaces: &'a [(&'a str, &'a str)],
 }
 
 /// Compile an `XPath` 1.0 expression.
@@ -49,11 +57,25 @@ struct P<'a> {
 ///
 /// Returns [`XPathError`] if the expression is malformed.
 pub fn compile(expr: &str) -> Result<Expr, XPathError> {
+    compile_with(expr, &[])
+}
+
+/// Compile with namespace prefixes bound to URIs.
+///
+/// # Errors
+///
+/// Returns [`XPathError`] if the expression is malformed, or uses a
+/// prefix that `namespaces` does not bind.
+pub fn compile_with(
+    expr: &str,
+    namespaces: &[(&str, &str)],
+) -> Result<Expr, XPathError> {
     let mut p = P {
         s: expr,
         b: expr.as_bytes(),
         i: 0,
         depth: 0,
+        namespaces,
     };
     let e = p.parse_or()?;
     p.ws();
@@ -463,11 +485,34 @@ impl P<'_> {
                 _ => Err(self.err("unknown node type")),
             };
         }
-        // A prefixed name matches on its local part: prefixes are
-        // document-scoped, and binding them here would need a context
-        // this API does not take.
-        let local = name.rsplit(':').next().unwrap_or(&name).to_string();
-        Ok(NodeTest::Name(local))
+        match name.split_once(':') {
+            Some((prefix, local)) => {
+                // `xml` is bound by specification and never declared.
+                let uri = if prefix == "xml" {
+                    "http://www.w3.org/XML/1998/namespace"
+                } else {
+                    self.namespaces
+                        .iter()
+                        .find(|(p, _)| *p == prefix)
+                        .map(|(_, uri)| *uri)
+                        .ok_or_else(|| {
+                            self.err(&alloc::format!(
+                                "unbound namespace prefix `{prefix}`; bind it \
+                                 with XPath::compile_with_namespaces"
+                            ))
+                        })?
+                };
+                Ok(NodeTest::Name {
+                    namespace: Some(uri.to_owned()),
+                    local: local.to_owned(),
+                })
+            }
+            // Unprefixed: matches nodes in no namespace only.
+            None => Ok(NodeTest::Name {
+                namespace: None,
+                local: name,
+            }),
+        }
     }
 
     fn parse_predicates(&mut self) -> Result<Vec<Expr>, XPathError> {

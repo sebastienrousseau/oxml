@@ -74,30 +74,28 @@ which the value already knows.
 
 ## Namespaces
 
-Both resolve namespaces by URI **in the tree**. They differ in
-expressions, and the difference can give you a wrong answer quietly.
+Both resolve namespaces by URI, and both resolve a prefix in an
+expression against bindings you supply rather than against the
+document.
 
-`sxd-xpath` requires you to register prefixes on a `Context`, and an
-unregistered prefix is an error. oxml does not resolve prefixes in a
-name test at all: `//x:item` matches on the local part alone, so it
-selects every `item` regardless of namespace.
+`sxd-xpath` registers prefixes on a `Context`. oxml takes them at
+compile time:
 
 ```rust
 use oxml::{XPath, parse};
 
-let doc = parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#).unwrap();
+let doc = parse(r#"<r xmlns:m="urn:u"><m:a>yes</m:a><a>no</a></r>"#).unwrap();
 
-// Both of these select BOTH elements. The prefix is ignored.
-for expr in ["//x:item", "//item"] {
-    let v = XPath::compile(expr).unwrap().evaluate(&doc);
-    assert_eq!(v.nodes().unwrap().len(), 2, "{expr}");
-}
-
-// To select by namespace, test it explicitly.
-let ns = XPath::compile("//*[namespace-uri()='urn:u']").unwrap();
-assert_eq!(ns.evaluate(&doc).nodes().unwrap().len(), 1);
+// sxd: Context::new().set_namespace("m", "urn:u")
+let q = XPath::compile_with_namespaces("//m:a", &[("m", "urn:u")]).unwrap();
+assert_eq!(q.evaluate(&doc).to_str(&doc), "yes");
 ```
 
-Until this is fixed, filter with `namespace-uri()` rather than writing
-a prefix, because a prefixed name test does not mean what it looks
-like.
+An unbound prefix is a compile error in both. An unprefixed name test
+matches only nodes in no namespace, in both -- that is XPath 1.0, not
+a choice either made.
+
+Before 0.0.4 oxml matched a prefixed name on its local part alone, so
+`//m:a` selected every `a` regardless of namespace. If you are porting
+from a version that old, expressions that appeared to work may have
+been returning more than you thought.
