@@ -142,7 +142,7 @@ pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
     let version = declared_version(input)?;
     if let Some((offset, c)) = input
         .char_indices()
-        .find(|(_, c)| !is_xml_char_for(*c, version))
+        .find(|(_, c)| !is_literal_char_for(*c, version))
     {
         return Err(Error::new(ErrorKind::IllegalCharacter(c), offset));
     }
@@ -236,10 +236,17 @@ impl Parser<'_> {
     /// that `XPath` has no concept of.
     fn skip_prolog(&mut self) -> Result<()> {
         self.skip_whitespace();
-        if self.starts_with("<?xml") {
+        if self.starts_with("<?xml")
+            && !matches!(
+                self.bytes.get(self.pos + 5),
+                Some(c) if is_name_char(char::from(*c))
+            )
+        {
             let end = self.input[self.pos..].find("?>").ok_or_else(|| {
                 Error::new(ErrorKind::Unterminated("XML declaration"), self.pos)
             })?;
+            let decl = &self.input[self.pos + 5..self.pos + end];
+            validate_xml_declaration(decl, self.pos)?;
             self.pos += end + 2;
         }
         loop {
@@ -493,7 +500,14 @@ impl Parser<'_> {
         let end = self.input[self.pos..].find("-->").ok_or_else(|| {
             Error::new(ErrorKind::Unterminated("comment"), start)
         })?;
-        let body = self.input[self.pos..self.pos + end].to_owned();
+        let body = &self.input[self.pos..self.pos + end];
+        // `Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'`
+        // — `--` may not appear inside, and the body may not end with a
+        // single `-` (which would make the terminator `--->`).
+        if body.contains("--") || body.ends_with('-') {
+            return Err(Error::new(ErrorKind::MalformedComment, start));
+        }
+        let body = body.to_owned();
         self.pos += end + 3;
         Ok(body)
     }
@@ -502,6 +516,22 @@ impl Parser<'_> {
         let start = self.pos;
         self.pos += 2; // '<?'
         let target = self.parse_name()?;
+        // `PITarget ::= Name - (('X'|'x')('M'|'m')('L'|'l'))`. The name
+        // `xml` in any case is reserved, so a second XML declaration
+        // later in the document is not merely misplaced — it is not a
+        // legal processing instruction at all.
+        if target.eq_ignore_ascii_case("xml") {
+            return Err(Error::new(ErrorKind::ReservedPiTarget, self.pos));
+        }
+        // The target must be followed by whitespace or `?>`; anything
+        // else means the name stopped early on an illegal character.
+        if !matches!(
+            self.bytes.get(self.pos),
+            Some(b' ' | b'\t' | b'\r' | b'\n')
+        ) && !self.starts_with("?>")
+        {
+            return Err(Error::new(ErrorKind::InvalidName, self.pos));
+        }
         let end = self.input[self.pos..].find("?>").ok_or_else(|| {
             Error::new(ErrorKind::Unterminated("processing instruction"), start)
         })?;
@@ -853,6 +883,93 @@ pub(crate) enum Version {
     V11,
 }
 
+/// Check the structure of an XML declaration.
+///
+/// ```text
+/// XMLDecl ::= '<?xml' VersionInfo EncodingDecl? SDDecl? S? '?>'
+/// ```
+///
+/// The pseudo-attributes are **ordered** and each must be preceded by
+/// whitespace. Scanning to `?>` without checking accepts
+/// `version="1.0"standalone="yes"`, which has no separating space, and
+/// accepts them in the wrong order.
+fn validate_xml_declaration(decl: &str, offset: usize) -> Result<()> {
+    let mut rest = decl;
+    let mut seen: Vec<&str> = Vec::new();
+
+    loop {
+        let trimmed = rest.trim_start();
+        if trimmed.is_empty() {
+            break;
+        }
+        // Each pseudo-attribute must be separated from what precedes it
+        // by whitespace.
+        if trimmed.len() == rest.len() {
+            return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+        }
+        rest = trimmed;
+
+        let name_end = rest
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(rest.len());
+        let name = &rest[..name_end];
+        if !matches!(name, "version" | "encoding" | "standalone") {
+            return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+        }
+        if seen.contains(&name) {
+            return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+        }
+        // Order is fixed by the grammar, not merely conventional.
+        let rank = |n: &str| match n {
+            "version" => 0u8,
+            "encoding" => 1,
+            _ => 2,
+        };
+        if seen.last().is_some_and(|prev| rank(name) <= rank(prev)) {
+            return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+        }
+        seen.push(name);
+
+        let after = rest[name_end..].trim_start();
+        let Some(after) = after.strip_prefix('=') else {
+            return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+        };
+        let after = after.trim_start();
+        let Some(quote) =
+            after.chars().next().filter(|c| *c == '"' || *c == '\'')
+        else {
+            return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+        };
+        let body = &after[1..];
+        let Some(close) = body.find(quote) else {
+            return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+        };
+        let value = &body[..close];
+        match name {
+            "standalone" if !matches!(value, "yes" | "no") => {
+                return Err(Error::new(
+                    ErrorKind::MalformedDeclaration,
+                    offset,
+                ));
+            }
+            "encoding" if !crate::encoding::is_legal_encoding_name(value) => {
+                return Err(Error::new(
+                    ErrorKind::MalformedDeclaration,
+                    offset,
+                ));
+            }
+            _ => {}
+        }
+        rest = &body[close + 1..];
+    }
+
+    // `VersionInfo` is required, not optional.
+    if seen.first() != Some(&"version") {
+        return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+    }
+    Ok(())
+}
+
 /// The XML version the declaration names, defaulting to 1.0.
 ///
 /// # Errors
@@ -895,11 +1012,10 @@ fn declared_version(input: &str) -> Result<Version> {
     }
 }
 
-/// `Char`, for the version in force.
+/// `Char`, for the version in force — the rule for a character
+/// arriving via a **reference**.
 ///
-/// XML 1.1 widens the production to admit the C0 and C1 controls, but
-/// only as character references — a literal one is still forbidden, and
-/// that is checked where references are decoded rather than here.
+/// XML 1.1 widens the production to admit the C0 and C1 controls.
 #[must_use]
 const fn is_xml_char_for(c: char, version: Version) -> bool {
     match version {
@@ -909,6 +1025,36 @@ const fn is_xml_char_for(c: char, version: Version) -> bool {
             | '\u{E000}'..='\u{FFFD}'
             | '\u{10000}'..='\u{10FFFF}'
         ),
+    }
+}
+
+/// `RestrictedChar`, XML 1.1 production 2a.
+///
+/// ```text
+/// RestrictedChar ::= [#x1-#x8] | [#xB-#xC] | [#xE-#x1F]
+///                  | [#x7F-#x84] | [#x86-#x9F]
+/// ```
+#[must_use]
+const fn is_restricted_char(c: char) -> bool {
+    matches!(c,
+        '\u{1}'..='\u{8}' | '\u{B}'..='\u{C}' | '\u{E}'..='\u{1F}'
+        | '\u{7F}'..='\u{84}' | '\u{86}'..='\u{9F}'
+    )
+}
+
+/// Whether `c` may appear **literally** in the document text.
+///
+/// This is deliberately stricter than [`is_xml_char_for`]. XML 1.1
+/// admits the C0 and C1 controls into `Char`, but production 2a
+/// forbids them appearing literally: they must be written as character
+/// references. Conflating the two rules accepts 63 documents the suite
+/// marks not-well-formed — a control character pasted into a comment or
+/// into content is exactly the case this separates.
+#[must_use]
+const fn is_literal_char_for(c: char, version: Version) -> bool {
+    match version {
+        Version::V10 => is_xml_char(c),
+        Version::V11 => is_xml_char_for(c, version) && !is_restricted_char(c),
     }
 }
 

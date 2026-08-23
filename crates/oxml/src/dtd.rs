@@ -249,6 +249,10 @@ impl<'a> DtdParser<'a> {
             self.pos += 4;
             return match self.input[self.pos..].find("-->") {
                 Some(i) => {
+                    let body = &self.input[self.pos..self.pos + i];
+                    if body.contains("--") || body.ends_with('-') {
+                        return Err((self.pos, "`--` inside a comment"));
+                    }
                     self.pos += i + 3;
                     Ok(())
                 }
@@ -261,7 +265,20 @@ impl<'a> DtdParser<'a> {
             // edition. Skipping to `?>` accepted illegal targets — a
             // whole class of not-well-formed documents that the suite
             // tests for at production 85.
-            let _ = self.name()?;
+            let target = self.name()?;
+            if target.eq_ignore_ascii_case("xml") {
+                return Err((self.pos, "`xml` is a reserved PI target"));
+            }
+            // `PI ::= '<?' PITarget (S (Char* - (Char* '?>' Char*)))? '?>'`
+            // — the target must be followed by whitespace or the close.
+            // Without this the name simply stops at the first illegal
+            // character and the rest is swallowed as data, accepting a
+            // document that is not well-formed.
+            if !matches!(self.peek(), Some(b' ' | b'\t' | b'\r' | b'\n'))
+                && !self.starts_with("?>")
+            {
+                return Err((self.pos, "illegal character in a PI target"));
+            }
             return match self.input[self.pos..].find("?>") {
                 Some(i) => {
                     self.pos += i + 2;
@@ -313,7 +330,7 @@ impl<'a> DtdParser<'a> {
         let _ = self.name()?;
         self.require_ws()?;
         if self.peek() == Some(b'(') {
-            self.skip_balanced_parens()?;
+            self.parse_content_spec()?;
         } else {
             let kw = self.name()?;
             if !matches!(kw, "EMPTY" | "ANY") {
@@ -325,6 +342,109 @@ impl<'a> DtdParser<'a> {
         }
         self.skip_ws();
         self.expect(b'>', "unterminated element declaration")
+    }
+
+    /// `contentspec` — the parenthesised part of an `<!ELEMENT>`.
+    ///
+    /// ```text
+    /// Mixed    ::= '(' S? '#PCDATA' (S? '|' S? Name)* S? ')*'
+    ///            | '(' S? '#PCDATA' S? ')'
+    /// children ::= (choice | seq) ('?' | '*' | '+')?
+    /// cp       ::= (Name | choice | seq) ('?' | '*' | '+')?
+    /// choice   ::= '(' S? cp ( S? '|' S? cp )+ S? ')'
+    /// seq      ::= '(' S? cp ( S? ',' S? cp )* S? ')'
+    /// ```
+    ///
+    /// Matching brackets is not enough. `(doc|#PCDATA)*` balances but is
+    /// not a legal model — `#PCDATA` must come first — and a group may
+    /// not mix `|` with `,`. Skipping to the closing parenthesis
+    /// accepted both.
+    fn parse_content_spec(&mut self) -> Result<(), DtdError> {
+        self.pos += 1; // '('
+        self.skip_ws();
+        if self.starts_with("#PCDATA") {
+            self.pos += "#PCDATA".len();
+            return self.parse_mixed_tail();
+        }
+        self.parse_group_tail()?;
+        if matches!(self.peek(), Some(b'?' | b'*' | b'+')) {
+            self.pos += 1;
+        }
+        Ok(())
+    }
+
+    /// The rest of a `Mixed` model, after `#PCDATA`.
+    fn parse_mixed_tail(&mut self) -> Result<(), DtdError> {
+        let mut had_names = false;
+        loop {
+            self.skip_ws();
+            match self.peek() {
+                Some(b'|') => {
+                    self.pos += 1;
+                    self.skip_ws();
+                    let _ = self.name()?;
+                    had_names = true;
+                }
+                Some(b')') => {
+                    self.pos += 1;
+                    // With alternatives the model must be starred;
+                    // `(#PCDATA)` alone must not be.
+                    if had_names {
+                        if self.peek() == Some(b'*') {
+                            self.pos += 1;
+                            return Ok(());
+                        }
+                        return Err((
+                            self.pos,
+                            "a mixed model with names must end in `)*`",
+                        ));
+                    }
+                    if self.peek() == Some(b'*') {
+                        self.pos += 1;
+                    }
+                    return Ok(());
+                }
+                _ => return Err((self.pos, "malformed mixed content model")),
+            }
+        }
+    }
+
+    /// A `choice` or `seq`, after its opening parenthesis.
+    fn parse_group_tail(&mut self) -> Result<(), DtdError> {
+        // `None` until the first separator fixes which kind this is.
+        let mut separator: Option<u8> = None;
+        loop {
+            self.skip_ws();
+            // Each particle is a name or a nested group.
+            if self.peek() == Some(b'(') {
+                self.pos += 1;
+                self.parse_group_tail()?;
+            } else {
+                let _ = self.name()?;
+            }
+            if matches!(self.peek(), Some(b'?' | b'*' | b'+')) {
+                self.pos += 1;
+            }
+            self.skip_ws();
+            match self.peek() {
+                Some(sep @ (b'|' | b',')) => {
+                    // A group is a choice or a sequence, never both.
+                    if separator.is_some_and(|s| s != sep) {
+                        return Err((
+                            self.pos,
+                            "a content model group cannot mix `|` and `,`",
+                        ));
+                    }
+                    separator = Some(sep);
+                    self.pos += 1;
+                }
+                Some(b')') => {
+                    self.pos += 1;
+                    return Ok(());
+                }
+                _ => return Err((self.pos, "malformed content model")),
+            }
+        }
     }
 
     fn skip_balanced_parens(&mut self) -> Result<(), DtdError> {

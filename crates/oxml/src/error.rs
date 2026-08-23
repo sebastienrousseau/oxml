@@ -57,6 +57,12 @@ pub enum ErrorKind {
     ///
     /// [`Limits`]: crate::Limits
     EntityLimitExceeded,
+    /// A comment contains `--`, or ends with `-`.
+    MalformedComment,
+    /// The XML declaration does not match its grammar.
+    MalformedDeclaration,
+    /// A processing instruction used the reserved target `xml`.
+    ReservedPiTarget,
     /// The declaration names an XML version this parser does not
     /// implement.
     UnsupportedVersion,
@@ -170,6 +176,15 @@ impl fmt::Display for Error {
             }
             ErrorKind::EntityLimitExceeded => {
                 f.write_str("entity expansion exceeds the limit")
+            }
+            ErrorKind::MalformedComment => {
+                f.write_str("`--` is not allowed inside a comment")
+            }
+            ErrorKind::MalformedDeclaration => {
+                f.write_str("malformed XML declaration")
+            }
+            ErrorKind::ReservedPiTarget => {
+                f.write_str("`xml` is a reserved processing-instruction target")
             }
             ErrorKind::UnsupportedVersion => {
                 f.write_str("unsupported XML version")
