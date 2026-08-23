@@ -20,6 +20,11 @@ confidence-threshold = 0.93
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# A path dependency on a crate in this same workspace has no version to
+# pin, and pinning one would have to be bumped in lockstep for no
+# benefit. This permits exactly that case and nothing else: a wildcard
+# on a crates.io dependency is still an error.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
