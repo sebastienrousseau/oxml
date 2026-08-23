@@ -8,7 +8,7 @@
 //! characters). No backtracking, no intermediate token vector — the
 //! tree is built directly as the scan proceeds.
 
-use alloc::borrow::ToOwned;
+use alloc::borrow::{Cow, ToOwned};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -133,13 +133,76 @@ pub fn parse_bytes_with(input: &[u8], limits: Limits) -> Result<Document> {
 /// production forbids, or exceeds one of `limits`. Each bound has its
 /// own [`ErrorKind`], so a caller can tell which one was hit.
 pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
+    // End-of-line normalisation happens before anything else, because
+    // the specification defines it as something the processor behaves
+    // as though it had done "on input, before parsing". Doing it later
+    // means every rule that inspects whitespace has to know about it,
+    // and the thirteenth such rule is the one that forgets.
+    let version = declared_version(input)?;
+    match normalize_line_endings(input, version) {
+        Cow::Borrowed(text) => parse_normalized(text, limits, version),
+        Cow::Owned(text) => parse_normalized(&text, limits, version),
+    }
+}
+
+/// Translate line endings to `\n`, per XML 1.0 and 1.1 section 2.11.
+///
+/// XML 1.0 collapses `\r\n` and a lone `\r`. XML 1.1 adds NEL
+/// (U+0085) and LINE SEPARATOR (U+2028), and treats `\r` followed by
+/// NEL as one ending rather than two.
+///
+/// Borrows when there is nothing to change, which is the common case:
+/// a document written on a Unix-like system contains no carriage
+/// return at all and pays only for the scan.
+///
+/// Character references are untouched, which is what the
+/// specification requires. `&#xD;` is still markup at this point and
+/// becomes a carriage return when the reference is expanded -- it is
+/// the only way to write one that survives.
+fn normalize_line_endings(input: &str, version: Version) -> Cow<'_, str> {
+    let terminator = |c: char| {
+        c == '\r'
+            || (version == Version::V11 && (c == '\u{85}' || c == '\u{2028}'))
+    };
+    if !input.chars().any(terminator) {
+        return Cow::Borrowed(input);
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                let paired = matches!(chars.peek(), Some('\n'))
+                    || (version == Version::V11
+                        && matches!(chars.peek(), Some('\u{85}')));
+                if paired {
+                    // The pair is one line ending; drop the second half.
+                    let _ = chars.next();
+                }
+                out.push('\n');
+            }
+            '\u{85}' | '\u{2028}' if version == Version::V11 => {
+                out.push('\n');
+            }
+            other => out.push(other),
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// Parse a document whose line endings are already normalised.
+fn parse_normalized(
+    input: &str,
+    limits: Limits,
+    version: Version,
+) -> Result<Document> {
     // Checked once over the whole input rather than at each construct.
     // The `Char` production applies everywhere — content, attribute
     // values, comments, even the DTD — so a per-construct check would
     // have to be repeated in a dozen places and would be forgotten in
     // the thirteenth. One pass is also faster than one branch per
     // character in the hot loops.
-    let version = declared_version(input)?;
     if let Some((offset, c)) = input
         .char_indices()
         .find(|(_, c)| !is_literal_char_for(*c, version))

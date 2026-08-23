@@ -2,8 +2,8 @@
 
 # Design note — XML 1.1 line-ending normalisation
 
-**Status:** Diagnosed, not implemented. Tracks the single W3C
-conformance test that oxml rejects wrongly.
+**Status:** Implemented. Kept as the record of what the change had
+to get right.
 
 ## The failure
 
@@ -43,11 +43,16 @@ oxml's whitespace tests are byte-level (`' '`, `'\t'`, `'\r'`, `'\n'`).
 U+0085 is two bytes in UTF-8 (`0xC2 0x85`) and U+2028 is three, so
 neither is recognised.
 
-## Why it is not a small fix
+## Why it looked harder than it was
 
-Normalisation **rewrites the input**. `parse` currently takes a `&str`
-and borrows it; producing a normalised copy means either allocating one
-per parse or threading a second representation through the parser.
+Normalisation **rewrites the input**, and the note originally recorded
+this as blocked on the owned-input change, on the assumption that a
+normalised copy could not outlive the call.
+
+That was wrong. `Document` owns every string it holds and has no
+lifetime parameter, so parsing from a temporary `String` is fine --
+the tree does not borrow from it. The borrowing rewrite that would
+have made this hard has not happened, so the change is local.
 
 Three options:
 
@@ -62,21 +67,45 @@ Three options:
    one, and `\r\n` inside a text node still has to collapse to `\n`
    somewhere.
 
-**Option 2 is the intended approach**, and it composes with
-[ADR 0007](../adr/0007-owned-strings-for-now.md): once the document
-owns its input, the normalised copy is what it owns, and the cost
-disappears into an allocation that is already happening.
+**Option 2 is what was implemented.** `normalize_line_endings` scans
+for a terminator and returns `Cow::Borrowed` when there is none, which
+is every document written on a Unix-like system. Only a document that
+actually contains a carriage return, NEL or LINE SEPARATOR pays for a
+copy.
 
-## What to check when implementing
+When the owned-input change lands
+([ADR 0007](../adr/0007-owned-strings-for-now.md)), the normalised copy
+becomes the thing the document owns and the allocation disappears into
+one that is already happening.
 
-- Offsets. `Error::offset` indexes the string the parser saw. If that
-  is a normalised copy, offsets no longer index the caller's input, and
-  `line_column` would report positions into a document the caller does
-  not have. Either map back, or document the change.
-  `tests/properties.rs` asserts offsets land on character boundaries;
-  that test should be extended to cover a normalised parse.
-- XML 1.0 documents must **not** treat U+0085 as whitespace. The rules
-  differ by version, and `Version` is already tracked on the parser.
-- The conformance baseline will move by one test. That is a deliberate
-  edit with a commit message, by
+## What the fix had to get right
+
+- **Offsets.** `Error::offset` indexes the string the parser saw, which
+  is the normalised copy. Line and column survive it: every removed
+  `\r` sits immediately before the `\n` it pairs with, so the number of
+  `\n` before any point is unchanged and the column counts from the
+  same place. A lone `\r`, or a NEL in 1.1, *becomes* a line break --
+  and the reported line is then the one the specification says it is.
+- **Character references.** `&#xD;` is markup when normalisation runs,
+  so it survives and expands to a carriage return afterwards. It is the
+  only way to write one, and normalising it would make the character
+  unrepresentable.
+- **Version differences.** U+0085 is a line ending in 1.1 and an
+  ordinary character in 1.0. Treating it as whitespace in 1.0 would
+  accept documents the specification says are malformed, so
+  `<a\u{85}b="h"/>` is still an error without a 1.1 declaration.
+- **The whole entity, not just text.** Comments and CDATA are
+  normalised too, because the rule applies before parsing.
+- **The baseline.** It moved by one test, as a deliberate edit, by
   [ADR 0006](../adr/0006-baseline-ratchet.md).
+
+## What it also fixed
+
+The note was written about XML 1.1 because that was the failing
+conformance test. Running the cases first showed that **XML 1.0
+normalisation was missing as well**: `<a>x\r\ny</a>` returned
+`"x\r\ny"` where the specification requires `"x\ny"`.
+
+That affects every document written on Windows, and nothing in the
+conformance suite caught it -- the suite tests whether a document is
+accepted, not what its text turns out to be.

@@ -20,7 +20,7 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2393 pass, 164 fail, 0 panic, 28 unsupported, 0 blocked
+overall  2394 pass, 163 fail, 0 panic, 28 unsupported, 0 blocked
          93.6% of 2557 decided (98.9% coverage of 2585)
 ```
 
@@ -59,9 +59,9 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-164 failures, of which **163 are the parser being too permissive** —
-accepting a document the suite says is not well-formed — and **one is
-the parser being too strict**.
+163 failures, and **every one of them is the parser being too
+permissive** — accepting a document the suite says is not well-formed.
+There is no longer a document the parser wrongly rejects.
 
 That asymmetry matters. A parser that wrongly accepts produces a tree
 from a document another implementation would reject, so two systems
@@ -72,9 +72,9 @@ here.
 | Direction | Count |
 |---|---|
 | Accepted a document that is not well-formed | 163 |
-| Rejected a valid document | 1 |
+| Rejected a valid document | 0 |
 
-By submission: ibm 76, xmltest 43, oasis 20, eduni 18, sun 7.
+By submission: ibm 76, xmltest 43, oasis 20, eduni 17, sun 7.
 
 The bulk need the **external DTD subset** — declarations in a separate
 file, referenced by `SYSTEM` or `PUBLIC`. oxml parses the internal
@@ -86,33 +86,30 @@ Closing that gap means letting a caller supply external subsets from
 their own storage, so the parser can validate against them without ever
 opening a file itself. That is the intended fix and it is not done.
 
-## The one document rejected wrongly
+## The document that was rejected wrongly, and is not any more
 
-`eduni/rmt-e2e-50`, and it is a genuine defect rather than a missing
-feature:
+`eduni/rmt-e2e-50` was the single document in the suite that oxml
+refused and should not have:
 
 ```
 <?xml version="1.1" encoding="iso-8859-1"?>
-<!DOCTYPE foo [
-<!ELEMENT foo ANY>
-<!ATTLIST foo bar CDATA #IMPLIED>
-]>
+<!DOCTYPE foo [ … ]>
 <foo\x85bar="hello"/>
 ```
 
-Byte `0x85` in ISO-8859-1 is U+0085, NEXT LINE. **XML 1.1 §2.11**
-requires a processor to behave as though it had normalised U+0085 and
-U+2028 to U+000A before parsing, alongside the XML 1.0 rules for
-carriage return. So the document reads `<foo` LF `bar="hello"/>` — the
-NEL separates the element name from its attribute, and the document is
-valid.
+Byte `0x85` in ISO-8859-1 is U+0085, NEXT LINE, which **XML 1.1
+§2.11** requires a processor to normalise to `\n` before parsing. So
+the document reads `<foo` LF `bar="hello"/>` — the NEL separates the
+element name from its attribute — and it is valid.
 
-oxml rejects it with `expected a name`, because its whitespace tests
-are byte-level (`' '`, `'\t'`, `'\r'`, `'\n'`) and U+0085 is two bytes
-in UTF-8. The fix is a line-ending normalisation pass ahead of the
-parser, applying the XML 1.1 rules when the declaration names 1.1. It
-is not a local change: normalisation rewrites the input, and `parse`
-currently borrows the caller's `&str` rather than owning a copy.
+Fixed by normalising line endings ahead of the parser. Writing the
+cases out first showed that **XML 1.0 normalisation was missing too**:
+`<a>x\r\ny</a>` returned `"x\r\ny"` where the specification requires
+`"x\ny"`, which affects every document written on Windows. The
+conformance suite never caught that, because it tests whether a
+document is *accepted*, not what its text turns out to be.
+
+See [the design note](design/xml-1-1-line-endings.md).
 
 ## What is unsupported, and why
 

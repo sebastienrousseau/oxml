@@ -1,4 +1,4 @@
-#counts	pass=2393	fail=164	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2394	fail=163	panic=0	unsupported=28	blocked=0	total=2585
 sun	cond01	fail	accepted a document that is not well-formed
 sun	cond02	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
@@ -165,7 +165,6 @@ eduni	rmt-003	fail	accepted a document that is not well-formed
 eduni	rmt-004	fail	accepted a document that is not well-formed
 eduni	rmt-005	fail	accepted a document that is not well-formed
 eduni	rmt-e2e-38	fail	accepted a document that is not well-formed
-eduni	rmt-e2e-50	fail	rejected a valid document: at byte 120: expected a name
 eduni	rmt-e3e-12	fail	accepted a document that is not well-formed
 eduni	rmt-ns-e1.0-13a	fail	accepted a document that is not well-formed
 eduni	rmt-ns-e1.0-13b	fail	accepted a document that is not well-formed
