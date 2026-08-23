@@ -356,7 +356,11 @@ impl Parser<'_> {
             ));
         };
 
-        let name = self.expand(&qname, true, tag_start)?;
+        // Interned directly from the qualified name. Building an
+        // `ExpandedName` first and interning that allocated its two
+        // strings for every element — half a million of them on the
+        // benchmark document — only to drop all but six.
+        let name_id = self.intern_qname(&qname, tag_start)?;
 
         // Resolve attribute names first so duplicates are detected
         // before any node is created — otherwise a rejected element
@@ -377,7 +381,6 @@ impl Parser<'_> {
             resolved.push(Attribute { name: an, value });
         }
 
-        let name_id = self.intern(&name);
         let node = self.doc.push(
             NodeKind::Element {
                 name: name_id,
@@ -789,28 +792,51 @@ impl Parser<'_> {
         }
     }
 
-    /// Intern an element name, returning a handle to it.
+    /// Intern an element name from its qualified form.
     ///
-    /// Names repeat heavily — the benchmark document has 500,001
-    /// elements sharing six distinct names — so this replaces half a
-    /// million allocations with six. The index is keyed on the local
-    /// part so a document with many distinct names does not degrade to
-    /// a linear scan of the whole table.
-    fn intern(&mut self, name: &ExpandedName) -> crate::tree::NameId {
-        if let Some(candidates) = self.name_index.get(name.local.as_str()) {
+    /// Resolves the prefix and looks the result up *before* building
+    /// anything, so a name already seen costs no allocation at all —
+    /// which is the common case by a wide margin.
+    fn intern_qname(
+        &mut self,
+        qname: &str,
+        offset: usize,
+    ) -> Result<crate::tree::NameId> {
+        let (prefix, local) = match qname.split_once(':') {
+            Some((p, l)) => (Some(p), l),
+            None => (None, qname),
+        };
+        // Borrowed from the namespace stack, which is a different field
+        // from the arena and the index, so this does not conflict with
+        // the mutation below.
+        let uri: Option<&str> = match prefix {
+            Some("xml") => Some("http://www.w3.org/XML/1998/namespace"),
+            Some(p) => Some(self.ns.resolve(p).ok_or_else(|| {
+                Error::new(ErrorKind::UnboundPrefix(p.to_owned()), offset)
+            })?),
+            // An unprefixed *element* takes the default namespace when
+            // one is in scope; an empty binding means "no namespace".
+            None => self.ns.resolve("").filter(|u| !u.is_empty()),
+        };
+
+        if let Some(candidates) = self.name_index.get(local) {
             for &id in candidates {
-                if self.doc.names[id as usize].namespace == name.namespace {
-                    return crate::tree::NameId(id);
+                if self.doc.names[id as usize].namespace.as_deref() == uri {
+                    return Ok(crate::tree::NameId(id));
                 }
             }
         }
+
         let id = u32::try_from(self.doc.names.len()).unwrap_or(u32::MAX);
-        self.doc.names.push(name.clone());
+        self.doc.names.push(ExpandedName {
+            namespace: uri.map(alloc::string::ToString::to_string),
+            local: local.to_owned(),
+        });
         self.name_index
-            .entry(name.local.clone())
+            .entry(local.to_owned())
             .or_default()
             .push(id);
-        crate::tree::NameId(id)
+        Ok(crate::tree::NameId(id))
     }
 
     /// `NameStartChar`, for the edition in force.
