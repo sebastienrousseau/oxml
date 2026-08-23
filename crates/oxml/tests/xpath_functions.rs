@@ -192,7 +192,7 @@ fn nesting_within_the_limit_still_compiles() {
 
 /// `local-name()` and `namespace-uri()` describe attributes too.
 ///
-/// Both read the node's expanded name, and XPath 1.0 gives one to
+/// Both read the node's expanded name, and `XPath` 1.0 gives one to
 /// elements *and* attributes. Reading only the element name made both
 /// answer the empty string for every attribute, which is wrong on its
 /// own and also broke the only workaround available for selecting an
