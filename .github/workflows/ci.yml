@@ -169,6 +169,11 @@ jobs:
       # measured rather than asserted. Mentioning a function in a
       # comment does not count; calling it does.
       - run: python3 scripts/check-example-coverage.py
+      # The root README is what GitHub shows; the crate README is what
+      # docs.rs shows and the only one compiled as doctests. When they
+      # drift it is always the root one that goes stale, and its
+      # doctests stay green because they run against the other file.
+      - run: ./scripts/check-readmes-match.sh
 
   no-std:
     name: no_std (bare metal)

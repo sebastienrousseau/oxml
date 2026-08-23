@@ -32,7 +32,7 @@
 
 - [One-minute migration](#one-minute-migration) — name-for-name mapping from `sxd-xpath`, `roxmltree`, `quick-xml`, `libxml`
 - [Why this approach?](#why-this-approach) — design rationale
-- [Capabilities in 0.0.3](#capabilities-in-003) — release inventory
+- [Capabilities in 0.0.4](#capabilities-in-004) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — what each crate does and does not do
 - [Benchmarks](#benchmarks) — measured, with the method stated
 - [Features](#features) — cargo feature flags
@@ -47,8 +47,12 @@
 **Practical**
 
 - [Library usage](#library-usage) — the full surface
+- [Configuration](#configuration) — limits, profiles, cargo features
+- [Error reporting](#error-reporting) — offsets, line/column, carets
+- [Encodings](#encodings) — UTF-8, UTF-16, ISO-8859-1
 - [Examples](#examples) — runnable programs
 - [When not to use oxml](#when-not-to-use-oxml) — honestly
+- [FAQ](#faq) — twenty questions, answered directly
 - [Development](#development) — building, testing, benchmarking
 - [Security](#security) — threat model
 - [Documentation](#documentation)
@@ -227,23 +231,32 @@ Two architectural choices motivate the design:
    are usually well-vetted, but their existence makes a
    security-conscious downstream audit meaningfully harder.
 
-## Capabilities in 0.0.3
+## Capabilities in 0.0.4
 
 **Parsing**
 
 - Elements, attributes, text, comments, processing instructions, CDATA
-- XML declaration and `DOCTYPE` skipping, including bracketed internal
-  subsets containing `>`
+- XML declaration, and a full internal-subset `DOCTYPE` parser:
+  `<!ELEMENT>`, `<!ATTLIST>`, `<!ENTITY>`, `<!NOTATION>`, conditional
+  sections, parameter-entity references and content models
 - Namespace resolution by URI, with the `xml:` prefix bound implicitly
-- The five predefined entities and numeric character references
+- Internal general entities, the five predefined entities, and numeric
+  character references
+- XML 1.0 fourth and fifth edition name rules, selectable per parse
+- XML 1.1, including the `RestrictedChar` production
+- UTF-8, UTF-16 (both byte orders, with or without a BOM) and
+  ISO-8859-1, chosen by BOM or declaration
 - Adjacent character data merged, so a caller never sees two text
   siblings in a row
 
 **Tree**
 
-- Arena-backed, index-addressed nodes
+- Arena-backed, index-addressed nodes; `NodeId` is `Copy` and
+  pointer-sized
+- Child and attribute lists as `(start, len)` ranges into shared arenas
 - Parent, children, descendants, text (XPath `string-value` semantics)
 - Attributes as first-class nodes
+- `Send + Sync`, so one document serves any number of threads
 
 **XPath 1.0**
 
@@ -259,8 +272,25 @@ Two architectural choices motivate the design:
   `starts-with`, `substring`, `string-length`, `normalize-space`,
   `local-name`, `namespace-uri`, `floor`, `ceiling`, `round`, and
   arithmetic, comparison, boolean and union operators
+- Compiled once, evaluated many times; `Send + Sync`
 
-**Not yet:** serialisation, XSD validation, XSLT, XPath 2.0+.
+**Safety and limits**
+
+- Ten configurable bounds, in three profiles
+- External entities never dereferenced
+- Entity expansion bounded per document, not per reference
+- Recursion bounded, so no input reaches a stack overflow
+
+**Verification**
+
+- 2,393 of 2,557 decided W3C conformance tests pass (93.6%), with
+  98.9% of the 2,585-test suite reaching a decision and **zero panics**
+- Over 240 tests and 16 doctests; 97.4% line coverage, gated in CI
+- Five fuzz targets, Miri, property tests, and a feature powerset build
+
+**Not yet:** serialisation, mutation, XSD validation, XSLT, XPath 2.0+,
+and the external DTD subset — which is what most of the remaining
+conformance failures need.
 
 ## Ecosystem comparison
 
@@ -458,88 +488,177 @@ assert_eq!(q.evaluate(&doc).to_str(&doc), "1");
 
 ## Examples
 
+Every example compiles and runs in CI, and a CI job checks that
+between them they call every public function in the crate — so an API
+added without an example fails the build rather than going
+undocumented.
+
 ```bash
 cargo run --example parse_and_query
 ```
 
 | Example | What it shows |
 |---|---|
-| [`parse_and_query`](crates/oxml/examples/parse_and_query.rs) | XPath queries and direct tree traversal side by side |
+| [`parse_and_query`](examples/parse_and_query.rs) | XPath queries and direct tree traversal side by side |
+| [`walk_the_tree`](examples/walk_the_tree.rs) | Node kinds, parents, children, descendants, and comparing expanded names |
+| [`read_attributes`](examples/read_attributes.rs) | Attributes by local name and by namespace, and attributes as nodes |
+| [`xpath_values`](examples/xpath_values.rs) | The four XPath value types, conversions between them, and evaluating from a context node |
+| [`handle_errors`](examples/handle_errors.rs) | Matching on `ErrorKind`, and drawing a caret under the offending line |
+| [`apply_limits`](examples/apply_limits.rs) | Billion laughs, XXE, depth bounds, and the cost of each profile |
+| [`decode_bytes`](examples/decode_bytes.rs) | The same document in five encodings, and the two kinds of encoding failure |
+
+## Configuration
+
+Everything configurable lives in [`Limits`]. There is no global state,
+no builder, and no environment variable: a `Limits` value is passed to
+`parse_with` or `parse_bytes_with`, and two documents parsed on two
+threads can use different ones.
+
+```rust
+use oxml::{Limits, parse_with};
+
+// Start from a profile and adjust. `Limits` is `#[non_exhaustive]`,
+// so it cannot be written out as a struct literal -- a bound added in
+// a later version would otherwise be a breaking change for everyone
+// who had.
+let mut limits = Limits::default();
+limits.max_depth = 32;
+limits.max_attributes_per_element = 16;
+
+assert!(parse_with("<a><b/></a>", limits).is_ok());
+```
+
+### The three profiles
+
+| Field | `strict()` | `default()` | `permissive()` |
+|---|---|---|---|
+| `max_depth` | 64 | 256 | 256 |
+| `max_attributes_per_element` | 64 | 1000 | 100000 |
+| `max_attribute_size` | 8192 | 524288 | 67108864 |
+| `max_name_length` | 256 | 1000 | 1048576 |
+| `max_nodes` | 100000 | unbounded | unbounded |
+| `max_text_length` | 1048576 | unbounded | unbounded |
+| `max_entity_depth` | 4 | 10 | 40 |
+| `max_entity_expansion` | 100000 | 10000000 | 1000000000 |
+| `max_xpath_depth` | 32 | 256 | 1000 |
+| `max_xpath_operators` | 1000 | 10000 | 1000000 |
+
+The numbers are given unformatted because a test parses this table and
+compares every cell against the profile it names. A table of plausible
+figures is worse than no table: it is believed.
+
+`permissive()` deliberately leaves `max_depth` where the default has
+it. Depth is the one bound whose cost is stack rather than heap, and
+the stack is the one resource a caller cannot recover from: overflow
+aborts the process. Measured on this crate's own test binaries, a
+2 MiB thread stack overflows at around 280 levels in a debug build, at
+roughly 7,489 bytes per frame. Raising `max_depth` to 10,000 does not
+give you deeper documents; it gives you a crash.
+
+### Which profile to choose
+
+- **`default()`** — a build tool, a test fixture, a document you
+  wrote. Generous enough that no real document is refused.
+- **`strict()`** — anything taking XML from the network. It costs you
+  documents nested past 64 levels and entity expansions past 100 KB,
+  which in practice means it costs you nothing and rejects attacks
+  2,600× faster.
+- **`permissive()`** — a one-off conversion of a machine-generated
+  document you already trust.
+
+### Cargo features
+
+| Feature | Default | What it does |
+|---|---|---|
+| `std` | yes | `std::error::Error` for `Error`, and `String`/`Vec` from `std` |
+| `xpath` | yes | The XPath 1.0 engine. Separable because the tree alone is useful |
+| `libm` | no | `floor`/`ceil`/`trunc` from `libm` rather than `std`. Required to build `xpath` without `std` |
+
+Building `xpath` with neither `std` nor `libm` is a compile error with
+an explanation, not a link failure: XPath needs three floating-point
+functions that `core` does not provide.
+
+## Error reporting
+
+An `Error` carries a byte offset and a kind, not a formatted string.
+That is deliberate: the caller knows how it wants to present a
+failure, and a pre-formatted message is a lossy version of the
+structure it was built from.
+
+```rust
+use oxml::parse;
+
+let input = "<config>\n  <name>ok</name>\n  <port>8080</hostname>\n</config>";
+let error = parse(input).expect_err("mismatched tags");
+
+let (line, column) = error.line_column(input);
+assert_eq!((line, column), (3, 13));
+
+// `ErrorKind` renders without the offset, for a caret that already
+// shows the position.
+let source = input.lines().nth(line - 1).unwrap();
+println!("{line:>3} | {source}");
+println!("    | {}^ {}", " ".repeat(column - 1), error.kind);
+```
+
+```text
+  3 |   <port>8080</hostname>
+    |             ^ </hostname> closes <port>
+```
+
+`line_column` counts in characters rather than bytes, so the column it
+reports is the one an editor shows. It never panics, including when
+the offset lands inside a multi-byte character or when it is given a
+different document from the one that produced the error — a wrong
+column is a nuisance, but a panic in the error path takes down the
+process.
+
+## Encodings
+
+`parse` takes a `&str`, which means the caller has already decided the
+encoding. `parse_bytes` reads the document's own declaration and
+byte-order mark instead, which is what you want for a file or an HTTP
+body.
+
+```rust
+use oxml::parse_bytes;
+
+let utf8 = b"<?xml version='1.0'?><a>hi</a>";
+let doc = parse_bytes(utf8).expect("valid");
+assert_eq!(doc.text(doc.root()), "hi");
+```
+
+UTF-8, UTF-16 (both byte orders, with or without a BOM) and
+ISO-8859-1 are decoded. A BOM overrides a declaration that disagrees
+with it. UTF-8 input is borrowed rather than copied, so the common
+case costs nothing.
+
+Two failures that look alike are kept apart, because they are not the
+same problem:
+
+- **`MalformedEncoding`** — the name breaks XML production 81
+  (`encoding="UTF~8"`), or the bytes are not valid in the encoding
+  they claim. The document is malformed and every conforming parser
+  must reject it.
+- **`UnsupportedEncoding`** — the name is legal and names an encoding
+  this crate does not implement (`encoding="Shift_JIS"`). The document
+  may be perfectly well-formed. Decode it with a crate that knows the
+  encoding and call `parse`.
 
 ## When not to use oxml
 
 Honestly:
 
 - **You need XSLT.** oxml does not have it. Use `libxml`.
-- **You need XSD validation today.** `xmlschema` is planned, not
-  shipped.
+- **You need complete XSD validation today.** `xmlschema` is
+  published, but it is early: check its own README for what is
+  implemented before depending on it.
 - **You are streaming gigabytes.** oxml builds a full tree in memory.
   `quick-xml` is the right tool and will stay so.
 - **You need XPath 2.0 or 3.1.** oxml implements 1.0.
 - **Raw parse throughput is your only metric.** `quick-xml` is
   extremely well optimised and years ahead on that axis. oxml's
   argument is what you can do *after* parsing.
-
-## Development
-
-```bash
-cargo test                  # 42 tests
-cargo test --no-default-features
-cargo clippy --all-targets --all-features -- -D warnings
-cargo fmt --all --check
-cargo bench
-cargo doc --no-deps --open
-```
-
-CI runs all of the above on Linux, macOS and Windows, plus an MSRV
-build and a check that `#![forbid(unsafe_code)]` is still present.
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for reporting and the full threat model.
-
-In summary: entity expansion is not implemented, so XXE and
-billion-laughs are foreclosed; `#![forbid(unsafe_code)]` rules out
-memory-corruption bugs; and deeply nested documents are parsed
-recursively, so untrusted input of unbounded depth should be parsed on
-a thread with a known stack size.
-
-## Documentation
-
-- [API documentation](https://docs.rs/oxml)
-- [CHANGELOG.md](CHANGELOG.md)
-- [CONTRIBUTING.md](CONTRIBUTING.md)
-- [GOVERNANCE.md](GOVERNANCE.md)
-- [SECURITY.md](SECURITY.md)
-
-## Acknowledgements
-
-oxml exists because of work that came before it:
-
-- **[lxml](https://lxml.de/)** — the reference for what an XML toolkit
-  should offer.
-- **[libxml2](https://gitlab.gnome.org/GNOME/libxml2)** — decades of
-  hard-won correctness, and the yardstick for behaviour.
-- **[`sxd-xpath`](https://github.com/shepmaster/sxd-xpath)** — the
-  first XPath implementation in Rust.
-- **[`quick-xml`](https://github.com/tafia/quick-xml)** and
-  **[`roxmltree`](https://github.com/RazrFalcon/roxmltree)** — proof
-  that Rust XML parsing can be both fast and safe.
-- **[W3C](https://www.w3.org/TR/1999/REC-xpath-19991116/)** — for the
-  XPath 1.0 specification, which this implementation follows.
-
-## License
-
-Licensed under either of
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
-
-Unless you explicitly state otherwise, any contribution intentionally
-submitted for inclusion in the work by you shall be dual licensed as
-above, without any additional terms or conditions.
 
 ## FAQ
 
@@ -634,3 +753,171 @@ resolve external entities. If you are parsing multi-gigabyte documents
 where a DOM will not fit; a streaming API is planned and this is not it
 yet.
 
+### Why is there a `Limits` argument instead of a builder?
+
+Because a builder implies a default that someone chose for you and a
+sequence of calls you have to remember. `Limits` is a plain value: you
+can store one in a config struct, send it between threads, compare two,
+and see the whole policy in one place. `parse` uses `Limits::default()`
+so the common case stays a single call.
+
+### Why does `parse` take `&str` when XML is bytes?
+
+Because deciding the encoding is a separate job from parsing, and
+conflating them is how parsers end up with an encoding layer that
+cannot be tested or replaced. `parse_bytes` does both when you want
+that; `parse` is for when you already know.
+
+It also keeps the fast path honest. A `&str` is already valid UTF-8,
+so `parse` does no transcoding and no validation pass over the bytes.
+
+### Is the tree mutable?
+
+No. `Document` is built by the parser and read afterwards. Mutation and
+serialisation are the same feature -- there is little point in one
+without the other -- and neither is implemented. If you need to produce
+XML, build the string, or use `quick-xml`'s writer.
+
+### How much memory does a document take?
+
+Measured at **4.1 allocations per node** — 66,037 allocations for a
+16,002-node document, counted with a wrapping global allocator over the
+whole of `parse` and divided by `Document::len()`. A test holds that
+figure to a ceiling, so it cannot drift upward unnoticed.
+
+The structure is a flat arena rather than a graph of `Rc`s. Child lists
+and attribute lists are `(start, len)` ranges into shared arenas, so a
+node is a small fixed-size record and traversal is index arithmetic
+rather than pointer chasing.
+
+The remaining per-node allocations are the owned `String`s: text node
+contents, attribute values, and element names before interning.
+Removing them means having the document own its input and store
+`(start, len)` into it instead, which is planned and not done. Until it
+is, 4.1 is the number, not 2.
+
+That said: the whole document is in memory. See "When not to use oxml".
+
+### Why `NodeId` rather than references?
+
+Because a reference into the tree borrows the tree, and almost every
+useful traversal wants to hold a position while looking at something
+else. `NodeId` is `Copy` and pointer-sized, and outlives any particular
+borrow, so you can collect ids into a `Vec`, store them in a struct, or
+return them from a function without a lifetime parameter spreading
+through your code.
+
+The cost is that a `NodeId` from one document means something different
+in another. They are indices, and nothing stops you mixing them.
+
+### Does it allocate during XPath evaluation?
+
+Yes. Node-sets are `Vec<NodeId>`, and intermediate values are built and
+dropped as the expression evaluates. Compiling is where the one-time
+cost sits: `XPath::compile` parses to a syntax tree once, and the
+result is document-independent, so a server can compile every
+expression it knows at startup and evaluate them per request.
+
+### What happens on a document that is not well-formed?
+
+It is rejected, with the byte offset of the problem. There is no
+recovery mode and no "lenient" flag. A parser that guesses at what a
+malformed document meant produces a tree that no two implementations
+agree on, and the disagreement surfaces later as a bug somewhere else.
+
+### Is it thread-safe?
+
+`Document` is `Send` and `Sync`; it is immutable after parsing, so any
+number of threads can query one. `XPath` is likewise `Send` and `Sync`,
+which is what makes compile-once-evaluate-many work across a thread
+pool.
+
+### Why is `unsafe` forbidden rather than just avoided?
+
+Because "we don't use unsafe" is a claim about the present and
+`#![forbid(unsafe_code)]` is a property of the build. CI checks the
+attribute is still in the source, so removing it is a visible change in
+a diff rather than a quiet one.
+
+It does cost something. Some of the tricks that make the fastest
+parsers fast are unavailable, and this crate is slower than it could be
+because of it. That trade is stated rather than hidden.
+
+### How do I report a security issue?
+
+See [SECURITY.md](SECURITY.md). Please do not open a public issue for a
+vulnerability.
+
+## Development
+
+```bash
+cargo test                  # 244 tests, plus 16 doctests
+cargo test --no-default-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all --check
+cargo bench
+cargo doc --no-deps --open
+```
+
+CI runs all of the above on Linux, macOS and Windows, plus an MSRV
+build and a check that `#![forbid(unsafe_code)]` is still present.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for reporting and the full threat model.
+
+In summary:
+
+- **External entities are never dereferenced.** There is no code that
+  opens a file or a socket on a document's behalf, so XXE is foreclosed
+  by construction rather than by a default that can be changed.
+- **Entity expansion is bounded per document**, not per reference. A
+  per-reference budget still lets a quadratic blowup through: a
+  thousand small expansions cost a thousand times the budget.
+- **`#![forbid(unsafe_code)]`** rules out memory-corruption bugs, and
+  CI checks the attribute is still there.
+- **Recursion is bounded** by `Limits::max_depth`, because a stack
+  overflow aborts the process rather than unwinding and no caller can
+  catch it.
+- **The defaults are generous.** They accept every real document we
+  have found, which means they are not the tightest bound available.
+  A service parsing untrusted XML under load should use
+  `Limits::strict`: it rejects a nine-level billion-laughs document in
+  25 µs where the defaults take 66 ms.
+
+## Documentation
+
+- [API documentation](https://docs.rs/oxml)
+- [CHANGELOG.md](CHANGELOG.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [GOVERNANCE.md](GOVERNANCE.md)
+- [SECURITY.md](SECURITY.md)
+
+## Acknowledgements
+
+oxml exists because of work that came before it:
+
+- **[lxml](https://lxml.de/)** — the reference for what an XML toolkit
+  should offer.
+- **[libxml2](https://gitlab.gnome.org/GNOME/libxml2)** — decades of
+  hard-won correctness, and the yardstick for behaviour.
+- **[`sxd-xpath`](https://github.com/shepmaster/sxd-xpath)** — the
+  first XPath implementation in Rust.
+- **[`quick-xml`](https://github.com/tafia/quick-xml)** and
+  **[`roxmltree`](https://github.com/RazrFalcon/roxmltree)** — proof
+  that Rust XML parsing can be both fast and safe.
+- **[W3C](https://www.w3.org/TR/1999/REC-xpath-19991116/)** — for the
+  XPath 1.0 specification, which this implementation follows.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you shall be dual licensed as
+above, without any additional terms or conditions.
