@@ -96,8 +96,14 @@ pub enum NodeKind {
         /// to hold six values. Resolve it with
         /// [`Document::element_name`].
         name: NameId,
-        /// Ids of this element's attribute nodes, in document order.
-        attributes: Vec<NodeId>,
+        /// Where this element's attribute nodes live in the document's
+        /// flat attribute arena, as `(start, len)`. Resolve it with
+        /// [`Document::attribute_nodes`].
+        ///
+        /// Attributes are pushed together when the start tag is read,
+        /// so they are already contiguous — no scratch stack needed,
+        /// unlike children.
+        attributes: (u32, u32),
     },
     /// An attribute.
     ///
@@ -131,7 +137,14 @@ pub struct NameId(pub(crate) u32);
 pub(crate) struct Node {
     pub(crate) kind: NodeKind,
     pub(crate) parent: Option<NodeId>,
-    pub(crate) children: Vec<NodeId>,
+    /// Where this node's children live in the document's flat child
+    /// arena, as `(start, len)`.
+    ///
+    /// A `Vec` per node meant one allocation for every element that has
+    /// children — about a million on the benchmark document. Children
+    /// are contiguous in `child_ids` because they are copied there as a
+    /// block when the element closes.
+    pub(crate) children: (u32, u32),
 }
 
 /// A parsed XML document.
@@ -142,6 +155,18 @@ pub struct Document {
     pub(crate) nodes: Vec<Node>,
     /// Every distinct element name in the document, once.
     pub(crate) names: Vec<ExpandedName>,
+    /// All attribute lists, concatenated.
+    pub(crate) attr_ids: Vec<NodeId>,
+    /// All child lists, concatenated. Each node's slice is described by
+    /// its `children` range.
+    pub(crate) child_ids: Vec<NodeId>,
+    /// Children of elements still open, innermost last.
+    ///
+    /// A single shared stack rather than one buffer per element: a
+    /// node's children are only known to be complete when its end tag
+    /// arrives, at which point they are moved into `child_ids` as a
+    /// contiguous block.
+    pub(crate) scratch: Vec<NodeId>,
 }
 
 impl Document {
@@ -157,11 +182,14 @@ impl Document {
         v.push(Node {
             kind: NodeKind::Root,
             parent: None,
-            children: Vec::new(),
+            children: (0, 0),
         });
         Self {
             nodes: v,
             names: Vec::new(),
+            attr_ids: Vec::new(),
+            child_ids: Vec::with_capacity(nodes),
+            scratch: Vec::new(),
         }
     }
 
@@ -180,10 +208,33 @@ impl Document {
         self.nodes.push(Node {
             kind,
             parent: Some(parent),
-            children: Vec::new(),
+            children: (0, 0),
         });
-        self.nodes[parent.0].children.push(id);
+        // Held on the scratch stack until `parent` closes, so that its
+        // children can be written to `child_ids` as one block.
+        self.scratch.push(id);
         id
+    }
+
+    /// Where the scratch stack currently ends.
+    ///
+    /// Take this before parsing an element's content and pass it back
+    /// to [`Document::finish_children`] afterwards.
+    pub(crate) fn scratch_mark(&self) -> usize {
+        self.scratch.len()
+    }
+
+    /// Move everything pushed since `mark` into `parent`'s child list.
+    pub(crate) fn finish_children(&mut self, parent: NodeId, mark: usize) {
+        let start = self.child_ids.len();
+        self.child_ids.extend_from_slice(&self.scratch[mark..]);
+        self.scratch.truncate(mark);
+        if let Some(n) = self.nodes.get_mut(parent.0) {
+            n.children = (
+                u32::try_from(start).unwrap_or(u32::MAX),
+                u32::try_from(self.child_ids.len() - start).unwrap_or(0),
+            );
+        }
     }
 
     /// Append a node without linking it into its parent's children.
@@ -199,7 +250,7 @@ impl Document {
         self.nodes.push(Node {
             kind,
             parent: Some(parent),
-            children: Vec::new(),
+            children: (0, 0),
         });
         id
     }
@@ -227,7 +278,10 @@ impl Document {
     /// id that does not belong to this document.
     #[must_use]
     pub fn children(&self, id: NodeId) -> &[NodeId] {
-        self.nodes.get(id.0).map_or(&[], |n| n.children.as_slice())
+        self.nodes.get(id.0).map_or(&[], |n| {
+            let (start, len) = (n.children.0 as usize, n.children.1 as usize);
+            self.child_ids.get(start..start + len).unwrap_or(&[])
+        })
     }
 
     /// The document's root element, if it has one.
@@ -268,7 +322,11 @@ impl Document {
     #[must_use]
     pub fn attribute_nodes(&self, id: NodeId) -> &[NodeId] {
         match self.kind(id) {
-            Some(NodeKind::Element { attributes, .. }) => attributes,
+            Some(NodeKind::Element { attributes, .. }) => {
+                let (start, len) =
+                    (attributes.0 as usize, attributes.1 as usize);
+                self.attr_ids.get(start..start + len).unwrap_or(&[])
+            }
             _ => &[],
         }
     }

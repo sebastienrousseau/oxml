@@ -176,6 +176,7 @@ pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
 impl Parser<'_> {
     fn parse_document(&mut self) -> Result<()> {
         let root = self.doc.root();
+        let mark = self.doc.scratch_mark();
         self.skip_prolog()?;
 
         let mut seen_root = false;
@@ -233,6 +234,7 @@ impl Parser<'_> {
         }
 
         if seen_root {
+            self.doc.finish_children(root, mark);
             Ok(())
         } else {
             Err(Error::new(ErrorKind::NoRootElement, self.pos))
@@ -379,21 +381,28 @@ impl Parser<'_> {
         let node = self.doc.push(
             NodeKind::Element {
                 name: name_id,
-                attributes: Vec::new(),
+                attributes: (0, 0),
             },
             parent,
         );
 
         // Attribute nodes are parented to the element but kept out of
-        // its `children`, so `child::` cannot see them.
-        let mut attr_ids = Vec::with_capacity(resolved.len());
+        // its `children`, so `child::` cannot see them. They are pushed
+        // consecutively, so they are already contiguous in `attr_ids`
+        // and need no scratch buffer.
+        let start = self.doc.attr_ids.len();
         for at in resolved {
-            attr_ids.push(self.doc.push_detached(NodeKind::Attr(at), node));
+            let id = self.doc.push_detached(NodeKind::Attr(at), node);
+            self.doc.attr_ids.push(id);
         }
+        let len = self.doc.attr_ids.len() - start;
         if let Some(NodeKind::Element { attributes, .. }) =
             self.doc.kind_mut(node)
         {
-            *attributes = attr_ids;
+            *attributes = (
+                u32::try_from(start).unwrap_or(u32::MAX),
+                u32::try_from(len).unwrap_or(0),
+            );
         }
 
         if self_closing {
@@ -407,6 +416,7 @@ impl Parser<'_> {
     }
 
     fn parse_children(&mut self, node: NodeId, open_qname: &str) -> Result<()> {
+        let mark = self.doc.scratch_mark();
         let mut text = String::new();
         loop {
             // Checked once per child rather than at each `push`: every
@@ -443,6 +453,9 @@ impl Parser<'_> {
                             start,
                         ));
                     }
+                    // The element is closed, so its children are
+                    // complete and can be moved into the flat arena.
+                    self.doc.finish_children(node, mark);
                     return Ok(());
                 } else if self.starts_with("<!--") {
                     self.flush_text(&mut text, node)?;
