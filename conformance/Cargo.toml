@@ -3,6 +3,9 @@ name = "oxml-conformance"
 version = "0.0.0"
 edition = "2024"
 publish = false
+# Not published, but `cargo deny` checks every crate in the graph and
+# reports `error[unlicensed]` without this.
+license = "MIT OR Apache-2.0"
 description = "W3C XML Conformance Test Suite runner for oxml"
 
 [dependencies]

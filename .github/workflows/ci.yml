@@ -127,12 +127,27 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
+      - name: Cache the conformance suite
+        uses: actions/cache@v4
+        with:
+          path: conformance/data
+          key: xmlconf-xmlts20130923-v1
+      # The W3C suite is part of the test corpus, not an extra. Without
+      # it `dtd.rs` and `encoding.rs` are barely executed — 53% and 5%
+      # respectively — and the figure measures which tests were
+      # available rather than what the library does.
+      - run: cargo run -p oxml-conformance --bin download
+      # Scoped to `-p oxml`: the conformance harness is unpublished and
+      # its coverage depends on whether the 15 MB W3C suite was
+      # downloaded, so including it measures the CI cache rather than
+      # the library and drags the total under the floor.
+      #
       # Every defect fixed in 0.0.3 was found by raising coverage, not
       # by reading the code. The floor keeps that from eroding: a new
       # branch nothing exercises fails here rather than shipping.
       - run: >
-          cargo llvm-cov --all-features --fail-under-lines 95
-          --ignore-filename-regex 'builds/cargo/package'
+          cargo llvm-cov --workspace --all-features --fail-under-lines 95
+          --ignore-filename-regex 'builds/cargo/package|conformance/'
 
   no-std:
     name: no_std (bare metal)
@@ -208,7 +223,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: taiki-e/install-action@cargo-fuzz
+      # `cargo install` rather than a prebuilt: the prebuilt landed
+      # somewhere `cargo fuzz` could not find it under the pinned
+      # toolchain, giving `error: no such command: fuzz`. Installing
+      # with the same cargo that runs it removes the question.
+      - run: cargo install cargo-fuzz --locked
       - uses: Swatinem/rust-cache@v2
       # Seeds matter more than run time. Starting cold, libFuzzer spends
       # almost the whole budget on inputs that are not valid XML — a run
