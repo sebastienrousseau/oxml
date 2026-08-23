@@ -126,6 +126,7 @@ pub struct ReadmeDoctests;
 /// (test harnesses commonly give threads 2 MiB).
 pub const MAX_DEPTH: usize = 256;
 
+mod dtd;
 mod limits;
 pub use limits::Limits;
 

@@ -48,8 +48,11 @@ fn a_doctype_is_skipped() {
 #[test]
 fn a_truncated_doctype_is_rejected() {
     let e = parse("<!DOCTYPE note").expect_err("truncated");
+    // Since the DTD is parsed rather than skipped, this now reports the
+    // more specific `MalformedDtd` rather than the generic
+    // `Unterminated`.
     assert!(
-        matches!(e.kind, ErrorKind::Unterminated(w) if w.contains("doctype")),
+        matches!(e.kind, ErrorKind::MalformedDtd(w) if w.contains("doctype")),
         "got {:?}",
         e.kind
     );

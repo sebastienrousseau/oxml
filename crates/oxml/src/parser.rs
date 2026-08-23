@@ -62,6 +62,17 @@ struct Parser<'a> {
     depth: usize,
     /// Resource bounds for this parse.
     limits: Limits,
+    /// Declarations from the document type declaration, once seen.
+    dtd: Option<crate::dtd::Dtd>,
+    /// Characters of entity expansion still permitted **for the whole
+    /// document**.
+    ///
+    /// Per-document rather than per-reference. A per-reference budget
+    /// bounds the exponential billion-laughs shape but not the
+    /// quadratic one: referencing a single 100 KB entity a thousand
+    /// times at depth one produced 100 MB from 100 KB of input while
+    /// every individual expansion stayed within its allowance.
+    entity_budget: usize,
 }
 
 /// Parse an XML document.
@@ -93,6 +104,8 @@ pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
         ns: Namespaces::default(),
         depth: 0,
         limits,
+        dtd: None,
+        entity_budget: limits.max_entity_expansion,
     };
     p.parse_document()?;
     Ok(p.doc)
@@ -119,6 +132,21 @@ impl Parser<'_> {
                         NodeKind::ProcessingInstruction { target: t, data: d },
                         root,
                     );
+                } else if self.starts_with("<!DOCTYPE") {
+                    // Handled here as well as in `skip_prolog`, because
+                    // the prolog is `Misc* doctypedecl? Misc*` — a
+                    // comment or PI may precede the declaration. The
+                    // prolog loop breaks on anything that is not a
+                    // DOCTYPE, so a leading comment left the DOCTYPE to
+                    // be parsed as an element and reported as
+                    // `expected a name`.
+                    if seen_root || self.dtd.is_some() {
+                        return Err(Error::new(
+                            ErrorKind::TrailingContent,
+                            self.pos,
+                        ));
+                    }
+                    self.skip_doctype()?;
                 } else if self.starts_with("</") {
                     let name = self.peek_end_tag_name();
                     return Err(Error::new(
@@ -176,22 +204,22 @@ impl Parser<'_> {
     /// Skip a doctype, tracking bracket depth so an internal subset
     /// containing `>` does not end it early.
     fn skip_doctype(&mut self) -> Result<()> {
-        let start = self.pos;
-        self.pos += "<!DOCTYPE".len();
-        let mut depth = 0usize;
-        while self.pos < self.bytes.len() {
-            match self.bytes[self.pos] {
-                b'[' => depth += 1,
-                b']' => depth = depth.saturating_sub(1),
-                b'>' if depth == 0 => {
-                    self.pos += 1;
-                    return Ok(());
-                }
-                _ => {}
+        // Parsed rather than skipped. Well-formedness constraints live
+        // inside the DTD — a malformed `<!ATTLIST>` makes a document not
+        // well-formed for *every* parser, validating or not — and the
+        // general entity declarations are needed so that a document
+        // using `&chapter1;` is not rejected as undeclared.
+        let mut p = crate::dtd::DtdParser::new(self.input, self.pos);
+        match p.parse_doctype() {
+            Ok(dtd) => {
+                self.pos = p.pos;
+                self.dtd = Some(dtd);
+                Ok(())
             }
-            self.pos += 1;
+            Err((offset, reason)) => {
+                Err(Error::new(ErrorKind::MalformedDtd(reason), offset))
+            }
         }
-        Err(Error::new(ErrorKind::Unterminated("doctype"), start))
     }
 
     fn parse_element(&mut self, parent: NodeId) -> Result<()> {
@@ -385,7 +413,7 @@ impl Parser<'_> {
                             Error::new(ErrorKind::Unterminated("entity"), s)
                         })?;
                     let ent = &self.input[self.pos..self.pos + end];
-                    out.push_str(&decode_entity(ent, s)?);
+                    out.push_str(&self.expand_entity(ent, s)?);
                     self.pos += end + 1;
                 }
                 _ => {
@@ -489,7 +517,7 @@ impl Parser<'_> {
                             Error::new(ErrorKind::Unterminated("entity"), s)
                         })?;
                     let ent = &self.input[self.pos..self.pos + end];
-                    out.push_str(&decode_entity(ent, s)?);
+                    out.push_str(&self.expand_entity(ent, s)?);
                     self.pos += end + 1;
                 }
                 _ => {
@@ -603,16 +631,112 @@ impl Parser<'_> {
             self.pos += 1;
         }
     }
+
+    /// Resolve one entity reference, consulting the DTD.
+    ///
+    /// The five predefined entities and numeric character references
+    /// resolve directly. Anything else must have been declared, and
+    /// only *internal* declarations carry replacement text — `oxml`
+    /// never fetches an external resource, which is what makes XXE
+    /// structurally impossible rather than merely mitigated.
+    ///
+    /// An undeclared entity is an error only when the declaration was
+    /// complete enough to be sure. If it had an external subset or
+    /// referenced a parameter entity, the declaration may exist
+    /// somewhere we did not read, and rejecting would be wrong.
+    fn expand_entity(&mut self, ent: &str, offset: usize) -> Result<String> {
+        if let Some(direct) = decode_predefined(ent) {
+            return Ok(direct);
+        }
+        let Some(dtd) = self.dtd.as_ref() else {
+            return Err(Error::new(
+                ErrorKind::UnknownEntity(ent.to_owned()),
+                offset,
+            ));
+        };
+        match dtd.entity(ent) {
+            Some(crate::dtd::EntityValue::Internal(text)) => {
+                let text = text.clone();
+                let mut budget = self.entity_budget;
+                let out = self.expand_text(&text, offset, 1, &mut budget);
+                self.entity_budget = budget;
+                out
+            }
+            Some(crate::dtd::EntityValue::External) => Ok(String::new()),
+            None if dtd.incomplete => Ok(String::new()),
+            None => Err(Error::new(
+                ErrorKind::UnknownEntity(ent.to_owned()),
+                offset,
+            )),
+        }
+    }
+
+    /// Expand entity references inside replacement text.
+    ///
+    /// Bounded on both axes, because either alone is insufficient:
+    /// depth stops the exponential billion-laughs shape, and the
+    /// character budget stops the quadratic variant where one large
+    /// entity is referenced many times at depth one.
+    fn expand_text(
+        &mut self,
+        text: &str,
+        offset: usize,
+        depth: usize,
+        budget: &mut usize,
+    ) -> Result<String> {
+        if depth > self.limits.max_entity_depth {
+            return Err(Error::new(ErrorKind::EntityLimitExceeded, offset));
+        }
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(amp) = rest.find('&') {
+            let (before, tail) = rest.split_at(amp);
+            Self::push_bounded(&mut out, before, offset, budget)?;
+            let Some(semi) = tail.find(';') else {
+                return Err(Error::new(
+                    ErrorKind::UnknownEntity(tail.to_owned()),
+                    offset,
+                ));
+            };
+            let name = &tail[1..semi];
+            rest = &tail[semi + 1..];
+            if let Some(direct) = decode_predefined(name) {
+                Self::push_bounded(&mut out, &direct, offset, budget)?;
+                continue;
+            }
+            let inner = match self.dtd.as_ref().and_then(|d| d.entity(name)) {
+                Some(crate::dtd::EntityValue::Internal(t)) => t.clone(),
+                _ => continue,
+            };
+            let expanded =
+                self.expand_text(&inner, offset, depth + 1, budget)?;
+            Self::push_bounded(&mut out, &expanded, offset, budget)?;
+        }
+        Self::push_bounded(&mut out, rest, offset, budget)?;
+        Ok(out)
+    }
+
+    fn push_bounded(
+        out: &mut String,
+        text: &str,
+        offset: usize,
+        budget: &mut usize,
+    ) -> Result<()> {
+        if *budget < text.len() {
+            return Err(Error::new(ErrorKind::EntityLimitExceeded, offset));
+        }
+        *budget -= text.len();
+        out.push_str(text);
+        Ok(())
+    }
 }
 
 /// Resolve one entity reference.
 ///
-/// Only the five predefined entities and numeric character references
-/// are supported. External and custom entities are deliberately *not*
-/// resolved: that is the XXE and billion-laughs attack surface, and a
-/// parser that cannot expand them cannot be made to leak a file or
-/// exhaust memory through one.
-fn decode_entity(ent: &str, offset: usize) -> Result<String> {
+/// Returns `None` when `ent` is a declared-entity name rather than one
+/// of the five predefined entities or a numeric character reference —
+/// resolving those needs the DTD, and is done by `expand_entity`.
+fn decode_predefined(ent: &str) -> Option<String> {
     let out = match ent {
         "lt" => "<".to_owned(),
         "gt" => ">".to_owned(),
@@ -620,25 +744,22 @@ fn decode_entity(ent: &str, offset: usize) -> Result<String> {
         "apos" => "'".to_owned(),
         "quot" => "\"".to_owned(),
         _ => {
-            let cp = if let Some(hex) = ent.strip_prefix("#x") {
-                u32::from_str_radix(hex, 16).ok()
-            } else if let Some(dec) = ent.strip_prefix('#') {
-                dec.parse::<u32>().ok()
-            } else {
-                None
+            // Not a character reference at all means it is a declared
+            // name, and resolving that needs the DTD.
+            let cp = match ent.strip_prefix("#x") {
+                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                None => ent.strip_prefix('#')?.parse::<u32>().ok()?,
             };
-            let ch = cp.and_then(char::from_u32).ok_or_else(|| {
-                Error::new(ErrorKind::UnknownEntity(ent.to_owned()), offset)
-            })?;
+            let ch = char::from_u32(cp)?;
             let mut s = String::new();
             s.push(ch);
             s
         }
     };
-    Ok(out)
+    Some(out)
 }
 
-fn is_name_start(c: char) -> bool {
+pub(crate) fn is_name_start(c: char) -> bool {
     matches!(c, 'A'..='Z' | 'a'..='z' | '_' | ':')
         || matches!(c as u32,
             0xC0..=0xD6 | 0xD8..=0xF6 | 0xF8..=0x2FF
@@ -647,7 +768,7 @@ fn is_name_start(c: char) -> bool {
             | 0xF900..=0xFDCF | 0xFDF0..=0xFFFD | 0x10000..=0xEFFFF)
 }
 
-fn is_name_char(c: char) -> bool {
+pub(crate) fn is_name_char(c: char) -> bool {
     is_name_start(c)
         || matches!(c, '-' | '.' | '0'..='9')
         || c as u32 == 0xB7

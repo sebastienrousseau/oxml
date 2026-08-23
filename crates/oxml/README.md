@@ -383,21 +383,48 @@ assert_eq!(sum.evaluate(&doc).to_str(&doc), "17.49");
 Matching the ecosystem matters more here than matching the letter of a
 sentence written before shortest-round-trip float printing existed.
 
-## Entity expansion is not supported
+## Entity expansion is bounded, and external entities are never fetched
 
-Only the five predefined entities (`&lt;` `&gt;` `&amp;` `&apos;`
-`&quot;`) and numeric character references are resolved. External and
-custom entities are **rejected**, not expanded:
+Internal general entities are expanded — a conforming parser must, and a
+great many valid documents depend on it. **External entities are never
+dereferenced**, which forecloses XXE by construction rather than by
+configuration:
 
 ```rust
 let src = r#"<!DOCTYPE a [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><a>&xxe;</a>"#;
-assert!(oxml::parse(src).is_err());
+let doc = oxml::parse(src).expect("declared, so not an error");
+// No file is opened. The entity expands to nothing.
+assert_eq!(doc.text(doc.root()).trim(), "");
 ```
 
-This forecloses XXE and billion-laughs by construction. There is no
-flag to enable expansion, so there is no way to configure the
-vulnerability back in — which is the difference between a parser that
-is safe and one that is safe *if you remember to set the option*.
+There is no flag to turn external fetching on, so there is no way to
+configure the vulnerability back in — the difference between a parser
+that is safe and one that is safe *if you remember to set the option*.
+
+Expansion is bounded on **two** axes, because either alone is
+insufficient:
+
+```rust
+use oxml::{ErrorKind, parse};
+
+// Billion laughs: exponential nesting. Caught by the depth cap.
+let mut src = String::from(r#"<!DOCTYPE lolz [<!ENTITY lol "lol">"#);
+for i in 1..=9 {
+    let prev = if i == 1 { "lol".to_owned() } else { format!("lol{}", i - 1) };
+    src.push_str(&format!(r#"<!ENTITY lol{i} "{}">"#, format!("&{prev};").repeat(10)));
+}
+src.push_str("]><lolz>&lol9;</lolz>");
+assert!(matches!(
+    parse(&src).unwrap_err().kind,
+    ErrorKind::EntityLimitExceeded
+));
+```
+
+The second axis is a **per-document** character budget, which the depth
+cap cannot substitute for. Referencing one 100 KB entity a thousand times
+never exceeds depth 1, and an earlier per-*reference* budget let exactly
+that through — 100 MB of text from 100 KB of input. `Limits` exposes
+both `max_entity_depth` and `max_entity_expansion`.
 
 ## Library usage
 

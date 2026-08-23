@@ -53,6 +53,16 @@ pub enum ErrorKind {
     NoRootElement,
     /// A construct was not terminated, e.g. a comment without `-->`.
     Unterminated(&'static str),
+    /// Entity expansion exceeded a bound in [`Limits`].
+    ///
+    /// [`Limits`]: crate::Limits
+    EntityLimitExceeded,
+    /// The document type declaration is syntactically malformed.
+    ///
+    /// This is a well-formedness error, not a validity error: the
+    /// grammar of a declaration binds every parser, whether or not it
+    /// validates documents against the content models declared there.
+    MalformedDtd(&'static str),
     /// Elements were nested more deeply than [`Limits::max_depth`].
     ///
     /// [`Limits::max_depth`]: crate::Limits::max_depth
@@ -140,6 +150,12 @@ impl fmt::Display for Error {
             }
             ErrorKind::Unterminated(what) => {
                 write!(f, "unterminated {what}")
+            }
+            ErrorKind::EntityLimitExceeded => {
+                f.write_str("entity expansion exceeds the limit")
+            }
+            ErrorKind::MalformedDtd(why) => {
+                write!(f, "malformed doctype: {why}")
             }
         }
     }

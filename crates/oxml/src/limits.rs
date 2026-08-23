@@ -118,6 +118,24 @@ pub struct Limits {
     /// Default: `256`.
     pub max_xpath_depth: usize,
 
+    /// Maximum nesting depth of general entity expansion.
+    ///
+    /// The billion-laughs bound. Ten nested entities each referring to
+    /// the previous ten times is 10^10 characters from a few hundred
+    /// bytes of input.
+    ///
+    /// Default: `10`, matching roxmltree and the JDK's posture.
+    pub max_entity_depth: usize,
+
+    /// Maximum total characters produced by expanding entities in one
+    /// document.
+    ///
+    /// Depth alone does not bound the quadratic-blowup variant, where a
+    /// single large entity is referenced many times at depth one.
+    ///
+    /// Default: `10_000_000`.
+    pub max_entity_expansion: usize,
+
     /// Maximum number of operators and steps in one `XPath` expression.
     ///
     /// Bounds compilation work independently of nesting. The JDK
@@ -137,6 +155,8 @@ impl Default for Limits {
             max_name_length: 1_000,
             max_nodes: None,
             max_text_length: None,
+            max_entity_depth: 10,
+            max_entity_expansion: 10_000_000,
             max_xpath_depth: 256,
             max_xpath_operators: 10_000,
         }
@@ -164,6 +184,8 @@ impl Limits {
             max_name_length: 1024 * 1024,
             max_nodes: None,
             max_text_length: None,
+            max_entity_depth: 40,
+            max_entity_expansion: 1_000_000_000,
             max_xpath_depth: 1_000,
             max_xpath_operators: 1_000_000,
         }
@@ -183,6 +205,8 @@ impl Limits {
             max_name_length: 256,
             max_nodes: Some(100_000),
             max_text_length: Some(1024 * 1024),
+            max_entity_depth: 4,
+            max_entity_expansion: 100_000,
             max_xpath_depth: 32,
             max_xpath_operators: 1_000,
         }

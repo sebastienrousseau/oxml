@@ -41,14 +41,24 @@ fn unsupported_reason(
     if case.version.as_deref() == Some("1.1") {
         return Some("xml-1.1");
     }
-    // `EDITION` lists the XML 1.0 editions a test applies to. A test
-    // that applies only to the 5th edition exercises the relaxed name
-    // rules, which this parser does not implement.
-    if case.edition.as_deref().is_some_and(|ed| {
-        !ed.split_whitespace()
-            .any(|e| matches!(e, "1" | "2" | "3" | "4"))
-    }) {
-        return Some("xml-1.0-5th-edition-only");
+    // `EDITION` lists the XML 1.0 editions a test applies to, and the
+    // suite ships complementary pairs: the same name is not-well-formed
+    // under editions 1-4 and well-formed under the 5th, which relaxed
+    // NameStartChar to a broad Unicode range. A parser must pick one
+    // edition; scoring against both is incoherent.
+    //
+    // `oxml` targets the **5th edition** — it accepts the wide Unicode
+    // name range — so tests that apply only to editions 1-4 are not
+    // applicable. Measured: before this was corrected, the 313
+    // `EDITION="1 2 3 4"` tests scored 300 fail / 9 pass, because they
+    // were being run against a parser that deliberately implements the
+    // opposite rule.
+    if case
+        .edition
+        .as_deref()
+        .is_some_and(|ed| !ed.split_whitespace().any(|e| e == "5"))
+    {
+        return Some("xml-1.0-edition-1-to-4-only");
     }
     if !case.namespace {
         return Some("namespace-processing-off");

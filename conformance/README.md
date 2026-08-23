@@ -9,13 +9,29 @@ Suite release **`xmlts20130923`**, 2,585 tests.
 
 | | |
 |---|---|
-| **Pass rate** | **47.9%** (877 of 1,831 decided) |
-| **Coverage** | **70.8%** (1,831 of 2,585 decided) |
+| **Pass rate** | **80.3%** (1,519 of 1,892 decided) |
+| **Coverage** | **73.2%** (1,892 of 2,585) — see the ceiling below |
 | Panics | **0** |
 
 Both numbers are given because either alone is misleading. A pass rate
 without a denominator can be raised by skipping the hard tests; coverage
 without a pass rate says nothing about correctness.
+
+### The coverage ceiling is 86.6%, not 100%
+
+Two groups can never be decided by *any* conforming parser:
+
+- **309 tests marked `EDITION="1 2 3 4"`.** The suite ships
+  complementary pairs — the same name is not-well-formed under editions
+  1–4 and well-formed under the 5th, which relaxed `NameStartChar`. A
+  parser must pick one edition; scoring against both is incoherent.
+  `oxml` targets the **5th edition**.
+- **33 tests marked `TYPE="error"`**, which the suite's own DTD says are
+  optional to report, so either outcome conforms.
+
+That is 346 tests, capping coverage over the full suite at **86.6%**.
+Quoting a coverage figure without this is how a runner appears to be
+hiding tests it is in fact entitled to skip.
 
 ### By submission
 
