@@ -567,7 +567,7 @@ fn eval_function(
 /// The expanded name of a node, as `local-name` and `namespace-uri`
 /// define it.
 ///
-/// XPath 1.0 gives an expanded-name to elements **and attributes**;
+/// `XPath` 1.0 gives an expanded-name to elements **and attributes**;
 /// reading only `Document::element_name` here meant both functions
 /// answered the empty string for every attribute, which silently broke
 /// the one workaround available for selecting by namespace. A
