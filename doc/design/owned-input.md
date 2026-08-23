@@ -9,24 +9,30 @@
 Measured with a counting global allocator over a 16,002-node document:
 **66,037 allocations, 4.13 per node.**
 
-**Nothing of this is done on `main`.** There are two separate pieces,
-and the note originally described the first as finished because it
-exists on the `feat/phase2-borrowing` branch. It does not exist here.
+There are two pieces.
 
-**One — flatten and intern.** Child lists and attribute lists become
-`(start, len)` ranges into two shared vectors, and names are interned
-behind a `NameId` so a document with 2,000 `<item>` elements holds one
-`"item"`. Prototyped on `feat/phase2-borrowing`.
+**One — flatten and intern. Done.** Child lists and attribute lists are
+`(start, len)` ranges into two shared vectors, and element names are
+interned behind a `NameId`. That took the measured figure from 4.13 to
+**3.13 allocations per node**.
 
-**Two — own the input**, which is the rest of this note.
+**Two — own the input**, which is the rest of this note, plus interning
+attribute names.
 
-The owned `String`s that remain either way:
+The owned `String`s that remain:
 
 | Source | Roughly |
 |---|---|
-| Text node contents | one per text node |
+| Attribute names | one or two per attribute — an `Attribute` owns a full `ExpandedName` |
 | Attribute values | one per attribute |
-| `ExpandedName` built per element before interning | one per element |
+| Text node contents | one per text node |
+
+Attribute names are the largest single remaining source: 6,000
+attributes on the benchmark document account for roughly 18,000
+allocations. Interning them is the same change already made for
+elements, and it is separate only because `Attribute::name` is public,
+so replacing it with a `NameId` is a breaking change that ripples into
+the satellite crates.
 
 ## The change
 

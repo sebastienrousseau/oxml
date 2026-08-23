@@ -254,6 +254,8 @@ Two architectural choices motivate the design:
 
 - Arena-backed, index-addressed nodes; `NodeId` is `Copy` and
   pointer-sized
+- Child and attribute lists as `(start, len)` ranges into shared
+  vectors; element names interned behind a `NameId`
 - Parent, children, descendants, text (XPath `string-value` semantics)
 - Attributes as first-class nodes
 - `Send + Sync`, so one document serves any number of threads
@@ -816,24 +818,22 @@ XML, build the string, or use `quick-xml`'s writer.
 
 ### How much memory does a document take?
 
-Measured at **4.1 allocations per node** — 66,037 allocations for a
+Measured at **3.1 allocations per node** — 50,050 allocations for a
 16,002-node document, counted with a wrapping global allocator over the
 whole of `parse` and divided by `Document::len()`. A test holds that
 figure to a ceiling, so it cannot drift upward unnoticed.
 
-The structure is a flat arena rather than a graph of `Rc`s, so
-traversal is index arithmetic rather than pointer chasing and the
-document is `Send + Sync` for free.
+The structure is a flat arena rather than a graph of `Rc`s. Child and
+attribute lists are `(start, len)` ranges into shared vectors and
+element names are interned, so traversal is index arithmetic rather
+than pointer chasing and the document is `Send + Sync` for free. That
+work took the figure from 4.13 to 3.13.
 
-The allocations are the owned `String`s and `Vec`s: every element owns
-its `ExpandedName` and a `Vec` of attribute ids, every node owns a
-`Vec` of children, and every text node and attribute value is an owned
-`String`.
-
-Two changes remove most of that, and **neither is done**: flattening
-the child and attribute lists into shared vectors with `(start, len)`
-ranges, and having the document own its input so text and values are
-ranges into it. Until they are, 4.1 is the number, not 2.
+What remains is attribute names — an `Attribute` still owns a full
+`ExpandedName` — and the owned `String`s for text and attribute
+values. Removing the latter means having the document own its input so
+both become ranges into it. Neither is done, so 3.1 is the number, not
+2.
 
 That said: the whole document is in memory. See "When not to use oxml".
 

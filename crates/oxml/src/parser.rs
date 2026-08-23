@@ -71,6 +71,13 @@ struct Parser<'a> {
     /// rather than appearing literally, and the `Char` production
     /// admits C0 controls when written as character references.
     version: Version,
+    /// Element names seen so far, keyed on the local part.
+    ///
+    /// Keyed on the local part rather than the whole name so that a
+    /// document with many distinct names does not degrade to a linear
+    /// scan of the table; the few sharing a local part are compared on
+    /// their namespace.
+    name_index: alloc::collections::BTreeMap<String, Vec<u32>>,
     /// Characters of entity expansion still permitted **for the whole
     /// document**.
     ///
@@ -241,7 +248,14 @@ fn parse_normalized(
         input,
         bytes: input.as_bytes(),
         pos: 0,
-        doc: Document::new(),
+        // One byte-scan to size the arena. Every element, comment and
+        // processing instruction begins with `<`, and text nodes are
+        // bounded by them. Counting runs at memory speed; the
+        // reallocate-and-copy it avoids does not.
+        doc: Document::with_capacity(
+            input.bytes().filter(|b| *b == b'<').count() * 2,
+        ),
+        name_index: alloc::collections::BTreeMap::new(),
         ns: Namespaces::default(),
         depth: 0,
         limits,
@@ -256,6 +270,7 @@ fn parse_normalized(
 impl Parser<'_> {
     fn parse_document(&mut self) -> Result<()> {
         let root = self.doc.root();
+        let mark = self.doc.scratch_mark();
         self.skip_prolog()?;
 
         let mut seen_root = false;
@@ -313,6 +328,7 @@ impl Parser<'_> {
         }
 
         if seen_root {
+            self.doc.finish_children(root, mark);
             Ok(())
         } else {
             Err(Error::new(ErrorKind::NoRootElement, self.pos))
@@ -455,24 +471,32 @@ impl Parser<'_> {
             resolved.push(Attribute { name: an, value });
         }
 
+        let name_id = self.intern(&name);
         let node = self.doc.push(
             NodeKind::Element {
-                name: name.clone(),
-                attributes: Vec::new(),
+                name: name_id,
+                attributes: (0, 0),
             },
             parent,
         );
 
         // Attribute nodes are parented to the element but kept out of
-        // its `children`, so `child::` cannot see them.
-        let mut attr_ids = Vec::with_capacity(resolved.len());
+        // its `children`, so `child::` cannot see them. They are pushed
+        // consecutively, so they are already contiguous in `attr_ids`
+        // and need no scratch buffer.
+        let start = self.doc.attr_ids.len();
         for at in resolved {
-            attr_ids.push(self.doc.push_detached(NodeKind::Attr(at), node));
+            let id = self.doc.push_detached(NodeKind::Attr(at), node);
+            self.doc.attr_ids.push(id);
         }
+        let len = self.doc.attr_ids.len() - start;
         if let Some(NodeKind::Element { attributes, .. }) =
             self.doc.kind_mut(node)
         {
-            *attributes = attr_ids;
+            *attributes = (
+                u32::try_from(start).unwrap_or(u32::MAX),
+                u32::try_from(len).unwrap_or(u32::MAX),
+            );
         }
 
         if self_closing {
@@ -486,6 +510,7 @@ impl Parser<'_> {
     }
 
     fn parse_children(&mut self, node: NodeId, open_qname: &str) -> Result<()> {
+        let mark = self.doc.scratch_mark();
         let mut text = String::new();
         loop {
             // Checked once per child rather than at each `push`: every
@@ -522,6 +547,10 @@ impl Parser<'_> {
                             start,
                         ));
                     }
+                    // The element is closed, so its children are
+                    // complete and can be moved into the flat arena as
+                    // one contiguous block.
+                    self.doc.finish_children(node, mark);
                     return Ok(());
                 } else if self.starts_with("<!--") {
                     self.flush_text(&mut text, node)?;
@@ -959,6 +988,28 @@ impl Parser<'_> {
     /// entity is referenced many times at depth one.
     /// Append a run of literal text, normalising it when it is part of
     /// an attribute value.
+    /// Intern an element name, returning a handle to it.
+    ///
+    /// Names repeat heavily -- a catalogue of 2,000 items has a handful
+    /// of distinct element names -- so storing an `ExpandedName` per
+    /// element allocated thousands of strings to hold a few values.
+    fn intern(&mut self, name: &ExpandedName) -> crate::tree::NameId {
+        if let Some(candidates) = self.name_index.get(name.local.as_str()) {
+            for &id in candidates {
+                if self.doc.names[id as usize].namespace == name.namespace {
+                    return crate::tree::NameId(id);
+                }
+            }
+        }
+        let id = u32::try_from(self.doc.names.len()).unwrap_or(u32::MAX);
+        self.doc.names.push(name.clone());
+        self.name_index
+            .entry(name.local.clone())
+            .or_default()
+            .push(id);
+        crate::tree::NameId(id)
+    }
+
     fn push_run(
         out: &mut String,
         text: &str,

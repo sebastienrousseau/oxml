@@ -10,14 +10,10 @@ node is an index.
 
 ## Decision
 
-An arena. `Document` owns a `Vec<Node>` and every node is an index
-into it.
-
-Flattening the child and attribute lists into shared vectors, with each
-node holding a `(start, len)` range, is the intended refinement and is
-**not implemented on `main`** — each node still owns a `Vec`. The
-decision recorded here is the arena over reference counting; the
-flattening is [design/owned-input.md](../design/owned-input.md).
+An arena. `Document` owns a `Vec<Node>`, a `Vec<ExpandedName>` of
+interned element names, and two `Vec<NodeId>` holding every child list
+and attribute list concatenated. A `Node` stores `(start, len)` ranges
+into those.
 
 ## Consequences
 
@@ -28,9 +24,10 @@ flattening is [design/owned-input.md](../design/owned-input.md).
 - `NodeId` is `Copy` and pointer-sized, so holding a position does not
   borrow the tree. No lifetime parameter spreads through caller code.
 - Traversal is index arithmetic on a contiguous vector.
-- Ranges rather than a `Vec` per node would roughly halve the
-  allocation count. That part is not done: the measured figure today is
-  4.13 allocations per node.
+- Ranges rather than a `Vec` per node, plus interned element names,
+  took the measured figure from 4.13 to **3.13 allocations per node**.
+  The rest is attribute names and owned strings — see
+  [design/owned-input.md](../design/owned-input.md).
 
 **Given up**
 

@@ -91,10 +91,13 @@ fn corpus(elements: usize) -> String {
 
 #[test]
 fn a_parse_costs_a_bounded_number_of_allocations_per_node() {
-    // The README publishes 4.1. The ceiling sits just above the
+    // The README publishes 3.1. The ceiling sits just above the
     // measured figure: close enough that a regression trips it, loose
-    // enough that allocator capacity growth does not.
-    const CEILING: f64 = 4.5;
+    // enough that allocator capacity growth does not. It came down
+    // from 4.5 when child and attribute lists were flattened and
+    // element names interned; it comes down again when attribute names
+    // are interned too.
+    const CEILING: f64 = 3.4;
 
     let source = corpus(2_000);
     let (doc, allocations) =
@@ -109,7 +112,7 @@ fn a_parse_costs_a_bounded_number_of_allocations_per_node() {
     assert!(
         per_node <= CEILING,
         "{per_node:.2} allocations per node exceeds the ceiling of \
-         {CEILING:.1}; the README publishes 4.1"
+         {CEILING:.1}; the README publishes 3.1"
     );
 }
 
