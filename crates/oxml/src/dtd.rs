@@ -22,6 +22,7 @@
 use alloc::borrow::ToOwned as _;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 /// What a general entity expands to.
 #[derive(Debug, Clone, PartialEq, Eq)]

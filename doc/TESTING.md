@@ -164,6 +164,19 @@ test data was available rather than what the library does.
 ## Running everything
 
 ```bash
+./scripts/gate.sh          # everything below, in fail-fastest order
+```
+
+That script exists because three separate pushes went out red on checks
+that were green locally, and each time the cause was the same: the gate
+being run by hand was a *subset* of CI. `no_std` and the feature
+powerset were the ones that did it — a `Vec` that resolves through the
+`std` prelude compiles until it does not, and nothing in a default
+`cargo test` notices.
+
+The individual commands:
+
+```bash
 cargo test --workspace --all-features        # 244 tests + 16 doctests
 cargo test --no-default-features             # the no_std surface
 cargo clippy --all-targets --all-features -- -D warnings
