@@ -9,7 +9,7 @@ Suite release **`xmlts20130923`**, 2,585 tests.
 
 | | |
 |---|---|
-| **Pass rate** | **91.7%** (2,346 of 2,557 decided) |
+| **Pass rate** | **93.6%** (2,393 of 2,557 decided) |
 | **Coverage** | **98.9%** (2,557 of 2,585) |
 | Panics | **0** |
 
@@ -75,7 +75,7 @@ judgement about whether a test is fair.
 
 | Kind | Count |
 |---|---|
-| Accepted a document that is not well-formed | 210 |
+| Accepted a document that is not well-formed | 163 |
 | Rejected a valid document | 1 |
 
 Effectively every remaining failure is a document accepted that should

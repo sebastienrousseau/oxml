@@ -194,12 +194,14 @@ impl<'a> DtdParser<'a> {
             let public = self.starts_with("PUBLIC");
             self.pos += 6;
             self.require_ws()?;
-            let _ = self.quoted()?;
             if public {
+                let _ = self.pubid_literal()?;
                 self.skip_ws();
                 if matches!(self.peek(), Some(b'"' | b'\'')) {
                     let _ = self.quoted()?;
                 }
+            } else {
+                let _ = self.quoted()?;
             }
             dtd.incomplete = true;
             self.skip_ws();
@@ -447,31 +449,6 @@ impl<'a> DtdParser<'a> {
         }
     }
 
-    fn skip_balanced_parens(&mut self) -> Result<(), DtdError> {
-        let start = self.pos;
-        let mut depth = 0usize;
-        while let Some(b) = self.peek() {
-            match b {
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        self.pos += 1;
-                        // An occurrence indicator may follow.
-                        if matches!(self.peek(), Some(b'?' | b'*' | b'+')) {
-                            self.pos += 1;
-                        }
-                        return Ok(());
-                    }
-                }
-                b'>' if depth == 0 => break,
-                _ => {}
-            }
-            self.pos += 1;
-        }
-        Err((start, "unbalanced content model"))
-    }
-
     fn parse_attlist_decl(&mut self) -> Result<(), DtdError> {
         self.require_ws()?;
         let _ = self.name()?;
@@ -495,7 +472,7 @@ impl<'a> DtdParser<'a> {
 
     fn parse_att_type(&mut self) -> Result<(), DtdError> {
         if self.peek() == Some(b'(') {
-            return self.skip_balanced_parens();
+            return self.parse_enumeration(false);
         }
         let kw = self.name()?;
         match kw {
@@ -506,10 +483,63 @@ impl<'a> DtdParser<'a> {
                 if self.peek() != Some(b'(') {
                     return Err((self.pos, "NOTATION needs a name list"));
                 }
-                self.skip_balanced_parens()
+                self.parse_enumeration(true)
             }
             _ => Err((self.pos, "unknown attribute type")),
         }
+    }
+
+    /// `Enumeration ::= '(' S? Nmtoken (S? '|' S? Nmtoken)* S? ')'`
+    /// and `NotationType ::= 'NOTATION' S '(' S? Name (S? '|' S? Name)* S? ')'`
+    ///
+    /// Both are non-empty, so `()` is not an empty enumeration but a
+    /// syntax error — which counting brackets could not tell. A
+    /// notation list holds Names; a plain enumeration holds Nmtokens,
+    /// which unlike Names may begin with a digit.
+    fn parse_enumeration(&mut self, names_only: bool) -> Result<(), DtdError> {
+        self.pos += 1; // '('
+        loop {
+            self.skip_ws();
+            if names_only {
+                let _ = self.name()?;
+            } else {
+                let start = self.pos;
+                while self.input[self.pos..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| self.is_name_char(c))
+                {
+                    self.pos += self.input[self.pos..]
+                        .chars()
+                        .next()
+                        .map_or(0, char::len_utf8);
+                }
+                if self.pos == start {
+                    return Err((self.pos, "empty item in an enumeration"));
+                }
+            }
+            self.skip_ws();
+            match self.peek() {
+                Some(b'|') => self.pos += 1,
+                Some(b')') => {
+                    self.pos += 1;
+                    return Ok(());
+                }
+                _ => return Err((self.pos, "malformed enumeration")),
+            }
+        }
+    }
+
+    /// A `PubidLiteral`, whose characters are restricted to
+    /// `PubidChar ::= #x20 | #xD | #xA | [a-zA-Z0-9] | [-'()+,./:=?;!*#@$_%]`.
+    fn pubid_literal(&mut self) -> Result<&'a str, DtdError> {
+        let start = self.pos;
+        let text = self.quoted()?;
+        if let Some(bad) = text.chars().find(|c| !is_pubid_char(*c)) {
+            let _ = bad;
+            return Err((start, "illegal character in a public identifier"));
+        }
+        Ok(text)
     }
 
     fn parse_default_decl(&mut self) -> Result<DefaultDecl, DtdError> {
@@ -545,7 +575,14 @@ impl<'a> DtdParser<'a> {
         self.require_ws()?;
 
         let value = if matches!(self.peek(), Some(b'"' | b'\'')) {
-            EntityValue::Internal(self.quoted()?.to_owned())
+            let start = self.pos;
+            let text = self.quoted()?;
+            // An `EntityValue` is checked when it is *declared*, not
+            // only when it is used: a malformed character reference
+            // makes the document not well-formed even if nothing ever
+            // references the entity.
+            validate_entity_value(text, start, dtd.incomplete)?;
+            EntityValue::Internal(text.to_owned())
         } else {
             let public = self.starts_with("PUBLIC");
             if !public && !self.starts_with("SYSTEM") {
@@ -556,9 +593,11 @@ impl<'a> DtdParser<'a> {
             }
             self.pos += 6;
             self.require_ws()?;
-            let _ = self.quoted()?;
             if public {
+                let _ = self.pubid_literal()?;
                 self.require_ws()?;
+                let _ = self.quoted()?;
+            } else {
                 let _ = self.quoted()?;
             }
             // NDataDecl, for an unparsed entity.
@@ -597,7 +636,11 @@ impl<'a> DtdParser<'a> {
         }
         self.pos += 6;
         self.require_ws()?;
-        let _ = self.quoted()?;
+        if public {
+            let _ = self.pubid_literal()?;
+        } else {
+            let _ = self.quoted()?;
+        }
         self.skip_ws();
         if public && matches!(self.peek(), Some(b'"' | b'\'')) {
             let _ = self.quoted()?;
@@ -605,4 +648,61 @@ impl<'a> DtdParser<'a> {
         }
         self.expect(b'>', "unterminated notation declaration")
     }
+}
+
+/// `PubidChar`, XML 1.0 production 13.
+fn is_pubid_char(c: char) -> bool {
+    matches!(c, '\u{20}' | '\u{D}' | '\u{A}' | 'a'..='z' | 'A'..='Z' | '0'..='9')
+        || "-'()+,./:=?;!*#@$_%".contains(c)
+}
+
+/// Check an `EntityValue` at the point of declaration.
+///
+/// Two well-formedness constraints apply here and are easy to miss
+/// because the value may never be referenced:
+///
+/// * every character reference in it must be well-formed — `&#002f;` is
+///   not a decimal number;
+/// * a parameter-entity reference may not appear in an entity value in
+///   the **internal** subset (`WFC: PEs in Internal Subset`). In the
+///   external subset it is permitted, so this only applies while the
+///   declaration is known to be internal.
+fn validate_entity_value(
+    text: &str,
+    offset: usize,
+    external_subset_seen: bool,
+) -> Result<(), DtdError> {
+    let mut rest = text;
+    while let Some(i) = rest.find(['&', '%']) {
+        let (kind, tail) = (rest.as_bytes()[i], &rest[i + 1..]);
+        if kind == b'%' {
+            if !external_subset_seen {
+                return Err((
+                    offset,
+                    "a parameter entity reference is not allowed in an \
+                     entity value in the internal subset",
+                ));
+            }
+            rest = tail;
+            continue;
+        }
+        let Some(semi) = tail.find(';') else {
+            return Err((offset, "unterminated reference in an entity value"));
+        };
+        let name = &tail[..semi];
+        rest = &tail[semi + 1..];
+        if let Some(hex) = name.strip_prefix("#x") {
+            if hex.is_empty() || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err((
+                    offset,
+                    "malformed hexadecimal character reference",
+                ));
+            }
+        } else if let Some(dec) = name.strip_prefix('#') {
+            if dec.is_empty() || !dec.chars().all(|c| c.is_ascii_digit()) {
+                return Err((offset, "malformed decimal character reference"));
+            }
+        }
+    }
+    Ok(())
 }

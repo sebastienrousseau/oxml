@@ -584,6 +584,20 @@ impl Parser<'_> {
             self.pos += 1;
             self.skip_whitespace();
             let value = self.parse_attribute_value()?;
+            // `STag ::= '<' Name (S Attribute)* S? '>'` — attributes are
+            // separated by whitespace, so `<a b="c"d="e"/>` is not
+            // well-formed even though both attributes parse.
+            // `None` falls through: running out of input is unexpected
+            // EOF, reported by the loop above, not a missing separator.
+            if !matches!(
+                self.bytes.get(self.pos),
+                None | Some(b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/')
+            ) {
+                return Err(Error::new(
+                    ErrorKind::UnquotedAttributeValue,
+                    self.pos,
+                ));
+            }
             if value.len() > self.limits.max_attribute_size {
                 return Err(Error::new(ErrorKind::AttributeTooLarge, self.pos));
             }
@@ -594,6 +608,11 @@ impl Parser<'_> {
         }
     }
 
+    /// `AttValue ::= '"' ([^<&"] | Reference)* '"' | "'" ([^<&'] | Reference)* "'"`
+    ///
+    /// A literal `<` is forbidden — it must be written `&lt;` — because
+    /// otherwise an unclosed tag inside a value is indistinguishable
+    /// from markup.
     fn parse_attribute_value(&mut self) -> Result<String> {
         let start = self.pos;
         if self.pos >= self.bytes.len() {
@@ -616,6 +635,12 @@ impl Parser<'_> {
                 b if b == quote => {
                     self.pos += 1;
                     return Ok(out);
+                }
+                b'<' => {
+                    return Err(Error::new(
+                        ErrorKind::IllegalCharacter('<'),
+                        self.pos,
+                    ));
                 }
                 b'&' => {
                     let s = self.pos;

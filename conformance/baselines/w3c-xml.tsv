@@ -1,7 +1,4 @@
-#counts	pass=2346	fail=211	panic=0	unsupported=28	blocked=0	total=2585
-sun	attlist03	fail	accepted a document that is not well-formed
-sun	attlist10	fail	accepted a document that is not well-formed
-sun	attlist11	fail	accepted a document that is not well-formed
+#counts	pass=2393	fail=164	panic=0	unsupported=28	blocked=0	total=2585
 sun	cond01	fail	accepted a document that is not well-formed
 sun	cond02	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
@@ -40,12 +37,8 @@ ibm	ibm-1-1-valid-P05-ibm05v01.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v02.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v03.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v05.xml	unsupported	namespace-processing-off
-ibm	ibm-not-wf-P09-ibm09n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P10-ibm10n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P10-ibm10n05.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P13-ibm13n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P13-ibm13n02.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P13-ibm13n03.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P14-ibm14n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P29-ibm29n04.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P30-ibm30n01.xml	fail	accepted a document that is not well-formed
@@ -56,12 +49,6 @@ ibm	ibm-not-wf-P41-ibm41n11.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P41-ibm41n12.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P41-ibm41n13.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P41-ibm41n14.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P58-ibm58n03.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P58-ibm58n06.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P58-ibm58n08.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P59-ibm59n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P59-ibm59n03.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P59-ibm59n04.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P60-ibm60n07.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P61-ibm61n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P62-ibm62n01.xml	fail	accepted a document that is not well-formed
@@ -84,12 +71,7 @@ ibm	ibm-not-wf-P64-ibm64n02.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P64-ibm64n03.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P65-ibm65n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P65-ibm65n02.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P66-ibm66n03.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n05.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n07.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n09.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n11.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n06.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n07.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n08.xml	fail	accepted a document that is not well-formed
@@ -97,7 +79,6 @@ ibm	ibm-not-wf-P69-ibm69n06.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P69-ibm69n07.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P74-ibm74n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P75-ibm75n07.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P75-ibm75n10.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P76-ibm76n03.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P77-ibm77n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P77-ibm77n02.xml	fail	accepted a document that is not well-formed
@@ -119,10 +100,8 @@ xmltest	not-wf-not-sa-006	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-007	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-008	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-009	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-014	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-026	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-029	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-058	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-069	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-074	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-077	fail	accepted a document that is not well-formed
@@ -133,17 +112,12 @@ xmltest	not-wf-sa-081	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-082	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-083	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-084	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-085	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-086	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-087	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-089	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-090	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-091	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-092	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-102	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-103	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-113	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-114	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-115	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-116	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-117	fail	accepted a document that is not well-formed
@@ -158,7 +132,6 @@ xmltest	not-wf-sa-162	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-180	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-182	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-185	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-186	fail	accepted a document that is not well-formed
 sun	not-wf-sa03	fail	accepted a document that is not well-formed
 oasis	o-p01fail1	fail	accepted a document that is not well-formed
 oasis	o-p04pass1	unsupported	namespace-processing-off
@@ -166,15 +139,7 @@ oasis	o-p05pass1	unsupported	namespace-processing-off
 oasis	o-p08pass1	unsupported	namespace-processing-off
 oasis	o-p09fail1	fail	accepted a document that is not well-formed
 oasis	o-p09fail2	fail	accepted a document that is not well-formed
-oasis	o-p09fail3	fail	accepted a document that is not well-formed
 oasis	o-p10fail1	fail	accepted a document that is not well-formed
-oasis	o-p12fail1	fail	accepted a document that is not well-formed
-oasis	o-p12fail2	fail	accepted a document that is not well-formed
-oasis	o-p12fail3	fail	accepted a document that is not well-formed
-oasis	o-p12fail4	fail	accepted a document that is not well-formed
-oasis	o-p12fail5	fail	accepted a document that is not well-formed
-oasis	o-p12fail6	fail	accepted a document that is not well-formed
-oasis	o-p12fail7	fail	accepted a document that is not well-formed
 oasis	o-p14fail3	fail	accepted a document that is not well-formed
 oasis	o-p18fail3	fail	accepted a document that is not well-formed
 oasis	o-p22fail1	fail	accepted a document that is not well-formed
@@ -182,14 +147,6 @@ oasis	o-p26fail1	fail	accepted a document that is not well-formed
 oasis	o-p26fail2	fail	accepted a document that is not well-formed
 oasis	o-p30fail1	fail	accepted a document that is not well-formed
 oasis	o-p31fail1	fail	accepted a document that is not well-formed
-oasis	o-p40fail1	fail	accepted a document that is not well-formed
-oasis	o-p44fail4	fail	accepted a document that is not well-formed
-oasis	o-p58fail1	fail	accepted a document that is not well-formed
-oasis	o-p58fail2	fail	accepted a document that is not well-formed
-oasis	o-p58fail8	fail	accepted a document that is not well-formed
-oasis	o-p59fail1	fail	accepted a document that is not well-formed
-oasis	o-p59fail2	fail	accepted a document that is not well-formed
-oasis	o-p59fail3	fail	accepted a document that is not well-formed
 oasis	o-p61fail1	fail	accepted a document that is not well-formed
 oasis	o-p62fail1	fail	accepted a document that is not well-formed
 oasis	o-p62fail2	fail	accepted a document that is not well-formed
@@ -202,10 +159,6 @@ oasis	o-p76fail1	fail	accepted a document that is not well-formed
 japanese	pr-xml-euc-jp	unsupported	unsupported-encoding
 japanese	pr-xml-iso-2022-jp	unsupported	unsupported-encoding
 japanese	pr-xml-shift_jis	unsupported	unsupported-encoding
-sun	pubid01	fail	accepted a document that is not well-formed
-sun	pubid02	fail	accepted a document that is not well-formed
-sun	pubid03	fail	accepted a document that is not well-formed
-sun	pubid04	fail	accepted a document that is not well-formed
 eduni	rmt-001	fail	accepted a document that is not well-formed
 eduni	rmt-002	fail	accepted a document that is not well-formed
 eduni	rmt-003	fail	accepted a document that is not well-formed
