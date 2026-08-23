@@ -204,6 +204,13 @@ jobs:
       # stopped building for no_std.
       - name: Parser and tree, no std
         run: cargo check -p oxml --no-default-features --target ${{ matrix.target }}
+      # `libm` on its own: a combination nobody writes by hand, which
+      # is exactly why it rots. The powerset covers it on the host,
+      # where std exists and hides the failure.
+      - name: libm without xpath, no std
+        run: >
+          cargo check -p oxml --no-default-features
+          --features libm --target ${{ matrix.target }}
       - name: XPath, no std
         run: >
           cargo check -p oxml --no-default-features
@@ -241,6 +248,21 @@ jobs:
       - run: >
           cargo hack check -p oxml --feature-powerset --no-dev-deps
           --group-features xpath,libm
+
+  no-std-audit:
+    name: no_std audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf,aarch64-unknown-none
+      - uses: Swatinem/rust-cache@v2
+      # Every no_std feature combination on every bare-metal target,
+      # plus a grep for `std::` that is not behind its feature gate.
+      # The builds above catch a std-only call in code they compile;
+      # this catches one sitting in a combination nothing builds.
+      - run: ./scripts/check-no-std.sh
 
   fuzz:
     name: Fuzz

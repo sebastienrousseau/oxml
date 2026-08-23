@@ -37,11 +37,7 @@ step "no_std minimal" cargo "+$TOOLCHAIN" build -p oxml --no-default-features
 step "feature powerset" \
   cargo "+$TOOLCHAIN" hack check -p oxml --feature-powerset --no-dev-deps --group-features xpath,libm
 
-for target in thumbv7em-none-eabihf riscv32imac-unknown-none-elf aarch64-unknown-none; do
-  step "bare metal: $target" \
-    cargo "+$TOOLCHAIN" build -p oxml --target "$target" --no-default-features --features libm,xpath
-done
-
+step "no_std audit"   ./scripts/check-no-std.sh
 step "conformance"    cargo "+$TOOLCHAIN" test -p oxml-conformance --release
 step "rustdoc"        env RUSTDOCFLAGS="-D warnings" cargo "+$TOOLCHAIN" doc --no-deps -p oxml --all-features
 step "READMEs match"  ./scripts/check-readmes-match.sh

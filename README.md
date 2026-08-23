@@ -632,6 +632,23 @@ Building `xpath` with neither `std` nor `libm` is a compile error with
 an explanation, not a link failure: XPath needs three floating-point
 functions that `core` does not provide.
 
+### `no_std` is checked, not claimed
+
+`scripts/check-no-std.sh` runs in CI and builds **every** feature
+combination with `std` off — none, `libm`, and `xpath,libm` — against
+**every** bare-metal target: `thumbv7em-none-eabihf`,
+`riscv32imac-unknown-none-elf` and `aarch64-unknown-none`. Nine builds.
+
+It also greps for `std::` that is not behind `#[cfg(feature = "std")]`,
+which the builds cannot catch on their own: a std-only call in a
+combination nothing builds sits there unnoticed until someone enables
+that combination.
+
+That exists because one configuration was not enough. A `Vec` that
+resolved through the `std` prelude reached `main` and broke all three
+bare-metal jobs at once — the build that would have caught it was not
+being run locally.
+
 ## Error reporting
 
 An `Error` carries a byte offset and a kind, not a formatted string.
