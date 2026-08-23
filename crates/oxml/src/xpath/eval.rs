@@ -9,6 +9,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use super::ast::{Axis, BinaryOp, Expr, NodeTest, Step};
+use super::float;
 use crate::tree::{Document, NodeId, NodeKind};
 
 /// A value produced by evaluating an expression.
@@ -116,12 +117,12 @@ fn format_number(n: f64) -> String {
     if n.is_infinite() {
         return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
     }
-    // `n == n.trunc()` is an exact integrality test, which is the one
+    // `n == trunc(n)` is an exact integrality test, which is the one
     // case where comparing floats for equality is right rather than
     // sloppy: a value either is its own truncation or it is not, and
     // an epsilon here would misclassify values near an integer.
     #[allow(clippy::float_cmp)]
-    let is_integral = n == n.trunc();
+    let is_integral = n == float::trunc(n);
     if is_integral && n.abs() < 1e21 {
         return format!("{}", n as i64);
     }
@@ -130,10 +131,10 @@ fn format_number(n: f64) -> String {
     // is what drops the trailing IEEE 754 noise; formatting to a fixed
     // number of decimal places would not, because the noise sits at a
     // different decimal position depending on magnitude.
-    let magnitude = n.abs().log10().floor();
-    let scale = 10f64.powf(14.0 - magnitude);
+    let magnitude = float::floor(float::log10(n.abs()));
+    let scale = float::powf(10.0, 14.0 - magnitude);
     let rounded = if scale.is_finite() && scale > 0.0 {
-        (n * scale).round() / scale
+        float::round(n * scale) / scale
     } else {
         n
     };
@@ -584,7 +585,7 @@ fn xpath_round(n: f64) -> f64 {
     if n.is_nan() || n.is_infinite() {
         return n;
     }
-    (n + 0.5).floor()
+    float::floor(n + 0.5)
 }
 
 /// The node-oriented and numeric half of the function library.
@@ -629,12 +630,12 @@ fn eval_node_function(
                 .sum();
             Value::Number(total)
         }
-        "floor" => {
-            Value::Number(arg(0).map_or(f64::NAN, |v| v.to_number(doc)).floor())
-        }
-        "ceiling" => {
-            Value::Number(arg(0).map_or(f64::NAN, |v| v.to_number(doc)).ceil())
-        }
+        "floor" => Value::Number(float::floor(
+            arg(0).map_or(f64::NAN, |v| v.to_number(doc)),
+        )),
+        "ceiling" => Value::Number(float::ceil(
+            arg(0).map_or(f64::NAN, |v| v.to_number(doc)),
+        )),
         "round" => Value::Number(xpath_round(
             arg(0).map_or(f64::NAN, |v| v.to_number(doc)),
         )),

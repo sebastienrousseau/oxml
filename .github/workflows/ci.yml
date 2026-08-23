@@ -127,3 +127,63 @@ jobs:
       - run: >
           cargo llvm-cov --all-features --fail-under-lines 95
           --ignore-filename-regex 'builds/cargo/package'
+
+  no-std:
+    name: no_std (bare metal)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - thumbv7em-none-eabihf
+          - riscv32imac-unknown-none-elf
+          - aarch64-unknown-none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      # `cargo check --no-default-features` on the host proves nothing:
+      # the host target still has std, so std-only calls compile. Only a
+      # target without std catches them. This is how `xpath` silently
+      # stopped building for no_std.
+      - name: Parser and tree, no std
+        run: cargo check -p oxml --no-default-features --target ${{ matrix.target }}
+      - name: XPath, no std
+        run: >
+          cargo check -p oxml --no-default-features
+          --features xpath,libm --target ${{ matrix.target }}
+      - name: XPath without libm must fail with a clear message
+        run: |
+          if cargo check -p oxml --no-default-features --features xpath \
+               --target ${{ matrix.target }} 2>err.txt; then
+            echo "::error::xpath without std or libm should not compile"
+            exit 1
+          fi
+          grep -q 'requires feature `libm`' err.txt || {
+            echo "::error::failed, but not with the guard message:"
+            cat err.txt
+            exit 1
+          }
+          echo "guard fired correctly"
+
+  feature-powerset:
+    name: Feature powerset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      - uses: Swatinem/rust-cache@v2
+      # Every combination, so a new feature cannot rot a configuration
+      # nobody builds by hand.
+      #
+      # `xpath` and `libm` are grouped because {xpath} alone without std
+      # is a deliberately impossible configuration — the guard in
+      # float.rs rejects it. Grouping stops the powerset generating it
+      # while still covering std+xpath (via the `default` feature) and
+      # no_std+xpath+libm.
+      - run: >
+          cargo hack check -p oxml --feature-powerset --no-dev-deps
+          --group-features xpath,libm

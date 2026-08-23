@@ -10,6 +10,7 @@
 
 mod ast;
 mod eval;
+mod float;
 mod parser;
 
 pub use ast::{Axis, BinaryOp, Expr, NodeTest, Step};
