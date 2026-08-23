@@ -66,5 +66,35 @@ path = "examples/parse_and_query.rs"
 # `--no-default-features` skips it instead of failing to compile.
 required-features = ["std", "xpath"]
 
+[[example]]
+name = "walk_the_tree"
+path = "examples/walk_the_tree.rs"
+required-features = ["std"]
+
+[[example]]
+name = "read_attributes"
+path = "examples/read_attributes.rs"
+required-features = ["std"]
+
+[[example]]
+name = "xpath_values"
+path = "examples/xpath_values.rs"
+required-features = ["std", "xpath"]
+
+[[example]]
+name = "handle_errors"
+path = "examples/handle_errors.rs"
+required-features = ["std"]
+
+[[example]]
+name = "apply_limits"
+path = "examples/apply_limits.rs"
+required-features = ["std"]
+
+[[example]]
+name = "decode_bytes"
+path = "examples/decode_bytes.rs"
+required-features = ["std"]
+
 [lints]
 workspace = true

@@ -138,8 +138,17 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "at byte {}: ", self.offset)?;
-        match &self.kind {
+        write!(f, "at byte {}: {}", self.offset, self.kind)
+    }
+}
+
+/// The message without the offset.
+///
+/// A caller rendering a caret under the offending line already shows
+/// the position, and repeating "at byte 41" beside the caret is noise.
+impl fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
             ErrorKind::UnexpectedEof => f.write_str("input ended unexpectedly"),
             ErrorKind::MismatchedEndTag { expected, found } => {
                 write!(f, "</{found}> closes <{expected}>")

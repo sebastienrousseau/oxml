@@ -151,6 +151,25 @@ jobs:
           cargo llvm-cov --workspace --all-features --fail-under-lines 95
           --ignore-filename-regex 'builds/cargo/package|conformance/src/bin/'
 
+  example-coverage:
+    name: Examples cover the public API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      # The README says the examples cover the public API. Left to
+      # itself that claim decays quietly -- a function added in one
+      # commit and documented in none looks, from outside, exactly like
+      # one the examples exercise. This runs them under coverage and
+      # checks the execution count on every `pub fn`, so the claim is
+      # measured rather than asserted. Mentioning a function in a
+      # comment does not count; calling it does.
+      - run: python3 scripts/check-example-coverage.py
+
   no-std:
     name: no_std (bare metal)
     runs-on: ubuntu-latest
