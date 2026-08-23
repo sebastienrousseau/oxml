@@ -112,6 +112,20 @@ pub mod xpath;
 #[doc = include_str!("../README.md")]
 pub struct ReadmeDoctests;
 
+/// The deepest element nesting the parser will accept.
+///
+/// Parsing descends one stack frame per open element, so an
+/// arbitrarily deep document would exhaust the stack — and a stack
+/// overflow aborts the process rather than unwinding, so no caller can
+/// catch it. Documents come from the network in every one of this
+/// crate's front ends, which makes that a denial of service rather
+/// than a curiosity.
+///
+/// The limit is well above any hand-written document and far below the
+/// depth that threatens the smallest stack a caller is likely to have
+/// (test harnesses commonly give threads 2 MiB).
+pub const MAX_DEPTH: usize = 256;
+
 pub use error::{Error, ErrorKind, Result};
 pub use parser::parse;
 pub use tree::{Attribute, Document, ExpandedName, NodeId, NodeKind};

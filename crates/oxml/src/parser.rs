@@ -56,6 +56,9 @@ struct Parser<'a> {
     pos: usize,
     doc: Document,
     ns: Namespaces,
+    /// How many elements are currently open. Bounded by
+    /// [`crate::MAX_DEPTH`] so the recursion cannot exhaust the stack.
+    depth: usize,
 }
 
 /// Parse an XML document.
@@ -71,6 +74,7 @@ pub fn parse(input: &str) -> Result<Document> {
         pos: 0,
         doc: Document::new(),
         ns: Namespaces::default(),
+        depth: 0,
     };
     p.parse_document()?;
     Ok(p.doc)
@@ -173,6 +177,18 @@ impl Parser<'_> {
     }
 
     fn parse_element(&mut self, parent: NodeId) -> Result<()> {
+        // Checked on entry so the frame that would overflow is never
+        // pushed. See `crate::MAX_DEPTH`.
+        if self.depth >= crate::MAX_DEPTH {
+            return Err(Error::new(ErrorKind::DepthLimitExceeded, self.pos));
+        }
+        self.depth += 1;
+        let result = self.parse_element_inner(parent);
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_element_inner(&mut self, parent: NodeId) -> Result<()> {
         let tag_start = self.pos;
         self.pos += 1; // '<'
         let qname = self.parse_name()?;

@@ -53,6 +53,10 @@ pub enum ErrorKind {
     NoRootElement,
     /// A construct was not terminated, e.g. a comment without `-->`.
     Unterminated(&'static str),
+    /// Elements were nested more deeply than [`MAX_DEPTH`].
+    ///
+    /// [`MAX_DEPTH`]: crate::MAX_DEPTH
+    DepthLimitExceeded,
 }
 
 impl Error {
@@ -105,6 +109,9 @@ impl fmt::Display for Error {
             }
             ErrorKind::NoRootElement => {
                 f.write_str("document has no root element")
+            }
+            ErrorKind::DepthLimitExceeded => {
+                write!(f, "elements nested more than {} deep", crate::MAX_DEPTH)
             }
             ErrorKind::Unterminated(what) => {
                 write!(f, "unterminated {what}")

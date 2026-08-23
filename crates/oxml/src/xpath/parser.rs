@@ -36,6 +36,11 @@ struct P<'a> {
     s: &'a str,
     b: &'a [u8],
     i: usize,
+    /// How many nested sub-expressions are open. Parsing is recursive
+    /// descent, so `((((...))))` would otherwise exhaust the stack —
+    /// and an expression is untrusted input in every front end of this
+    /// crate. Bounded by [`crate::MAX_DEPTH`].
+    depth: usize,
 }
 
 /// Compile an `XPath` 1.0 expression.
@@ -48,6 +53,7 @@ pub fn compile(expr: &str) -> Result<Expr, XPathError> {
         s: expr,
         b: expr.as_bytes(),
         i: 0,
+        depth: 0,
     };
     let e = p.parse_or()?;
     p.ws();
@@ -105,6 +111,18 @@ impl P<'_> {
     }
 
     fn parse_or(&mut self) -> Result<Expr, XPathError> {
+        // The single entry point of the recursive-descent chain, so
+        // one check here bounds every path back into it.
+        if self.depth >= crate::MAX_DEPTH {
+            return Err(self.err("expression nested too deeply"));
+        }
+        self.depth += 1;
+        let result = self.parse_or_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_or_inner(&mut self) -> Result<Expr, XPathError> {
         let mut lhs = self.parse_and()?;
         while self.eat_word("or") {
             let rhs = self.parse_and()?;
@@ -235,6 +253,27 @@ impl P<'_> {
             }
             _ => self.parse_path_or_function(),
         }
+    }
+
+    /// A quoted string, if one is next. Used by
+    /// `processing-instruction('target')`, the only node test that
+    /// takes an argument.
+    fn try_literal(&mut self) -> Option<String> {
+        let quote = *self.b.get(self.i)?;
+        if quote != b'\'' && quote != b'"' {
+            return None;
+        }
+        self.i += 1;
+        let start = self.i;
+        while self.i < self.b.len() && self.b[self.i] != quote {
+            self.i += 1;
+        }
+        if self.i >= self.b.len() {
+            return None;
+        }
+        let v = self.s[start..self.i].to_owned();
+        self.i += 1;
+        Some(v)
     }
 
     fn parse_literal(&mut self) -> Result<Expr, XPathError> {
@@ -403,6 +442,17 @@ impl P<'_> {
         self.ws();
         if self.peek() == Some(b'(') {
             self.i += 1;
+            // `processing-instruction` is the one node test that takes
+            // an argument: an optional literal naming the target.
+            if name == "processing-instruction" {
+                self.ws();
+                let target = self.try_literal();
+                self.ws();
+                if !self.eat(")") {
+                    return Err(self.err("expected )"));
+                }
+                return Ok(NodeTest::ProcessingInstruction(target));
+            }
             if !self.eat(")") {
                 return Err(self.err("expected ()"));
             }

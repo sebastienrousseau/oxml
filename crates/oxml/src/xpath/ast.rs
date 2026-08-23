@@ -43,6 +43,9 @@ pub enum NodeTest {
     Text,
     /// `comment()`
     Comment,
+    /// `processing-instruction()`, optionally narrowed to one target
+    /// as `processing-instruction('name')`.
+    ProcessingInstruction(Option<String>),
     /// `node()` — anything at all.
     Any,
 }

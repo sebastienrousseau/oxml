@@ -110,3 +110,20 @@ jobs:
             echo "--- $name ---"
             cargo run --example "$name"
           done
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      # Every defect fixed in 0.0.3 was found by raising coverage, not
+      # by reading the code. The floor keeps that from eroding: a new
+      # branch nothing exercises fails here rather than shipping.
+      - run: >
+          cargo llvm-cov --all-features --fail-under-lines 95
+          --ignore-filename-regex 'builds/cargo/package'

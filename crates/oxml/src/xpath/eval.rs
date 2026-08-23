@@ -324,6 +324,13 @@ fn test_matches(
         NodeTest::Comment => {
             matches!(doc.kind(node), Some(NodeKind::Comment(_)))
         }
+        // With a target, only instructions with that target match;
+        // without one, every processing instruction does.
+        NodeTest::ProcessingInstruction(want) => matches!(
+            doc.kind(node),
+            Some(NodeKind::ProcessingInstruction { target, .. })
+                if want.as_ref().is_none_or(|w| w == target)
+        ),
     }
 }
 
@@ -506,17 +513,78 @@ fn eval_function(
         }
         "substring" => {
             let s = arg(0).map(|v| v.to_str(doc)).unwrap_or_default();
-            let start = arg(1).map_or(1.0, |v| v.to_number(doc));
             let chars: Vec<char> = s.chars().collect();
-            // XPath substring is 1-based and rounds.
-            let from = (start.round() as i64 - 1).max(0) as usize;
-            let take = arg(2).map_or(chars.len(), |v| {
-                v.to_number(doc).round().max(0.0) as usize
-            });
-            Value::String(chars.into_iter().skip(from).take(take).collect())
+            let start = xpath_round(arg(1).map_or(1.0, |v| v.to_number(doc)));
+
+            // The specification defines the result by *position*, not
+            // by a start and a count: it keeps every character whose
+            // 1-based position p satisfies
+            //     p >= round(start)  and  p < round(start) + round(len)
+            // Clamping the start to 1 and then taking `len` characters
+            // is a different function — it gives "123" for the
+            // specification's own example, `substring("12345", 0, 3)`,
+            // which must be "12", because positions 0 and below still
+            // consume part of the window.
+            let end = match arg(2) {
+                Some(v) => {
+                    let len = xpath_round(v.to_number(doc));
+                    if len.is_nan() || start.is_nan() {
+                        f64::NAN
+                    } else {
+                        start + len
+                    }
+                }
+                None => f64::INFINITY,
+            };
+
+            let out: String = chars
+                .into_iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    let p = *i as f64 + 1.0;
+                    p >= start && p < end
+                })
+                .map(|(_, c)| c)
+                .collect();
+            Value::String(out)
         }
         _ => eval_node_function(doc, name, args, ctx, position, size),
     }
+}
+
+/// The node a node-describing function should report on: the first
+/// node of its argument node-set, or the context node when it takes no
+/// argument. Returns `None` when an argument was supplied but selected
+/// nothing, which is not the same as having no argument at all.
+fn node_argument(
+    doc: &Document,
+    args: &[Expr],
+    ctx: NodeId,
+    position: usize,
+    size: usize,
+) -> Option<NodeId> {
+    match args.first() {
+        None => Some(ctx),
+        Some(a) => {
+            match eval(doc, a, ctx, position, size) {
+                Value::NodeSet(nodes) => nodes.first().copied(),
+                // A non-node-set argument names no node.
+                _ => None,
+            }
+        }
+    }
+}
+
+/// `XPath` 1.0 rounding: the nearest integer, and on a tie the one
+/// closer to positive infinity.
+///
+/// This is not `f64::round`, which breaks ties away from zero and so
+/// gives `-2` for `round(-1.5)` where the specification requires `-1`.
+fn xpath_round(n: f64) -> f64 {
+    if n.is_nan() || n.is_infinite() {
+        return n;
+    }
+    (n + 0.5).floor()
 }
 
 /// The node-oriented and numeric half of the function library.
@@ -532,13 +600,21 @@ fn eval_node_function(
         args.get(i).map(|a| eval(doc, a, ctx, position, size))
     };
     match name {
+        // Both take an optional node-set: with one, they describe its
+        // *first* node; without one, the context node. Reading `ctx`
+        // unconditionally made `local-name(//x)` answer about whatever
+        // the expression happened to be evaluated from — usually the
+        // document root, which has no name, so the answer was always
+        // the empty string.
         "local-name" => Value::String(
-            doc.element_name(ctx)
+            node_argument(doc, args, ctx, position, size)
+                .and_then(|n| doc.element_name(n))
                 .map(|n| n.local.clone())
                 .unwrap_or_default(),
         ),
         "namespace-uri" => Value::String(
-            doc.element_name(ctx)
+            node_argument(doc, args, ctx, position, size)
+                .and_then(|n| doc.element_name(n))
                 .and_then(|n| n.namespace.clone())
                 .unwrap_or_default(),
         ),
@@ -559,9 +635,9 @@ fn eval_node_function(
         "ceiling" => {
             Value::Number(arg(0).map_or(f64::NAN, |v| v.to_number(doc)).ceil())
         }
-        "round" => {
-            Value::Number(arg(0).map_or(f64::NAN, |v| v.to_number(doc)).round())
-        }
+        "round" => Value::Number(xpath_round(
+            arg(0).map_or(f64::NAN, |v| v.to_number(doc)),
+        )),
         // An unknown function yields an empty node-set rather than
         // panicking: an expression naming a function this engine does
         // not implement should degrade, not abort a caller's program.
