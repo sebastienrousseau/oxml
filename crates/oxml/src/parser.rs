@@ -261,7 +261,11 @@ impl Parser<'_> {
         // well-formed for *every* parser, validating or not — and the
         // general entity declarations are needed so that a document
         // using `&chapter1;` is not rejected as undeclared.
-        let mut p = crate::dtd::DtdParser::new(self.input, self.pos);
+        let mut p = crate::dtd::DtdParser::new(
+            self.input,
+            self.pos,
+            self.limits.edition,
+        );
         match p.parse_doctype() {
             Ok(dtd) => {
                 self.pos = p.pos;
@@ -599,14 +603,14 @@ impl Parser<'_> {
         let rest = &self.input[self.pos..];
         let mut chars = rest.char_indices();
         match chars.next() {
-            Some((_, c)) if is_name_start(c) => {}
+            Some((_, c)) if self.is_name_start(c) => {}
             _ => {
                 return Err(Error::new(ErrorKind::InvalidName, start));
             }
         }
         let mut end = rest.len();
         for (i, c) in rest.char_indices() {
-            if !is_name_char(c) {
+            if !self.is_name_char(c) {
                 end = i;
                 break;
             }
@@ -681,6 +685,22 @@ impl Parser<'_> {
             && matches!(self.bytes[self.pos], b' ' | b'\t' | b'\r' | b'\n')
         {
             self.pos += 1;
+        }
+    }
+
+    /// `NameStartChar`, for the edition in force.
+    fn is_name_start(&self, c: char) -> bool {
+        match self.limits.edition {
+            crate::Edition::Fourth => crate::names4e::is_name_start_4e(c),
+            _ => is_name_start(c),
+        }
+    }
+
+    /// `NameChar`, for the edition in force.
+    fn is_name_char(&self, c: char) -> bool {
+        match self.limits.edition {
+            crate::Edition::Fourth => crate::names4e::is_name_char_4e(c),
+            _ => is_name_char(c),
         }
     }
 

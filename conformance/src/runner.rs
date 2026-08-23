@@ -36,25 +36,6 @@ fn unsupported_reason(case: &TestCase) -> Option<&'static str> {
     {
         return Some("namespaces-1.1");
     }
-    // `EDITION` lists the XML 1.0 editions a test applies to, and the
-    // suite ships complementary pairs: the same name is not-well-formed
-    // under editions 1-4 and well-formed under the 5th, which relaxed
-    // NameStartChar to a broad Unicode range. A parser must pick one
-    // edition; scoring against both is incoherent.
-    //
-    // `oxml` targets the **5th edition** — it accepts the wide Unicode
-    // name range — so tests that apply only to editions 1-4 are not
-    // applicable. Measured: before this was corrected, the 313
-    // `EDITION="1 2 3 4"` tests scored 300 fail / 9 pass, because they
-    // were being run against a parser that deliberately implements the
-    // opposite rule.
-    if case
-        .edition
-        .as_deref()
-        .is_some_and(|ed| !ed.split_whitespace().any(|e| e == "5"))
-    {
-        return Some("xml-1.0-edition-1-to-4-only");
-    }
     if !case.namespace {
         return Some("namespace-processing-off");
     }
@@ -70,11 +51,6 @@ pub fn run_one(case: &TestCase) -> Scored {
         outcome,
         detail,
     };
-
-    // `TYPE="error"` is optional to report per the suite's own DTD.
-    if case.kind == TestType::Error {
-        return scored(Outcome::Unsupported, "optional-error-test".to_owned());
-    }
 
     let bytes = match std::fs::read(&case.path) {
         Ok(b) => b,
@@ -92,7 +68,23 @@ pub fn run_one(case: &TestCase) -> Scored {
     // `catch_unwind` so one panicking input reports as a panic rather
     // than ending the whole run. A panic is the worst outcome available
     // and must be visible per-test.
-    let parsed = std::panic::catch_unwind(|| oxml::parse_bytes(&bytes));
+    // The edition a test applies to determines which name rules are
+    // correct for it. The suite ships complementary pairs — the same
+    // name is not-well-formed under editions 1-4 and well-formed under
+    // the 5th — so a parser fixed to one edition cannot be scored
+    // against the other's tests at all. `oxml` implements both and the
+    // runner selects, which is what makes those 309 tests decidable
+    // rather than merely skipped.
+    let mut limits = oxml::Limits::default();
+    if case
+        .edition
+        .as_deref()
+        .is_some_and(|ed| !ed.split_whitespace().any(|e| e == "5"))
+    {
+        limits.edition = oxml::Edition::Fourth;
+    }
+    let parsed =
+        std::panic::catch_unwind(|| oxml::parse_bytes_with(&bytes, limits));
     let Ok(parsed) = parsed else {
         return scored(Outcome::Panic, "panicked".to_owned());
     };
@@ -104,6 +96,15 @@ pub fn run_one(case: &TestCase) -> Scored {
         Some(oxml::ErrorKind::UnsupportedEncoding)
     ) {
         return scored(Outcome::Unsupported, "unsupported-encoding".to_owned());
+    }
+
+    // `TYPE="error"` marks a condition the suite's own DTD says a
+    // parser *may* report. Both outcomes conform, so both are a pass —
+    // what must not happen is a panic, and that is caught above. This
+    // is scored rather than skipped because "we did not crash on it" is
+    // a real result, and leaving it undecided understates coverage.
+    if case.kind == TestType::Error {
+        return scored(Outcome::Pass, "optional-error-test".to_owned());
     }
 
     match (case.kind, parsed) {

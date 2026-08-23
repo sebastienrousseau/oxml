@@ -22,6 +22,25 @@
 //! duplicate-attribute scan and an unbounded namespace allocation, both
 //! in entirely safe code.
 
+/// Which edition of XML 1.0 to apply.
+///
+/// The 5th edition replaced the enumerated character classes of
+/// Appendix B with a small set of broad ranges. The two **disagree** —
+/// they are not a superset relation — so a name legal under one may be
+/// illegal under the other. Nearly all documents are unaffected; those
+/// that are not are exactly what the W3C suite's 309 edition-specific
+/// tests probe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Edition {
+    /// XML 1.0 4th edition and earlier: `Letter | '_' | ':'`, where
+    /// `Letter` is Appendix B's `BaseChar | Ideographic`.
+    Fourth,
+    /// XML 1.0 5th edition, the current one, and XML 1.1.
+    #[default]
+    Fifth,
+}
+
 /// Resource bounds applied while parsing.
 ///
 /// Construct with [`Limits::default`] and adjust, or start from
@@ -33,6 +52,11 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Limits {
+    /// Which edition's name rules to apply.
+    ///
+    /// Default: [`Edition::Fifth`].
+    pub edition: Edition,
+
     /// Maximum element nesting depth.
     ///
     /// Parsing descends one stack frame per open element, so an
@@ -149,6 +173,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            edition: Edition::Fifth,
             max_depth: 256,
             max_attributes_per_element: 1_000,
             max_attribute_size: 524_288,
@@ -178,6 +203,7 @@ impl Limits {
     #[must_use]
     pub fn permissive() -> Self {
         Self {
+            edition: Edition::Fifth,
             max_depth: Self::default().max_depth,
             max_attributes_per_element: 100_000,
             max_attribute_size: 64 * 1024 * 1024,
@@ -199,6 +225,7 @@ impl Limits {
     #[must_use]
     pub fn strict() -> Self {
         Self {
+            edition: Edition::Fifth,
             max_depth: 64,
             max_attributes_per_element: 64,
             max_attribute_size: 8 * 1024,

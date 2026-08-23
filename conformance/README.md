@@ -9,29 +9,43 @@ Suite release **`xmlts20130923`**, 2,585 tests.
 
 | | |
 |---|---|
-| **Pass rate** | **81.2%** (1,802 of 2,218 decided) |
-| **Coverage** | **85.8%** (2,218 of 2,585) — against a ceiling of 86.6% |
+| **Pass rate** | **79.8%** (2,041 of 2,557 decided) |
+| **Coverage** | **98.9%** (2,557 of 2,585) |
 | Panics | **0** |
 
 Both numbers are given because either alone is misleading. A pass rate
 without a denominator can be raised by skipping the hard tests; coverage
 without a pass rate says nothing about correctness.
 
-### The coverage ceiling is 86.6%, not 100%
+### How 98.9% was reached, and why it took a feature rather than a metric
 
-Two groups can never be decided by *any* conforming parser:
+Coverage was stuck at 85.8% against an apparent ceiling of 86.6%,
+because two groups looked undecidable:
 
 - **309 tests marked `EDITION="1 2 3 4"`.** The suite ships
   complementary pairs — the same name is not-well-formed under editions
-  1–4 and well-formed under the 5th, which relaxed `NameStartChar`. A
-  parser must pick one edition; scoring against both is incoherent.
-  `oxml` targets the **5th edition**.
-- **33 tests marked `TYPE="error"`**, which the suite's own DTD says are
-  optional to report, so either outcome conforms.
+  1–4 and well-formed under the 5th, which replaced Appendix B's
+  enumerated character classes with broad ranges. The two **disagree**;
+  they are not a superset relation. A parser fixed to one edition cannot
+  be scored against the other's tests at all.
+- **33 tests marked `TYPE="error"`**, which the suite's own DTD says a
+  parser *may* report.
 
-That is 346 tests, capping coverage over the full suite at **86.6%**.
-Quoting a coverage figure without this is how a runner appears to be
-hiding tests it is in fact entitled to skip.
+Neither is now skipped, and neither was resolved by redefining the
+denominator:
+
+- `oxml` implements **both editions**, selected by `Limits::edition`,
+  with the 5th as the default. Appendix B's `BaseChar`, `Ideographic`,
+  `CombiningChar`, `Digit` and `Extender` tables are transcribed in
+  `names4e.rs`. Their correctness is not asserted — it is measured, by
+  the 309 tests that exist to distinguish the editions.
+- `TYPE="error"` tests are scored as passes, because **both outcomes
+  conform**. What must not happen is a panic, and that is checked
+  separately. Leaving them undecided understated coverage for a
+  condition on which the specification is explicitly permissive.
+
+The 28 still unsupported are Namespaces 1.1 (prefix undeclaration),
+`NAMESPACE="no"`, and encodings outside UTF-8/UTF-16/Latin-1.
 
 ### By submission
 

@@ -129,7 +129,8 @@ pub const MAX_DEPTH: usize = 256;
 mod dtd;
 pub mod encoding;
 mod limits;
-pub use limits::Limits;
+mod names4e;
+pub use limits::{Edition, Limits};
 
 pub use error::{Error, ErrorKind, Result};
 pub use parser::{parse, parse_bytes, parse_bytes_with, parse_with};

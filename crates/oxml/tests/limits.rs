@@ -219,3 +219,28 @@ fn a_hostile_document_fails_fast_under_strict_limits() {
         );
     }
 }
+
+#[test]
+fn the_two_xml_1_0_editions_disagree_and_both_are_available() {
+    // U+0E5C begins a legal name in the 5th edition and not in the
+    // 4th. The W3C suite ships 309 tests that exist only to probe this
+    // difference; a parser fixed to one edition cannot be scored
+    // against the other's tests at all.
+    let src = "<a\u{0E5C}/>";
+    assert!(parse(src).is_ok(), "5th edition accepts it");
+
+    let mut fourth = Limits::default();
+    fourth.edition = oxml::Edition::Fourth;
+    assert!(parse_with(src, fourth).is_err(), "4th edition rejects it");
+
+    // And a name legal in both is accepted by both.
+    assert!(parse("<abc/>").is_ok());
+    assert!(parse_with("<abc/>", fourth).is_ok());
+}
+
+#[test]
+fn the_fifth_edition_is_the_default() {
+    assert_eq!(Limits::default().edition, oxml::Edition::Fifth);
+    assert_eq!(Limits::strict().edition, oxml::Edition::Fifth);
+    assert_eq!(Limits::permissive().edition, oxml::Edition::Fifth);
+}

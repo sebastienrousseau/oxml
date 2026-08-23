@@ -73,17 +73,40 @@ pub(crate) struct DtdParser<'a> {
     pub(crate) input: &'a str,
     pub(crate) bytes: &'a [u8],
     pub(crate) pos: usize,
+    /// Name rules differ between XML 1.0 editions, and names appear in
+    /// the DTD too — element and attribute declarations, notation
+    /// names, and processing-instruction targets.
+    pub(crate) edition: crate::Edition,
 }
 
 /// What went wrong, as an offset and a static reason.
 pub(crate) type DtdError = (usize, &'static str);
 
 impl<'a> DtdParser<'a> {
-    pub(crate) const fn new(input: &'a str, pos: usize) -> Self {
+    pub(crate) const fn new(
+        input: &'a str,
+        pos: usize,
+        edition: crate::Edition,
+    ) -> Self {
         Self {
             input,
             bytes: input.as_bytes(),
             pos,
+            edition,
+        }
+    }
+
+    fn is_name_start(&self, c: char) -> bool {
+        match self.edition {
+            crate::Edition::Fourth => crate::names4e::is_name_start_4e(c),
+            _ => crate::parser::is_name_start(c),
+        }
+    }
+
+    fn is_name_char(&self, c: char) -> bool {
+        match self.edition {
+            crate::Edition::Fourth => crate::names4e::is_name_char_4e(c),
+            _ => crate::parser::is_name_char(c),
         }
     }
 
@@ -124,12 +147,12 @@ impl<'a> DtdParser<'a> {
         let rest = &self.input[self.pos..];
         let mut chars = rest.char_indices();
         match chars.next() {
-            Some((_, c)) if crate::parser::is_name_start(c) => {}
+            Some((_, c)) if self.is_name_start(c) => {}
             _ => return Err((start, "expected a name")),
         }
         let mut end = rest.len();
         for (i, c) in rest.char_indices() {
-            if !crate::parser::is_name_char(c) {
+            if !self.is_name_char(c) {
                 end = i;
                 break;
             }
@@ -234,6 +257,11 @@ impl<'a> DtdParser<'a> {
         }
         if self.starts_with("<?") {
             self.pos += 2;
+            // The target is a Name, and its legality depends on the
+            // edition. Skipping to `?>` accepted illegal targets — a
+            // whole class of not-well-formed documents that the suite
+            // tests for at production 85.
+            let _ = self.name()?;
             return match self.input[self.pos..].find("?>") {
                 Some(i) => {
                     self.pos += i + 2;
