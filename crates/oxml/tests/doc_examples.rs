@@ -15,7 +15,7 @@
 #[test]
 fn migration_from_libxml_md_line_56() {
     use oxml::parse;
-    
+
     let input = "<a></b>";
     let error = parse(input).unwrap_err();
     let (line, column) = error.line_column(input);
@@ -26,12 +26,17 @@ fn migration_from_libxml_md_line_56() {
 #[test]
 fn migration_from_quick_xml_md_line_55() {
     use oxml::{XPath, parse};
-    
+
     let xml = "<r><book><title>Dune</title></book><book><title>Germinal</title></book></r>";
     let doc = parse(xml).unwrap();
     let q = XPath::compile("//title").unwrap();
-    let titles: Vec<_> = q.evaluate(&doc).nodes().unwrap()
-        .iter().map(|&n| doc.text(n)).collect();
+    let titles: Vec<_> = q
+        .evaluate(&doc)
+        .nodes()
+        .unwrap()
+        .iter()
+        .map(|&n| doc.text(n))
+        .collect();
     assert_eq!(titles, ["Dune", "Germinal"]);
 }
 
@@ -39,7 +44,7 @@ fn migration_from_quick_xml_md_line_55() {
 #[test]
 fn migration_from_roxmltree_md_line_51() {
     use oxml::parse;
-    
+
     let doc = parse("<r><a/></r>").unwrap();
     let root = doc.root_element().unwrap();
     // roxmltree: root.children().count()
@@ -50,7 +55,7 @@ fn migration_from_roxmltree_md_line_51() {
 #[test]
 fn migration_from_roxmltree_md_line_64() {
     use oxml::parse;
-    
+
     let doc = parse("<p>a<em>b</em>c</p>").unwrap();
     let p = doc.root_element().unwrap();
     // roxmltree's text() would give "a"
@@ -61,18 +66,23 @@ fn migration_from_roxmltree_md_line_64() {
 #[test]
 fn migration_from_roxmltree_md_line_82() {
     use oxml::{XPath, parse};
-    
+
     let doc = parse(r#"<r><a href="one"/><a href="two"/></r>"#).unwrap();
-    
+
     // roxmltree:
     //   doc.descendants()
     //      .filter(|n| n.has_tag_name("a"))
     //      .filter_map(|n| n.attribute("href"))
     //      .collect::<Vec<_>>()
-    
+
     let q = XPath::compile("//a/@href").unwrap();
-    let hrefs: Vec<_> = q.evaluate(&doc).nodes().unwrap()
-        .iter().map(|&n| doc.text(n)).collect();
+    let hrefs: Vec<_> = q
+        .evaluate(&doc)
+        .nodes()
+        .unwrap()
+        .iter()
+        .map(|&n| doc.text(n))
+        .collect();
     assert_eq!(hrefs, ["one", "two"]);
 }
 
@@ -80,38 +90,40 @@ fn migration_from_roxmltree_md_line_82() {
 #[test]
 fn migration_from_sxd_md_line_44() {
     use oxml::{XPath, parse};
-    
+
     let doc = parse("<r><a/><a/></r>").unwrap();
-    
+
     // sxd: evaluate_xpath(&doc, "count(//a)")  -- parses every time
-    let q = XPath::compile("count(//a)").unwrap();   // once
-    assert_eq!(q.evaluate(&doc).to_str(&doc), "2");  // many
+    let q = XPath::compile("count(//a)").unwrap(); // once
+    assert_eq!(q.evaluate(&doc).to_str(&doc), "2"); // many
 }
 
 /// From `doc/MIGRATION-FROM-SXD.md`, line 63.
 #[test]
 fn migration_from_sxd_md_line_63() {
     use oxml::{XPath, parse};
-    
+
     let doc = parse("<r><a>text</a></r>").unwrap();
     let v = XPath::compile("//a").unwrap().evaluate(&doc);
     assert_eq!(v.to_str(&doc), "text");
-    assert!(v.to_boolean());          // no document needed
+    assert!(v.to_boolean()); // no document needed
 }
 
 /// From `doc/MIGRATION-FROM-SXD.md`, line 85.
 #[test]
 fn migration_from_sxd_md_line_85() {
     use oxml::{XPath, parse};
-    
-    let doc = parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#).unwrap();
-    
+
+    let doc =
+        parse(r#"<r xmlns:x="urn:u"><x:item>A</x:item><item>B</item></r>"#)
+            .unwrap();
+
     // Both of these select BOTH elements. The prefix is ignored.
     for expr in ["//x:item", "//item"] {
         let v = XPath::compile(expr).unwrap().evaluate(&doc);
         assert_eq!(v.nodes().unwrap().len(), 2, "{expr}");
     }
-    
+
     // To select by namespace, test it explicitly.
     let ns = XPath::compile("//*[namespace-uri()='urn:u']").unwrap();
     assert_eq!(ns.evaluate(&doc).nodes().unwrap().len(), 1);
@@ -129,11 +141,11 @@ fn security_model_md_line_39() {
 #[test]
 fn user_guide_md_line_67() {
     use oxml::parse;
-    
+
     let doc = parse("<r><a/><b/></r>").unwrap();
-    
-    let root = doc.root();                       // the document node
-    let element = doc.root_element().unwrap();   // <r>
+
+    let root = doc.root(); // the document node
+    let element = doc.root_element().unwrap(); // <r>
     assert_ne!(root, element);
 }
 
@@ -141,7 +153,7 @@ fn user_guide_md_line_67() {
 #[test]
 fn user_guide_md_line_94() {
     use oxml::parse;
-    
+
     let doc = parse("<r><a/><b/><a/></r>").unwrap();
     let a_elements: Vec<_> = doc
         .descendants()
@@ -154,7 +166,7 @@ fn user_guide_md_line_94() {
 #[test]
 fn user_guide_md_line_114() {
     use oxml::parse;
-    
+
     let doc = parse("<p>The <em>first</em> finding.<!--note--></p>").unwrap();
     let p = doc.root_element().unwrap();
     assert_eq!(doc.text(p), "The first finding.");
@@ -164,15 +176,15 @@ fn user_guide_md_line_114() {
 #[test]
 fn user_guide_md_line_130() {
     use oxml::parse;
-    
+
     let doc = parse(r#"<order id="A-1" note="two &amp; a half"/>"#).unwrap();
     let order = doc.root_element().unwrap();
-    
+
     assert_eq!(doc.attribute(order, "id"), Some("A-1"));
     // Entities are already resolved.
     assert_eq!(doc.attribute(order, "note"), Some("two & a half"));
     assert_eq!(doc.attribute(order, "absent"), None);
-    
+
     for attr in doc.attributes(order) {
         let _ = (&attr.name.local, &attr.value);
     }
@@ -182,7 +194,7 @@ fn user_guide_md_line_130() {
 #[test]
 fn user_guide_md_line_150() {
     use oxml::{ExpandedName, parse};
-    
+
     let doc = parse(r#"<a xmlns:x="urn:x" x:ref="R" ref="plain"/>"#).unwrap();
     let a = doc.root_element().unwrap();
     let wanted = ExpandedName::qualified("urn:x", "ref");
@@ -194,7 +206,7 @@ fn user_guide_md_line_150() {
 #[test]
 fn user_guide_md_line_169() {
     use oxml::parse;
-    
+
     let one = parse(r#"<a:x xmlns:a="urn:u"/>"#).unwrap();
     let two = parse(r#"<b:x xmlns:b="urn:u"/>"#).unwrap();
     assert_eq!(
@@ -207,8 +219,9 @@ fn user_guide_md_line_169() {
 #[test]
 fn user_guide_md_line_191() {
     use oxml::{XPath, parse};
-    
-    let doc = parse("<shop><item price='9.99'/><item price='4.50'/></shop>").unwrap();
+
+    let doc =
+        parse("<shop><item price='9.99'/><item price='4.50'/></shop>").unwrap();
     let total = XPath::compile("sum(//item/@price)").unwrap();
     assert_eq!(total.evaluate(&doc).to_str(&doc), "14.49");
 }
@@ -217,20 +230,22 @@ fn user_guide_md_line_191() {
 #[test]
 fn user_guide_md_line_205() {
     use oxml::{XPath, parse, xpath::Value};
-    
+
     let doc = parse("<r><a/><a/></r>").unwrap();
     let nodes = XPath::compile("//a").unwrap().evaluate(&doc);
     assert!(matches!(nodes, Value::NodeSet(_)));
     assert_eq!(nodes.nodes().unwrap().len(), 2);
-    assert!(nodes.to_boolean());              // non-empty
+    assert!(nodes.to_boolean()); // non-empty
 }
 
 /// From `doc/USER-GUIDE.md`, line 222.
 #[test]
 fn user_guide_md_line_222() {
     use oxml::{XPath, parse};
-    
-    let doc = parse("<shop><item p='1'>Tea</item><item p='2'>Cocoa</item></shop>").unwrap();
+
+    let doc =
+        parse("<shop><item p='1'>Tea</item><item p='2'>Cocoa</item></shop>")
+            .unwrap();
     let rows = XPath::compile("//item").unwrap();
     let price = XPath::compile("@p").unwrap();
     let mut total = 0.0;
@@ -244,7 +259,7 @@ fn user_guide_md_line_222() {
 #[test]
 fn user_guide_md_line_240() {
     use oxml::{ErrorKind, parse};
-    
+
     let error = parse("<a></b>").unwrap_err();
     assert!(matches!(error.kind, ErrorKind::MismatchedEndTag { .. }));
     let (line, column) = error.line_column("<a></b>");
@@ -255,10 +270,10 @@ fn user_guide_md_line_240() {
 #[test]
 fn user_guide_md_line_262() {
     use oxml::{Limits, parse_with};
-    
+
     // Anything from a network.
     assert!(parse_with("<a/>", Limits::strict()).is_ok());
-    
+
     // Or one field at a time. `Limits` is `#[non_exhaustive]`, so start
     // from a profile rather than writing a struct literal.
     let mut limits = Limits::default();
@@ -270,7 +285,7 @@ fn user_guide_md_line_262() {
 #[test]
 fn user_guide_md_line_277() {
     use oxml::parse_bytes;
-    
+
     let doc = parse_bytes(b"<?xml version='1.0'?><a>hi</a>").unwrap();
     assert_eq!(doc.text(doc.root()), "hi");
 }
@@ -279,7 +294,7 @@ fn user_guide_md_line_277() {
 #[test]
 fn user_guide_md_line_311() {
     use oxml::parse;
-    
+
     let doc = parse("<r><a id='1'/><a id='2'/></r>").unwrap();
     let root = doc.root_element().unwrap();
     std::thread::scope(|scope| {
@@ -296,7 +311,7 @@ fn user_guide_md_line_311() {
 #[test]
 fn user_guide_md_line_330() {
     use oxml::{XPath, parse};
-    
+
     let doc = parse(r#"<r><a href="one"/><a href="two"/></r>"#).unwrap();
     let q = XPath::compile("//@href").unwrap();
     let values: Vec<_> = q
@@ -313,7 +328,7 @@ fn user_guide_md_line_330() {
 #[test]
 fn user_guide_md_line_347() {
     use oxml::parse;
-    
+
     let doc = parse("<r><meta/><body>text</body></r>").unwrap();
     let body = doc
         .descendants()
@@ -325,7 +340,7 @@ fn user_guide_md_line_347() {
 #[test]
 fn user_guide_md_line_359() {
     use oxml::parse;
-    
+
     fn check(input: &str) -> Result<(), String> {
         match parse(input) {
             Ok(_) => Ok(()),
@@ -335,7 +350,7 @@ fn user_guide_md_line_359() {
             }
         }
     }
-    
+
     assert_eq!(check("<a/>"), Ok(()));
     assert!(check("<a>").is_err());
 }

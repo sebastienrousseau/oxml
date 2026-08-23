@@ -159,6 +159,33 @@ pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
 /// specification requires. `&#xD;` is still markup at this point and
 /// becomes a carriage return when the reference is expanded -- it is
 /// the only way to write one that survives.
+/// Append `text` to an attribute value, normalising whitespace.
+///
+/// XML section 3.3.3 requires each whitespace character in an
+/// attribute value to be replaced by a space. Line endings are already
+/// `\n` by the time this runs, so in practice this converts `\n` and
+/// `\t`; `\r` only reaches here from a character reference, which is
+/// exempt and never passed to this function.
+///
+/// Without it, an attribute written across two lines came back
+/// containing the newline and the indentation of the next line -- so
+/// `title="a\n    b"` rather than `title="a     b"`, and two documents
+/// that differ only in line wrapping produced different values.
+fn push_attribute_normalized(out: &mut String, text: &str) {
+    // The overwhelmingly common case is a value with no whitespace to
+    // replace, which copies in one go.
+    if !text.contains(['\n', '\t', '\r']) {
+        out.push_str(text);
+        return;
+    }
+    for c in text.chars() {
+        out.push(match c {
+            '\n' | '\t' | '\r' => ' ',
+            other => other,
+        });
+    }
+}
+
 fn normalize_line_endings(input: &str, version: Version) -> Cow<'_, str> {
     let terminator = |c: char| {
         c == '\r'
@@ -561,7 +588,10 @@ impl Parser<'_> {
                             Error::new(ErrorKind::Unterminated("entity"), s)
                         })?;
                     let ent = &self.input[self.pos..self.pos + end];
-                    out.push_str(&self.expand_entity(ent, s)?);
+                    // Element content, not an attribute value: section
+                    // 3.3.3 does not apply, and a newline in content is
+                    // content.
+                    out.push_str(&self.expand_entity(ent, s, false)?);
                     self.pos += end + 1;
                 }
                 _ => {
@@ -713,7 +743,10 @@ impl Parser<'_> {
                             Error::new(ErrorKind::Unterminated("entity"), s)
                         })?;
                     let ent = &self.input[self.pos..self.pos + end];
-                    out.push_str(&self.expand_entity(ent, s)?);
+                    // Normalisation happens inside the expansion, so
+                    // that a character reference within an entity's
+                    // replacement text stays exempt.
+                    out.push_str(&self.expand_entity(ent, s, true)?);
                     self.pos += end + 1;
                 }
                 _ => {
@@ -724,7 +757,10 @@ impl Parser<'_> {
                     {
                         self.pos += 1;
                     }
-                    out.push_str(&self.input[s..self.pos]);
+                    push_attribute_normalized(
+                        &mut out,
+                        &self.input[s..self.pos],
+                    );
                 }
             }
         }
@@ -856,7 +892,20 @@ impl Parser<'_> {
     /// complete enough to be sure. If it had an external subset or
     /// referenced a parameter entity, the declaration may exist
     /// somewhere we did not read, and rejecting would be wrong.
-    fn expand_entity(&mut self, ent: &str, offset: usize) -> Result<String> {
+    /// Expand one reference.
+    ///
+    /// `in_attribute` carries XML section 3.3.3 through the recursion:
+    /// inside an attribute value, literal whitespace in an entity's
+    /// replacement text becomes a space, but a **character reference**
+    /// anywhere in it is exempt. Normalising the finished expansion
+    /// instead would lose that distinction, because by then `&#xA;`
+    /// and a literal newline are the same character.
+    fn expand_entity(
+        &mut self,
+        ent: &str,
+        offset: usize,
+        in_attribute: bool,
+    ) -> Result<String> {
         if let Some(direct) = decode_predefined(ent) {
             // A character *reference* may not name a character the
             // `Char` production forbids. `&#0;` is illegal in both 1.0
@@ -883,7 +932,13 @@ impl Parser<'_> {
             Some(crate::dtd::EntityValue::Internal(text)) => {
                 let text = text.clone();
                 let mut budget = self.entity_budget;
-                let out = self.expand_text(&text, offset, 1, &mut budget);
+                let out = self.expand_text(
+                    &text,
+                    offset,
+                    1,
+                    &mut budget,
+                    in_attribute,
+                );
                 self.entity_budget = budget;
                 out
             }
@@ -902,12 +957,30 @@ impl Parser<'_> {
     /// depth stops the exponential billion-laughs shape, and the
     /// character budget stops the quadratic variant where one large
     /// entity is referenced many times at depth one.
+    /// Append a run of literal text, normalising it when it is part of
+    /// an attribute value.
+    fn push_run(
+        out: &mut String,
+        text: &str,
+        offset: usize,
+        budget: &mut usize,
+        in_attribute: bool,
+    ) -> Result<()> {
+        if in_attribute && text.contains(['\n', '\t', '\r']) {
+            let mut buf = String::with_capacity(text.len());
+            push_attribute_normalized(&mut buf, text);
+            return Self::push_bounded(out, &buf, offset, budget);
+        }
+        Self::push_bounded(out, text, offset, budget)
+    }
+
     fn expand_text(
         &mut self,
         text: &str,
         offset: usize,
         depth: usize,
         budget: &mut usize,
+        in_attribute: bool,
     ) -> Result<String> {
         if depth > self.limits.max_entity_depth {
             return Err(Error::new(ErrorKind::EntityLimitExceeded, offset));
@@ -916,7 +989,7 @@ impl Parser<'_> {
         let mut rest = text;
         while let Some(amp) = rest.find('&') {
             let (before, tail) = rest.split_at(amp);
-            Self::push_bounded(&mut out, before, offset, budget)?;
+            Self::push_run(&mut out, before, offset, budget, in_attribute)?;
             let Some(semi) = tail.find(';') else {
                 return Err(Error::new(
                     ErrorKind::UnknownEntity(tail.to_owned()),
@@ -926,6 +999,10 @@ impl Parser<'_> {
             let name = &tail[1..semi];
             rest = &tail[semi + 1..];
             if let Some(direct) = decode_predefined(name) {
+                // A character reference is exempt from attribute-value
+                // normalisation; the five named entities expand to
+                // characters that normalisation would not touch, so
+                // both take the literal path.
                 Self::push_bounded(&mut out, &direct, offset, budget)?;
                 continue;
             }
@@ -933,11 +1010,17 @@ impl Parser<'_> {
                 Some(crate::dtd::EntityValue::Internal(t)) => t.clone(),
                 _ => continue,
             };
-            let expanded =
-                self.expand_text(&inner, offset, depth + 1, budget)?;
+            // Already normalised by the recursive call if needed.
+            let expanded = self.expand_text(
+                &inner,
+                offset,
+                depth + 1,
+                budget,
+                in_attribute,
+            )?;
             Self::push_bounded(&mut out, &expanded, offset, budget)?;
         }
-        Self::push_bounded(&mut out, rest, offset, budget)?;
+        Self::push_run(&mut out, rest, offset, budget, in_attribute)?;
         Ok(out)
     }
 
