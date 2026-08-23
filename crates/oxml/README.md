@@ -415,6 +415,9 @@ Namespaces *are* resolved correctly in the tree — `element_name`
 returns the URI, and `ExpandedName` comparison works. It is only the
 name test in an expression that ignores them.
 
+The same applies to attributes: `//@isbn` and `//@m:isbn` both select a
+namespaced attribute.
+
 Until this is fixed, select by namespace explicitly:
 
 ```rust

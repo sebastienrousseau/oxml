@@ -564,6 +564,31 @@ fn eval_function(
 /// node of its argument node-set, or the context node when it takes no
 /// argument. Returns `None` when an argument was supplied but selected
 /// nothing, which is not the same as having no argument at all.
+/// The expanded name of a node, as `local-name` and `namespace-uri`
+/// define it.
+///
+/// XPath 1.0 gives an expanded-name to elements **and attributes**;
+/// reading only `Document::element_name` here meant both functions
+/// answered the empty string for every attribute, which silently broke
+/// the one workaround available for selecting by namespace. A
+/// processing instruction has a local part -- its target -- and no
+/// namespace. Everything else has neither.
+fn name_parts(doc: &Document, id: NodeId) -> Option<(&str, Option<&str>)> {
+    match doc.kind(id)? {
+        NodeKind::Element { .. } => doc
+            .element_name(id)
+            .map(|n| (n.local.as_str(), n.namespace.as_deref())),
+        NodeKind::Attr(attribute) => Some((
+            attribute.name.local.as_str(),
+            attribute.name.namespace.as_deref(),
+        )),
+        NodeKind::ProcessingInstruction { target, .. } => {
+            Some((target.as_str(), None))
+        }
+        NodeKind::Root | NodeKind::Text(_) | NodeKind::Comment(_) => None,
+    }
+}
+
 fn node_argument(
     doc: &Document,
     args: &[Expr],
@@ -616,14 +641,15 @@ fn eval_node_function(
         // the empty string.
         "local-name" => Value::String(
             node_argument(doc, args, ctx, position, size)
-                .and_then(|n| doc.element_name(n))
-                .map(|n| n.local.clone())
+                .and_then(|n| name_parts(doc, n))
+                .map(|(local, _)| local.to_owned())
                 .unwrap_or_default(),
         ),
         "namespace-uri" => Value::String(
             node_argument(doc, args, ctx, position, size)
-                .and_then(|n| doc.element_name(n))
-                .and_then(|n| n.namespace.clone())
+                .and_then(|n| name_parts(doc, n))
+                .and_then(|(_, namespace)| namespace)
+                .map(str::to_owned)
                 .unwrap_or_default(),
         ),
         "sum" => {

@@ -189,3 +189,60 @@ fn nesting_within_the_limit_still_compiles() {
     let x = XPath::compile(&expr).expect("within the limit");
     assert_eq!(x.evaluate(&doc).to_str(&doc), "2");
 }
+
+/// `local-name()` and `namespace-uri()` describe attributes too.
+///
+/// Both read the node's expanded name, and XPath 1.0 gives one to
+/// elements *and* attributes. Reading only the element name made both
+/// answer the empty string for every attribute, which is wrong on its
+/// own and also broke the only workaround available for selecting an
+/// attribute by namespace -- so a query returned nothing and looked
+/// like an empty document rather than a defect.
+#[test]
+fn name_functions_describe_attributes_and_pis_not_only_elements() {
+    let doc = parse(r#"<r xmlns:m="urn:u"><x m:a="A" b="B"/><?pi go?></r>"#)
+        .expect("well-formed");
+
+    for (expr, want) in [
+        ("local-name(//@m:a)", "a"),
+        ("namespace-uri(//@m:a)", "urn:u"),
+        // An attribute in no namespace has an empty namespace URI, not
+        // an absent one.
+        ("local-name(//@b)", "b"),
+        ("namespace-uri(//@b)", ""),
+        // Elements still work.
+        ("local-name(//x)", "x"),
+        ("namespace-uri(//x)", ""),
+        // A processing instruction has a local part -- its target --
+        // and no namespace.
+        ("local-name(//processing-instruction())", "pi"),
+        ("namespace-uri(//processing-instruction())", ""),
+        // Text, comments and the root have neither.
+        ("local-name(/)", ""),
+    ] {
+        let value = XPath::compile(expr).expect("compiles").evaluate(&doc);
+        assert_eq!(value.to_str(&doc), want, "{expr}");
+    }
+}
+
+/// Selecting an attribute by its namespace.
+///
+/// This is the documented workaround for name tests not resolving
+/// prefixes, so it has to actually work.
+#[test]
+fn attributes_can_be_selected_by_namespace_uri() {
+    let doc = parse(r#"<r xmlns:m="urn:u"><x m:a="A" b="B"/></r>"#)
+        .expect("well-formed");
+
+    let namespaced = XPath::compile("//@*[namespace-uri()='urn:u']")
+        .expect("compiles")
+        .evaluate(&doc);
+    assert_eq!(namespaced.nodes().expect("a node-set").len(), 1);
+    assert_eq!(namespaced.to_str(&doc), "A");
+
+    let plain = XPath::compile("//@*[namespace-uri()='']")
+        .expect("compiles")
+        .evaluate(&doc);
+    assert_eq!(plain.nodes().expect("a node-set").len(), 1);
+    assert_eq!(plain.to_str(&doc), "B");
+}
