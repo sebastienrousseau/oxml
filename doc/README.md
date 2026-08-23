@@ -22,6 +22,7 @@ checked, not illustrative.
 | Move an existing codebase | the migration guides below |
 | Know how conformant it is | [CONFORMANCE.md](CONFORMANCE.md) |
 | Contribute | [TESTING.md](TESTING.md) |
+| Know what is left to do | [ROADMAP.md](ROADMAP.md) |
 
 ## Reference
 
@@ -33,6 +34,7 @@ checked, not illustrative.
 | [CONFORMANCE.md](CONFORMANCE.md) | W3C results, what the 164 failures are, the ratchet |
 | [ECOSYSTEM.md](ECOSYSTEM.md) | The six crates and which one you want |
 | [MSRV-AND-DEPRECATION.md](MSRV-AND-DEPRECATION.md) | 1.86.0, versioning, deprecation |
+| [ROADMAP.md](ROADMAP.md) | Where the plan stands, and what is left |
 | [SECURITY-MODEL.md](SECURITY-MODEL.md) | Threat model, XXE, entity budgets, stack bounds |
 | [TESTING.md](TESTING.md) | Conformance, fuzzing, Miri, properties, coverage |
 | [USER-GUIDE.md](USER-GUIDE.md) | The long-form manual |
