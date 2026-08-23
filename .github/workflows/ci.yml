@@ -187,3 +187,40 @@ jobs:
       - run: >
           cargo hack check -p oxml --feature-powerset --no-dev-deps
           --group-features xpath,libm
+
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse, tree_walk, parse_limits, xpath_compile, xpath_eval]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+      # Seeds matter more than run time. Starting cold, libFuzzer spends
+      # almost the whole budget on inputs that are not valid XML — a run
+      # from an empty corpus reached essentially no coverage, while the
+      # same target seeded reaches ~1000 edges in seconds.
+      - name: Seed the corpus
+        run: |
+          mkdir -p fuzz/corpus/${{ matrix.target }}
+          case "${{ matrix.target }}" in
+            xpath_compile) cp fuzz/seeds/xpath_compile/* fuzz/corpus/${{ matrix.target }}/ ;;
+            xpath_eval)    : ;;   # structure-aware; generates its own input
+            *)             cp fuzz/seeds/parse/* fuzz/corpus/${{ matrix.target }}/ ;;
+          esac
+      - name: Fuzz for 300s
+        run: >
+          cargo fuzz run ${{ matrix.target }} --
+          -max_total_time=300
+          -dict=fuzz/dictionaries/xml.dict
+          -print_final_stats=1
+      - name: Upload any crash
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/

@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/oxml"]
+# The fuzz crate needs nightly and sanitizer flags; keep it out of
+# ordinary builds.
+exclude = ["fuzz"]
 
 # The satellites ship from their own repositories and release in strict
 # lockstep at the same `=0.0.X` version as this workspace, mirroring the
