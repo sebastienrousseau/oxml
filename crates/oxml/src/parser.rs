@@ -430,6 +430,25 @@ impl<'a> Parser<'a> {
                         self.pos,
                     ));
                 }
+                // `xmlns:` with nothing after it: the attribute parses
+                // as a name, but `PrefixedAttName ::= 'xmlns:' NCName`
+                // needs a prefix to declare.
+                if prefix.is_empty() || prefix.contains(':') {
+                    return Err(Error::new(
+                        ErrorKind::ReservedNamespace,
+                        self.pos,
+                    ));
+                }
+                // Undeclaring a prefix -- binding it to the empty
+                // string -- is XML 1.1 only. In a 1.0 document it is an
+                // error, not a no-op, and treating it as one silently
+                // changed which namespace the element was in.
+                if value.is_empty() && self.version == Version::V10 {
+                    return Err(Error::new(
+                        ErrorKind::ReservedNamespace,
+                        self.pos,
+                    ));
+                }
                 self.ns.bind(prefix.to_owned(), value.clone());
             } else if *name == "xmlns" {
                 self.ns.bind(String::new(), value.clone());
@@ -629,7 +648,19 @@ impl<'a> Parser<'a> {
                     {
                         self.pos += 1;
                     }
-                    out.push_str(&self.input[start..self.pos]);
+                    // The check at the top of the loop only sees the
+                    // first byte of a run. Everything after it was
+                    // consumed here without being looked at, so
+                    // `]]]>`, `abc]]>def` and the text left over after
+                    // a nested CDATA section all passed.
+                    let run = &self.input[start..self.pos];
+                    if let Some(at) = run.find("]]>") {
+                        return Err(Error::new(
+                            ErrorKind::IllegalCdataEnd,
+                            start + at,
+                        ));
+                    }
+                    out.push_str(run);
                 }
             }
         }
@@ -664,6 +695,13 @@ impl<'a> Parser<'a> {
         // legal processing instruction at all.
         if target.eq_ignore_ascii_case("xml") {
             return Err(Error::new(ErrorKind::ReservedPiTarget, self.pos));
+        }
+        // Namespaces in XML narrows `PITarget` from `Name` to `NCName`,
+        // which has no colon. A namespace-aware parser must reject
+        // `<?a:b ?>`; `Name` alone would allow it, which is why this is
+        // easy to miss.
+        if target.contains(':') {
+            return Err(Error::new(ErrorKind::InvalidName, self.pos));
         }
         // The target must be followed by whitespace or `?>`; anything
         // else means the name stopped early on an illegal character.
@@ -779,10 +817,14 @@ impl<'a> Parser<'a> {
                     self.pos += end + 1;
                 }
                 _ => {
+                    // Stopping at `<` as well lets the arm above report
+                    // it. Without this the run swallowed it, so
+                    // `a="<x"` was rejected and `a="1 < 2"` was not.
                     let s = self.pos;
                     while self.pos < self.bytes.len()
                         && self.bytes[self.pos] != quote
                         && self.bytes[self.pos] != b'&'
+                        && self.bytes[self.pos] != b'<'
                     {
                         self.pos += 1;
                     }
@@ -1219,6 +1261,18 @@ pub(crate) enum Version {
 /// whitespace. Scanning to `?>` without checking accepts
 /// `version="1.0"standalone="yes"`, which has no separating space, and
 /// accepts them in the wrong order.
+/// Whether `value` matches `VersionNum ::= '1.' [0-9]+`.
+///
+/// Which version the parser then *implements* is a separate question,
+/// answered by [`declared_version`]: `1.2` is a well-formed version
+/// number naming a version this crate does not support, and the two
+/// failures are different.
+fn is_legal_version(value: &str) -> bool {
+    value.strip_prefix("1.").is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+    })
+}
+
 fn validate_xml_declaration(decl: &str, offset: usize) -> Result<()> {
     let mut rest = decl;
     let mut seen: Vec<&str> = Vec::new();
@@ -1272,6 +1326,16 @@ fn validate_xml_declaration(decl: &str, offset: usize) -> Result<()> {
         };
         let value = &body[..close];
         match name {
+            // `VersionNum ::= '1.' [0-9]+`. There was no arm for this
+            // at all, so `version="1.0 "`, `"1.0?"` and `"1.0^"` were
+            // accepted -- the declaration's own version string was the
+            // one field nothing checked.
+            "version" if !is_legal_version(value) => {
+                return Err(Error::new(
+                    ErrorKind::MalformedDeclaration,
+                    offset,
+                ));
+            }
             "standalone" if !matches!(value, "yes" | "no") => {
                 return Err(Error::new(
                     ErrorKind::MalformedDeclaration,

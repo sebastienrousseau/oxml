@@ -1,4 +1,4 @@
-#counts	pass=2394	fail=163	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2408	fail=149	panic=0	unsupported=28	blocked=0	total=2585
 sun	cond01	fail	accepted a document that is not well-formed
 sun	cond02	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
@@ -37,9 +37,6 @@ ibm	ibm-1-1-valid-P05-ibm05v01.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v02.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v03.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v05.xml	unsupported	namespace-processing-off
-ibm	ibm-not-wf-P10-ibm10n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P10-ibm10n05.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P14-ibm14n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P29-ibm29n04.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P30-ibm30n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P31-ibm31n01.xml	fail	accepted a document that is not well-formed
@@ -100,8 +97,6 @@ xmltest	not-wf-not-sa-006	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-007	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-008	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-009	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-026	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-029	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-069	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-074	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-077	fail	accepted a document that is not well-formed
@@ -116,7 +111,6 @@ xmltest	not-wf-sa-089	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-090	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-091	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-092	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-102	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-103	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-115	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-116	fail	accepted a document that is not well-formed
@@ -139,12 +133,7 @@ oasis	o-p05pass1	unsupported	namespace-processing-off
 oasis	o-p08pass1	unsupported	namespace-processing-off
 oasis	o-p09fail1	fail	accepted a document that is not well-formed
 oasis	o-p09fail2	fail	accepted a document that is not well-formed
-oasis	o-p10fail1	fail	accepted a document that is not well-formed
-oasis	o-p14fail3	fail	accepted a document that is not well-formed
-oasis	o-p18fail3	fail	accepted a document that is not well-formed
 oasis	o-p22fail1	fail	accepted a document that is not well-formed
-oasis	o-p26fail1	fail	accepted a document that is not well-formed
-oasis	o-p26fail2	fail	accepted a document that is not well-formed
 oasis	o-p30fail1	fail	accepted a document that is not well-formed
 oasis	o-p31fail1	fail	accepted a document that is not well-formed
 oasis	o-p61fail1	fail	accepted a document that is not well-formed
@@ -169,9 +158,6 @@ eduni	rmt-e3e-12	fail	accepted a document that is not well-formed
 eduni	rmt-ns-e1.0-13a	fail	accepted a document that is not well-formed
 eduni	rmt-ns-e1.0-13b	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-012	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-016	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-023	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-042	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-043	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-044	fail	accepted a document that is not well-formed
 eduni	rmt-ns11-001	unsupported	namespaces-1.1

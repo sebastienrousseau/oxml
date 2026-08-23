@@ -27,7 +27,7 @@ one is listed as not done, however close it feels.
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
 | Line coverage | ≥95% | **97.4%**, gated | ✅ |
-| Conformance | Published with denominator | **93.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | 🟡 |
+| Conformance | Published with denominator | **94.2% of 2,557 decided; 98.9% of 2,585 reach a decision** | 🟡 |
 | Allocations per node | ≤2 | **1.13** | ✅ |
 | Throughput | <100 ms at load | **Not measured** — see below | ❌ |
 | XPath 1.0 | Complete | 10 axes, 25 functions, namespaces resolved | 🟡 |
@@ -86,11 +86,19 @@ including the entity-expansion complication: a value containing
 
 Breaking: `Document::text` would return `&str` rather than `String`.
 
-### 3. External DTD subset — 163 of 163 remaining conformance failures
+### 3. Conformance — 149 failures, only 63 of which need the external subset
 
-Every remaining failure is the parser being **too permissive**;
-there is no document in the suite it wrongly rejects. Most need
-declarations from a separate file.
+Every remaining failure is the parser being **too permissive**; there
+is no document in the suite it wrongly rejects.
+
+They split by what the failing document contains: **81 internal subset
+only, 63 external subset, 5 no `DOCTYPE` at all**. So 86 are rules that
+could be enforced today, and only 63 wait on the external subset.
+
+Counting them is what found that. The assumption had been that the
+bulk needed the external subset; it was wrong, and 14 failures were
+fixed the same afternoon once the categories were counted rather than
+guessed.
 
 The design constraint is fixed: the parser must never perform I/O. The
 shape is a caller-supplied map from identifier to content, so the
