@@ -224,3 +224,27 @@ jobs:
         with:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts/
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      # This crate is `#![forbid(unsafe_code)]`, so Miri will not find
+      # undefined behaviour — safe Rust cannot express it. It is kept
+      # for three things it *does* catch: arithmetic overflow under
+      # debug semantics, out-of-bounds indexing, and any UB introduced
+      # by a future dependency or a lifted `forbid`. It has already
+      # earned its place here by catching a float-precision divergence
+      # between backends that the test suite could not see.
+      #
+      # The integration tests are excluded: Miri is 50-200x slower and
+      # the depth tests parse 100,000-element documents, which would
+      # dominate the job without testing anything Miri is good at.
+      - run: cargo miri test --all-features --lib
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance

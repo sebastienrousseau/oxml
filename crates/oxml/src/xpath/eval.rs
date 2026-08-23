@@ -127,17 +127,24 @@ fn format_number(n: f64) -> String {
         return format!("{}", n as i64);
     }
     // Round to 15 significant figures, then let Rust print the
-    // shortest form of *that*. Scaling by a power of ten and rounding
-    // is what drops the trailing IEEE 754 noise; formatting to a fixed
-    // number of decimal places would not, because the noise sits at a
-    // different decimal position depending on magnitude.
-    let magnitude = float::floor(float::log10(n.abs()));
-    let scale = float::powf(10.0, 14.0 - magnitude);
-    let rounded = if scale.is_finite() && scale > 0.0 {
-        float::round(n * scale) / scale
-    } else {
-        n
-    };
+    // shortest form of *that*. That is what drops the trailing IEEE 754
+    // noise; formatting to a fixed number of *decimal places* would
+    // not, because the noise sits at a different decimal position
+    // depending on magnitude.
+    //
+    // This is done through scientific notation rather than by scaling
+    // with `log10`/`powf`. Rust does not specify the precision of those
+    // two — Miri's implementation and `libm`'s disagree with the host's
+    // by a few ULP on values as ordinary as `17.49`. Since `magnitude`
+    // is fed to `floor`, a 1-ULP difference near an exact power of ten
+    // flips it to the next integer, changing the digit position that
+    // gets rounded and therefore the printed result. A `no_std` build
+    // would then print a different number from a `std` build.
+    //
+    // `{:.14e}` is exact decimal conversion: 15 significant digits,
+    // identical on every platform, and it needs no transcendental
+    // functions at all.
+    let rounded: f64 = format!("{n:.14e}").parse().unwrap_or(n);
     let mut s = rounded.to_string();
     if s.contains('.') {
         s = s.trim_end_matches('0').trim_end_matches('.').to_owned();
