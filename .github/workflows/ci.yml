@@ -248,3 +248,28 @@ jobs:
       - run: cargo miri test --all-features --lib
         env:
           MIRIFLAGS: -Zmiri-strict-provenance
+
+  conformance:
+    name: W3C conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache the suite
+        uses: actions/cache@v4
+        with:
+          path: conformance/data
+          key: xmlconf-xmlts20130923-v1
+      # The download verifies a pinned SHA-256. That is not ceremony:
+      # www.w3.org sits behind Cloudflare and returns a 5,850-byte HTML
+      # challenge page with HTTP 200 to a request without a browser
+      # User-Agent. Piping that into `tar` gives an empty directory, and
+      # the job would then report success having run zero tests.
+      - run: cargo run -p oxml-conformance --bin download
+      # Gates the merge. A regression fails; so does an unreviewed
+      # improvement, which is the point of a ratchet.
+      - run: cargo test -p oxml-conformance
+      - name: Report
+        if: always()
+        run: cargo run -p oxml-conformance --bin report

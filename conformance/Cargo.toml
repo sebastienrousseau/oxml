@@ -1,0 +1,24 @@
+[package]
+name = "oxml-conformance"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "W3C XML Conformance Test Suite runner for oxml"
+
+[dependencies]
+oxml = { path = "../crates/oxml" }
+
+[dev-dependencies]
+oxml = { path = "../crates/oxml" }
+
+[[bin]]
+name = "download"
+path = "src/bin/download.rs"
+
+[[bin]]
+name = "report"
+path = "src/bin/report.rs"
+
+[[test]]
+name = "w3c_xml"
+path = "tests/w3c_xml.rs"
