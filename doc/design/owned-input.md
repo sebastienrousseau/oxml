@@ -9,12 +9,18 @@
 Measured with a counting global allocator over a 16,002-node document:
 **66,037 allocations, 4.13 per node.**
 
-The arena work already done removed the per-node `Vec`s: child lists
-and attribute lists are `(start, len)` ranges into two shared vectors,
-and names are interned so a document with 2,000 `<item>` elements holds
-one `"item"`.
+**Nothing of this is done on `main`.** There are two separate pieces,
+and the note originally described the first as finished because it
+exists on the `feat/phase2-borrowing` branch. It does not exist here.
 
-What is left is owned `String`s:
+**One — flatten and intern.** Child lists and attribute lists become
+`(start, len)` ranges into two shared vectors, and names are interned
+behind a `NameId` so a document with 2,000 `<item>` elements holds one
+`"item"`. Prototyped on `feat/phase2-borrowing`.
+
+**Two — own the input**, which is the rest of this note.
+
+The owned `String`s that remain either way:
 
 | Source | Roughly |
 |---|---|

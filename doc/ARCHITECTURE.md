@@ -10,7 +10,7 @@ decisions.
 
 - [The shape of the crate](#the-shape-of-the-crate)
 - [The document is an arena](#the-document-is-an-arena)
-- [Names are interned](#names-are-interned)
+- [Names are not yet interned](#names-are-not-yet-interned)
 - [Parsing is recursive descent](#parsing-is-recursive-descent)
 - [The encoding layer runs first](#the-encoding-layer-runs-first)
 - [Limits are a value, not a mode](#limits-are-a-value-not-a-mode)
@@ -42,25 +42,34 @@ irrelevant to anyone reading the parser.
 
 ## The document is an arena
 
-A `Document` owns three flat vectors and hands out indices:
+A `Document` owns a vector of nodes and hands out indices:
 
 ```rust,ignore
 pub struct Document {
     nodes: Vec<Node>,
-    names: Vec<ExpandedName>,   // interned; nodes hold a NameId
-    child_ids: Vec<NodeId>,     // every child list, concatenated
-    attr_ids: Vec<NodeId>,      // every attribute list, concatenated
-    scratch: Vec<NodeId>,       // reused during construction
+}
+
+enum NodeKind {
+    Element { name: ExpandedName, attributes: Vec<NodeId> },
+    Text(String),
+    // …
 }
 ```
 
-A `Node` holds `(start, len)` ranges into `child_ids` and `attr_ids`
-rather than owning a `Vec` each. That is the difference between one
-allocation per node and one allocation per node *plus one per child
-list* — on a document of 16,002 nodes it is the difference between
-roughly 32,000 allocations and roughly 16,000.
+Each element currently owns its `ExpandedName` and a `Vec` of
+attribute ids, and each node owns a `Vec` of children. That costs: the
+measured figure is **4.13 allocations per node**.
 
-Three consequences follow:
+> **Planned, not done.** Flattening the child and attribute lists into
+> two shared vectors — with each node holding a `(start, len)` range
+> into them — and interning names behind a `NameId` removes most of
+> that. The work exists on the `feat/phase2-borrowing` branch and is
+> not on `main`. See
+> [design/owned-input.md](design/owned-input.md) and
+> [BENCHMARKS.md](BENCHMARKS.md), which publishes the current number
+> rather than the intended one.
+
+Three consequences follow from the arena regardless:
 
 1. **`NodeId` is `Copy` and pointer-sized.** Holding a position does
    not borrow the tree, so you can collect ids, store them, and return
@@ -79,13 +88,21 @@ every access, and cannot be `Send`. The arena is `Send + Sync` for
 free: it is immutable after parsing and contains no interior
 mutability.
 
-## Names are interned
+## Names are not yet interned
 
-Element and attribute names are stored once in `Document::names`, and
-nodes carry a `NameId` index. A document with 2,000 `<item>` elements
-holds one `"item"` string, not 2,000.
+Every element owns its `ExpandedName`, so a document with 2,000
+`<item>` elements holds 2,000 copies of `"item"`. Attributes are the
+same, and worse: an `Attribute` carries a full `ExpandedName` *and* an
+owned value, so a document with 6,000 attributes performs roughly
+18,000 string allocations for them alone.
 
-Interning also makes namespace comparison correct by construction.
+This is the single largest remaining source of allocations and it is
+the next piece of work. See
+[design/owned-input.md](design/owned-input.md).
+
+What the design *does* get right today is that `ExpandedName` holds
+the namespace **URI**, not the prefix, which makes namespace
+comparison correct by construction.
 `ExpandedName` holds the namespace **URI**, not the prefix, so
 `<a:x xmlns:a="u"/>` and `<b:x xmlns:b="u"/>` compare equal, which is
 what the Namespaces in XML specification requires and what a

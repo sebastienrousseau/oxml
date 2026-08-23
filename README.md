@@ -254,7 +254,6 @@ Two architectural choices motivate the design:
 
 - Arena-backed, index-addressed nodes; `NodeId` is `Copy` and
   pointer-sized
-- Child and attribute lists as `(start, len)` ranges into shared arenas
 - Parent, children, descendants, text (XPath `string-value` semantics)
 - Attributes as first-class nodes
 - `Send + Sync`, so one document serves any number of threads
@@ -822,16 +821,19 @@ Measured at **4.1 allocations per node** — 66,037 allocations for a
 whole of `parse` and divided by `Document::len()`. A test holds that
 figure to a ceiling, so it cannot drift upward unnoticed.
 
-The structure is a flat arena rather than a graph of `Rc`s. Child lists
-and attribute lists are `(start, len)` ranges into shared arenas, so a
-node is a small fixed-size record and traversal is index arithmetic
-rather than pointer chasing.
+The structure is a flat arena rather than a graph of `Rc`s, so
+traversal is index arithmetic rather than pointer chasing and the
+document is `Send + Sync` for free.
 
-The remaining per-node allocations are the owned `String`s: text node
-contents, attribute values, and element names before interning.
-Removing them means having the document own its input and store
-`(start, len)` into it instead, which is planned and not done. Until it
-is, 4.1 is the number, not 2.
+The allocations are the owned `String`s and `Vec`s: every element owns
+its `ExpandedName` and a `Vec` of attribute ids, every node owns a
+`Vec` of children, and every text node and attribute value is an owned
+`String`.
+
+Two changes remove most of that, and **neither is done**: flattening
+the child and attribute lists into shared vectors with `(start, len)`
+ranges, and having the document own its input so text and values are
+ranges into it. Until they are, 4.1 is the number, not 2.
 
 That said: the whole document is in memory. See "When not to use oxml".
 
