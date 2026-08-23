@@ -139,7 +139,9 @@ assert_eq!(doc.attribute(order, "note"), Some("two & a half"));
 assert_eq!(doc.attribute(order, "absent"), None);
 
 for attr in doc.attributes(order) {
-    let _ = (&attr.name.local, &attr.value);
+    // Names are interned; resolve the handle through the document.
+    let name = doc.name(attr.name).expect("interned");
+    let _ = (&name.local, &attr.value);
 }
 ```
 
@@ -153,7 +155,10 @@ use oxml::{ExpandedName, parse};
 let doc = parse(r#"<a xmlns:x="urn:x" x:ref="R" ref="plain"/>"#).unwrap();
 let a = doc.root_element().unwrap();
 let wanted = ExpandedName::qualified("urn:x", "ref");
-let found = doc.attributes(a).into_iter().find(|at| at.name == wanted);
+let found = doc
+    .attributes(a)
+    .into_iter()
+    .find(|at| doc.name(at.name) == Some(&wanted));
 assert_eq!(found.map(|at| at.value.as_str()), Some("R"));
 ```
 

@@ -34,6 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n== every attribute ==");
     for attr in doc.attributes(order) {
         let Attribute { name, value } = attr;
+        // Names are interned: an `Attribute` carries a `NameId`, and a
+        // document with 2,000 items and three attributes each holds
+        // three names rather than six thousand. Resolve the handle
+        // through the document.
+        let name = doc.name(*name).expect("interned");
         match &name.namespace {
             Some(uri) => println!("  {{{uri}}}{} = {value:?}", name.local),
             None => println!("  {} = {value:?}", name.local),
@@ -48,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let found = doc
         .attributes(order)
         .into_iter()
-        .find(|a| a.name == wanted)
+        .find(|a| doc.name(a.name) == Some(&wanted))
         .map(|a| a.value.as_str());
     println!("  {{urn:example:x}}ref = {found:?}");
 
@@ -57,7 +62,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n== as nodes ==");
     for &id in doc.attribute_nodes(order) {
         if let Some(NodeKind::Attr(a)) = doc.kind(id) {
-            println!("  node {} is {}={:?}", id.index(), a.name.local, a.value);
+            let name = doc.name(a.name).expect("interned");
+            println!("  node {} is {}={:?}", id.index(), name.local, a.value);
         }
         // The string-value of an attribute node is its value, not the
         // text of the element carrying it.

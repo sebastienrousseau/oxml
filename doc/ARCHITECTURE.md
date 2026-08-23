@@ -58,7 +58,8 @@ A `Node` holds a `(start, len)` range into `child_ids` rather than
 owning a `Vec`, and an element holds one into `attr_ids`. That removed
 one allocation per element with children and one per element with
 attributes: the measured figure went from **4.13 to 3.13 allocations
-per node** on a 16,002-node document.
+per node** on a 16,002-node document, and interning names by borrowed
+parts took it to **2.25**.
 
 Children need the `scratch` stack because a node's children are only
 known to be complete when its end tag arrives; they are copied into
@@ -71,8 +72,7 @@ start tag and are already contiguous.
 with one. Counting runs at memory speed; the reallocate-and-copy it
 avoids does not.
 
-> **Still to do.** Attribute names are not interned, and text and
-> attribute values are owned `String`s. See
+> **Still to do.** Text and attribute values are owned `String`s. See
 > [design/owned-input.md](design/owned-input.md).
 
 Three consequences follow from the arena:
@@ -94,18 +94,30 @@ every access, and cannot be `Send`. The arena is `Send + Sync` for
 free: it is immutable after parsing and contains no interior
 mutability.
 
-## Element names are interned
+## Names are interned
 
-Element names are stored once in `Document::names` and nodes carry a
-`NameId`. A document with 2,000 `<item>` elements holds one `"item"`,
+Element and attribute names are stored once in `Document::names`, and
+nodes carry a `NameId`. A document with 2,000 `<item>` elements holds one `"item"`,
 not 2,000. The index is keyed on the local part, so a document with
 many distinct names does not degrade to a linear scan of the table.
 
-**Attribute names are not interned.** An `Attribute` still carries a
-full `ExpandedName` and an owned value, so a document with 6,000
-attributes performs roughly 18,000 string allocations for them alone —
-the largest remaining source. Interning them changes the public
-`Attribute` type, which is why it has not been done in the same step.
+Attribute names share the same table, so an element `<item>` and an
+attribute `item="…"` in the same namespace resolve to the same handle
+and compare as a `u32`.
+
+Interning alone did **not** reduce allocations, and measuring is the
+only reason that was noticed. The name was resolved into a freshly
+allocated `ExpandedName` and only *then* looked up, so the allocation
+had already happened — interning reduced what the document retained
+and left the figure unmoved at 3.13. Resolving to borrowed parts and
+looking up by those took it to 2.63, and deleting the now-dead resolve
+that still ran for every element took it to **2.25**: a repeated name
+costs a map probe and nothing else.
+
+Clippy found that last one, as an unused variable. It had been
+allocating an `ExpandedName` per element for no reason since the
+interning went in, and the measurement alone would not have located
+it.
 
 Either way, `ExpandedName` holds the namespace **URI** rather than the
 prefix, which makes namespace comparison correct by construction.

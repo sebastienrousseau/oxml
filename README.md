@@ -510,7 +510,8 @@ assert_eq!(doc.element_name(first).unwrap().local, "a");
 // Attributes
 assert_eq!(doc.attribute(first, "id"), Some("1"));
 for attr in doc.attributes(first) {
-    assert_eq!(attr.name.local, "id");
+    // Names are interned; resolve the handle through the document.
+    assert_eq!(doc.name(attr.name).unwrap().local, "id");
 }
 
 // Node kinds
@@ -818,22 +819,20 @@ XML, build the string, or use `quick-xml`'s writer.
 
 ### How much memory does a document take?
 
-Measured at **3.1 allocations per node** — 50,050 allocations for a
+Measured at **2.25 allocations per node** — 36,070 allocations for a
 16,002-node document, counted with a wrapping global allocator over the
 whole of `parse` and divided by `Document::len()`. A test holds that
 figure to a ceiling, so it cannot drift upward unnoticed.
 
 The structure is a flat arena rather than a graph of `Rc`s. Child and
 attribute lists are `(start, len)` ranges into shared vectors and
-element names are interned, so traversal is index arithmetic rather
-than pointer chasing and the document is `Send + Sync` for free. That
-work took the figure from 4.13 to 3.13.
+names are interned, so traversal is index arithmetic rather than
+pointer chasing and the document is `Send + Sync` for free. That work
+took the figure from 4.13 to 2.25.
 
-What remains is attribute names — an `Attribute` still owns a full
-`ExpandedName` — and the owned `String`s for text and attribute
-values. Removing the latter means having the document own its input so
-both become ranges into it. Neither is done, so 3.1 is the number, not
-2.
+What remains is the owned `String`s: every text node and attribute
+value. Removing them means having the document own its input so both
+become ranges into it, which is not done — so 2.25 is the number.
 
 That said: the whole document is in memory. See "When not to use oxml".
 

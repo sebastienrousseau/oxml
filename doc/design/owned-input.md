@@ -7,32 +7,34 @@
 ## Where the allocations are
 
 Measured with a counting global allocator over a 16,002-node document:
-**66,037 allocations, 4.13 per node.**
+**36,070 allocations, 2.25 per node.**
 
 There are two pieces.
 
 **One — flatten and intern. Done.** Child lists and attribute lists are
-`(start, len)` ranges into two shared vectors, and element names are
-interned behind a `NameId`. That took the measured figure from 4.13 to
-**3.13 allocations per node**.
+`(start, len)` ranges into two shared vectors, and element *and*
+attribute names are interned behind a `NameId`. That took the measured
+figure from 4.13 to **2.25 allocations per node**.
 
-**Two — own the input**, which is the rest of this note, plus interning
-attribute names.
+Worth recording how: interning by itself moved the figure by nothing.
+The name was resolved into a freshly allocated `ExpandedName` and only
+then looked up, so the allocation had already happened. Resolving to
+borrowed parts and looking up by those is what actually removed it.
+
+**Two — own the input**, which is the rest of this note.
 
 The owned `String`s that remain:
 
 | Source | Roughly |
 |---|---|
-| Attribute names | one or two per attribute — an `Attribute` owns a full `ExpandedName` |
 | Attribute values | one per attribute |
 | Text node contents | one per text node |
+| The raw name and value pair `parse_attributes` builds | two per attribute |
 
-Attribute names are the largest single remaining source: 6,000
-attributes on the benchmark document account for roughly 18,000
-allocations. Interning them is the same change already made for
-elements, and it is separate only because `Attribute::name` is public,
-so replacing it with a `NameId` is a breaking change that ripples into
-the satellite crates.
+That last one is the next easy win and does not need this note's
+change: `parse_attributes` returns `Vec<(String, String)>`, so it
+allocates a `String` for each raw attribute name that is thrown away
+immediately after interning.
 
 ## The change
 

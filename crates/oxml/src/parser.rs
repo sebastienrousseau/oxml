@@ -450,8 +450,6 @@ impl Parser<'_> {
             ));
         };
 
-        let name = self.expand(&qname, true, tag_start)?;
-
         // Resolve attribute names first so duplicates are detected
         // before any node is created — otherwise a rejected element
         // would already be in the arena.
@@ -460,7 +458,7 @@ impl Parser<'_> {
             if raw == "xmlns" || raw.starts_with("xmlns:") {
                 continue;
             }
-            let an = self.expand(&raw, false, tag_start)?;
+            let an = self.intern_qname(&raw, false, tag_start)?;
             if resolved.iter().any(|a| a.name == an) {
                 self.ns.pop_scope();
                 return Err(Error::new(
@@ -471,7 +469,7 @@ impl Parser<'_> {
             resolved.push(Attribute { name: an, value });
         }
 
-        let name_id = self.intern(&name);
+        let name_id = self.intern_qname(&qname, true, tag_start)?;
         let node = self.doc.push(
             NodeKind::Element {
                 name: name_id,
@@ -831,6 +829,77 @@ impl Parser<'_> {
     /// namespace at all. Conflating the two is the classic namespace
     /// bug, so the distinction is a parameter rather than an
     /// assumption.
+    /// Resolve a qualified name to borrowed parts, without allocating.
+    ///
+    /// The namespace URI is borrowed from the in-scope declarations and
+    /// the local part from the input, so a name that has been seen
+    /// before costs nothing to look up.
+    fn resolve_parts<'q>(
+        &'q self,
+        qname: &'q str,
+        is_element: bool,
+        offset: usize,
+    ) -> Result<(&'q str, Option<&'q str>)> {
+        match qname.split_once(':') {
+            Some((prefix, local)) => {
+                // `xml` is bound by specification and never declared.
+                if prefix == "xml" {
+                    return Ok((
+                        local,
+                        Some("http://www.w3.org/XML/1998/namespace"),
+                    ));
+                }
+                let uri = self.ns.resolve(prefix).ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::UnboundPrefix(prefix.to_owned()),
+                        offset,
+                    )
+                })?;
+                Ok((local, Some(uri)))
+            }
+            None if is_element => match self.ns.resolve("") {
+                Some(uri) if !uri.is_empty() => Ok((qname, Some(uri))),
+                _ => Ok((qname, None)),
+            },
+            // An unprefixed *attribute* is in no namespace even when a
+            // default namespace is declared. That asymmetry with
+            // elements comes from the specification.
+            None => Ok((qname, None)),
+        }
+    }
+
+    /// Resolve a qualified name and intern it, in one step.
+    ///
+    /// Going through `expand` first allocated an `ExpandedName` for
+    /// every element and attribute *before* the lookup, so interning
+    /// reduced what the document retained and not what it allocated --
+    /// the figure did not move at all. Looking up by borrowed parts
+    /// means a repeated name costs a map probe and nothing else, and
+    /// only a genuinely new name allocates.
+    fn intern_qname(
+        &mut self,
+        qname: &str,
+        is_element: bool,
+        offset: usize,
+    ) -> Result<crate::tree::NameId> {
+        {
+            let (local, namespace) =
+                self.resolve_parts(qname, is_element, offset)?;
+            if let Some(candidates) = self.name_index.get(local) {
+                for &id in candidates {
+                    if self.doc.names[id as usize].namespace.as_deref()
+                        == namespace
+                    {
+                        return Ok(crate::tree::NameId(id));
+                    }
+                }
+            }
+        }
+        // Cold path: a name this document has not used before.
+        let name = self.expand(qname, is_element, offset)?;
+        Ok(self.intern(&name))
+    }
+
     fn expand(
         &self,
         qname: &str,

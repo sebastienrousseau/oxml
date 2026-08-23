@@ -24,9 +24,9 @@ into those.
 - `NodeId` is `Copy` and pointer-sized, so holding a position does not
   borrow the tree. No lifetime parameter spreads through caller code.
 - Traversal is index arithmetic on a contiguous vector.
-- Ranges rather than a `Vec` per node, plus interned element names,
-  took the measured figure from 4.13 to **3.13 allocations per node**.
-  The rest is attribute names and owned strings — see
+- Ranges rather than a `Vec` per node, plus interned names, took the
+  measured figure from 4.13 to **2.25 allocations per node**. The rest
+  is owned strings — see
   [design/owned-input.md](../design/owned-input.md).
 
 **Given up**

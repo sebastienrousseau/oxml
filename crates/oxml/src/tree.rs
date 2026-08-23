@@ -74,8 +74,14 @@ impl ExpandedName {
 /// An attribute on an element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attribute {
-    /// The attribute's expanded name.
-    pub name: ExpandedName,
+    /// The attribute's name, interned.
+    ///
+    /// A handle rather than an `ExpandedName` because attribute names
+    /// repeat as heavily as element names do -- a catalogue with 2,000
+    /// items and three attributes each has three distinct names, and
+    /// storing them per attribute allocated thousands of strings to
+    /// hold three values. Resolve it with [`Document::name`].
+    pub name: NameId,
     /// The attribute's value, with entities already resolved.
     pub value: String,
 }
@@ -352,7 +358,7 @@ impl Document {
     pub fn attribute(&self, id: NodeId, local: &str) -> Option<&str> {
         self.attributes(id)
             .into_iter()
-            .find(|a| a.name.local == local)
+            .find(|a| self.name(a.name).is_some_and(|n| n.local == local))
             .map(|a| a.value.as_str())
     }
 

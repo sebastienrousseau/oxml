@@ -316,7 +316,9 @@ fn test_matches(
             (NodeTest::Wildcard | NodeTest::Any, Some(NodeKind::Attr(_))) => {
                 true
             }
-            (NodeTest::Name(n), Some(NodeKind::Attr(a))) => &a.name.local == n,
+            (NodeTest::Name(n), Some(NodeKind::Attr(a))) => {
+                doc.name(a.name).is_some_and(|name| &name.local == n)
+            }
             _ => false,
         };
     }
@@ -578,10 +580,9 @@ fn name_parts(doc: &Document, id: NodeId) -> Option<(&str, Option<&str>)> {
         NodeKind::Element { .. } => doc
             .element_name(id)
             .map(|n| (n.local.as_str(), n.namespace.as_deref())),
-        NodeKind::Attr(attribute) => Some((
-            attribute.name.local.as_str(),
-            attribute.name.namespace.as_deref(),
-        )),
+        NodeKind::Attr(attribute) => doc
+            .name(attribute.name)
+            .map(|n| (n.local.as_str(), n.namespace.as_deref())),
         NodeKind::ProcessingInstruction { target, .. } => {
             Some((target.as_str(), None))
         }

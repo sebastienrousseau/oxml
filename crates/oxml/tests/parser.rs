@@ -139,7 +139,7 @@ fn default_namespace_applies_to_elements_not_attributes() {
     );
     let attrs = d.attributes(root);
     assert_eq!(attrs.len(), 1);
-    assert_eq!(attrs[0].name.namespace, None);
+    assert_eq!(d.name(attrs[0].name).expect("interned").namespace, None);
 }
 
 #[test]
@@ -153,7 +153,10 @@ fn the_xml_prefix_is_bound_without_declaration() {
     let d = parse(r#"<a xml:lang="en"/>"#).expect("parses");
     let root = d.root_element().unwrap();
     assert_eq!(
-        d.attributes(root)[0].name.namespace.as_deref(),
+        d.name(d.attributes(root)[0].name)
+            .expect("interned")
+            .namespace
+            .as_deref(),
         Some("http://www.w3.org/XML/1998/namespace")
     );
 }
