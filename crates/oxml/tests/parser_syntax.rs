@@ -210,7 +210,9 @@ fn nesting_past_the_limit_is_an_error_not_a_stack_overflow() {
             "depth {depth} gave {:?}",
             e.kind
         );
-        assert!(e.to_string().contains("256"), "{e}");
+        // The message names the bound that was hit, not its value:
+        // the value is now caller-configurable via `Limits`.
+        assert!(e.to_string().contains("depth limit"), "{e}");
     }
 }
 

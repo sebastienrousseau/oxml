@@ -126,8 +126,11 @@ pub struct ReadmeDoctests;
 /// (test harnesses commonly give threads 2 MiB).
 pub const MAX_DEPTH: usize = 256;
 
+mod limits;
+pub use limits::Limits;
+
 pub use error::{Error, ErrorKind, Result};
-pub use parser::parse;
+pub use parser::{parse, parse_with};
 pub use tree::{Attribute, Document, ExpandedName, NodeId, NodeKind};
 
 #[cfg(feature = "xpath")]

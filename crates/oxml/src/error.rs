@@ -53,10 +53,20 @@ pub enum ErrorKind {
     NoRootElement,
     /// A construct was not terminated, e.g. a comment without `-->`.
     Unterminated(&'static str),
-    /// Elements were nested more deeply than [`MAX_DEPTH`].
+    /// Elements were nested more deeply than [`Limits::max_depth`].
     ///
-    /// [`MAX_DEPTH`]: crate::MAX_DEPTH
+    /// [`Limits::max_depth`]: crate::Limits::max_depth
     DepthLimitExceeded,
+    /// More attributes on one element than the limit allows.
+    TooManyAttributes,
+    /// An attribute value longer than the limit allows.
+    AttributeTooLarge,
+    /// A name longer than the limit allows.
+    NameTooLong,
+    /// More nodes in the document than the limit allows.
+    TooManyNodes,
+    /// A text or CDATA node longer than the limit allows.
+    TextTooLong,
 }
 
 impl Error {
@@ -111,7 +121,22 @@ impl fmt::Display for Error {
                 f.write_str("document has no root element")
             }
             ErrorKind::DepthLimitExceeded => {
-                write!(f, "elements nested more than {} deep", crate::MAX_DEPTH)
+                f.write_str("elements nested past the depth limit")
+            }
+            ErrorKind::TooManyAttributes => {
+                f.write_str("too many attributes on one element")
+            }
+            ErrorKind::AttributeTooLarge => {
+                f.write_str("attribute value exceeds the size limit")
+            }
+            ErrorKind::NameTooLong => {
+                f.write_str("name exceeds the length limit")
+            }
+            ErrorKind::TooManyNodes => {
+                f.write_str("document exceeds the node limit")
+            }
+            ErrorKind::TextTooLong => {
+                f.write_str("text node exceeds the length limit")
             }
             ErrorKind::Unterminated(what) => {
                 write!(f, "unterminated {what}")

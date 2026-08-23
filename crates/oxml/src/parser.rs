@@ -13,6 +13,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::error::{Error, ErrorKind, Result};
+use crate::limits::Limits;
 use crate::tree::{Attribute, Document, ExpandedName, NodeId, NodeKind};
 
 /// Namespace bindings in scope, as a stack of (prefix, uri) frames.
@@ -57,8 +58,10 @@ struct Parser<'a> {
     doc: Document,
     ns: Namespaces,
     /// How many elements are currently open. Bounded by
-    /// [`crate::MAX_DEPTH`] so the recursion cannot exhaust the stack.
+    /// [`Limits::max_depth`] so the recursion cannot exhaust the stack.
     depth: usize,
+    /// Resource bounds for this parse.
+    limits: Limits,
 }
 
 /// Parse an XML document.
@@ -68,6 +71,20 @@ struct Parser<'a> {
 /// Returns [`Error`] if the input is not well-formed, or uses a
 /// namespace prefix that was never declared.
 pub fn parse(input: &str) -> Result<Document> {
+    parse_with(input, Limits::default())
+}
+
+/// Parse an XML document under explicit resource bounds.
+///
+/// Use this for input from an untrusted source, where the defaults may
+/// be more generous than you want. See [`Limits`].
+///
+/// # Errors
+///
+/// Returns [`Error`] if the input is not well-formed, uses an undeclared
+/// namespace prefix, or exceeds one of `limits`. Each bound has its own
+/// [`ErrorKind`], so a caller can tell which one was hit.
+pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
     let mut p = Parser {
         input,
         bytes: input.as_bytes(),
@@ -75,6 +92,7 @@ pub fn parse(input: &str) -> Result<Document> {
         doc: Document::new(),
         ns: Namespaces::default(),
         depth: 0,
+        limits,
     };
     p.parse_document()?;
     Ok(p.doc)
@@ -179,7 +197,7 @@ impl Parser<'_> {
     fn parse_element(&mut self, parent: NodeId) -> Result<()> {
         // Checked on entry so the frame that would overflow is never
         // pushed. See `crate::MAX_DEPTH`.
-        if self.depth >= crate::MAX_DEPTH {
+        if self.depth >= self.limits.max_depth {
             return Err(Error::new(ErrorKind::DepthLimitExceeded, self.pos));
         }
         self.depth += 1;
@@ -274,12 +292,20 @@ impl Parser<'_> {
     fn parse_children(&mut self, node: NodeId, open_qname: &str) -> Result<()> {
         let mut text = String::new();
         loop {
+            // Checked once per child rather than at each `push`: every
+            // node this parser creates is created from inside this loop
+            // (directly, or by the recursive `parse_element` below), so
+            // one check here bounds the whole arena without threading a
+            // `Result` through the tree API.
+            if self.limits.max_nodes.is_some_and(|m| self.doc.len() > m) {
+                return Err(Error::new(ErrorKind::TooManyNodes, self.pos));
+            }
             if self.pos >= self.bytes.len() {
                 return Err(Error::new(ErrorKind::UnexpectedEof, self.pos));
             }
             if self.peek_is(b'<') {
                 if self.starts_with("</") {
-                    self.flush_text(&mut text, node);
+                    self.flush_text(&mut text, node)?;
                     let start = self.pos;
                     self.pos += 2;
                     let close = self.parse_name()?;
@@ -302,7 +328,7 @@ impl Parser<'_> {
                     }
                     return Ok(());
                 } else if self.starts_with("<!--") {
-                    self.flush_text(&mut text, node);
+                    self.flush_text(&mut text, node)?;
                     let c = self.parse_comment()?;
                     let _ = self.doc.push(NodeKind::Comment(c), node);
                 } else if self.starts_with("<![CDATA[") {
@@ -320,14 +346,14 @@ impl Parser<'_> {
                     text.push_str(&self.input[self.pos..self.pos + end]);
                     self.pos += end + 3;
                 } else if self.starts_with("<?") {
-                    self.flush_text(&mut text, node);
+                    self.flush_text(&mut text, node)?;
                     let (t, d) = self.parse_pi()?;
                     let _ = self.doc.push(
                         NodeKind::ProcessingInstruction { target: t, data: d },
                         node,
                     );
                 } else {
-                    self.flush_text(&mut text, node);
+                    self.flush_text(&mut text, node)?;
                     self.parse_element(node)?;
                 }
             } else {
@@ -336,11 +362,15 @@ impl Parser<'_> {
         }
     }
 
-    fn flush_text(&mut self, text: &mut String, node: NodeId) {
+    fn flush_text(&mut self, text: &mut String, node: NodeId) -> Result<()> {
         if !text.is_empty() {
             let owned = core::mem::take(text);
+            if self.limits.max_text_length.is_some_and(|m| owned.len() > m) {
+                return Err(Error::new(ErrorKind::TextTooLong, self.pos));
+            }
             let _ = self.doc.push(NodeKind::Text(owned), node);
         }
+        Ok(())
     }
 
     fn parse_text_run(&mut self, out: &mut String) -> Result<()> {
@@ -418,6 +448,12 @@ impl Parser<'_> {
             self.pos += 1;
             self.skip_whitespace();
             let value = self.parse_attribute_value()?;
+            if value.len() > self.limits.max_attribute_size {
+                return Err(Error::new(ErrorKind::AttributeTooLarge, self.pos));
+            }
+            if out.len() >= self.limits.max_attributes_per_element {
+                return Err(Error::new(ErrorKind::TooManyAttributes, self.pos));
+            }
             out.push((name, value));
         }
     }
@@ -471,6 +507,14 @@ impl Parser<'_> {
     }
 
     fn parse_name(&mut self) -> Result<String> {
+        let name = self.parse_name_unchecked()?;
+        if name.len() > self.limits.max_name_length {
+            return Err(Error::new(ErrorKind::NameTooLong, self.pos));
+        }
+        Ok(name)
+    }
+
+    fn parse_name_unchecked(&mut self) -> Result<String> {
         let start = self.pos;
         let rest = &self.input[self.pos..];
         let mut chars = rest.char_indices();
