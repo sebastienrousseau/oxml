@@ -26,20 +26,15 @@ pub struct Scored {
 /// Every one of these is a feature `oxml` does not claim, and each is
 /// listed in the README so the number is honest rather than quietly
 /// improving the pass rate.
-fn unsupported_reason(
-    case: &TestCase,
-    source: Option<&str>,
-) -> Option<&'static str> {
-    if let Some(rec) = case.recommendation.as_deref() {
-        if rec.starts_with("XML1.1") {
-            return Some("xml-1.1");
-        }
-        if rec.starts_with("NS1.1") {
-            return Some("namespaces-1.1");
-        }
-    }
-    if case.version.as_deref() == Some("1.1") {
-        return Some("xml-1.1");
+fn unsupported_reason(case: &TestCase) -> Option<&'static str> {
+    // Namespaces 1.1 adds undeclaration of prefixes, which is not
+    // implemented. XML 1.1 itself now is.
+    if case
+        .recommendation
+        .as_deref()
+        .is_some_and(|r| r.starts_with("NS1.1"))
+    {
+        return Some("namespaces-1.1");
     }
     // `EDITION` lists the XML 1.0 editions a test applies to, and the
     // suite ships complementary pairs: the same name is not-well-formed
@@ -63,37 +58,7 @@ fn unsupported_reason(
     if !case.namespace {
         return Some("namespace-processing-off");
     }
-    // Only UTF-8 is implemented, so anything with another encoding or a
-    // non-UTF-8 BOM is out of scope rather than wrong.
-    if let Some(src) = source {
-        let head = &src.as_bytes()[..src.len().min(128)];
-        if head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF]) {
-            return Some("utf-16-bom");
-        }
-        if let Some(enc) = declared_encoding(src) {
-            let e = enc.to_ascii_lowercase();
-            if !matches!(e.as_str(), "utf-8" | "us-ascii" | "ascii") {
-                return Some("non-utf-8-encoding");
-            }
-        }
-    }
     None
-}
-
-fn declared_encoding(src: &str) -> Option<String> {
-    let decl = src.strip_prefix("<?xml")?;
-    let end = decl.find("?>")?;
-    let decl = &decl[..end];
-    let at = decl.find("encoding")?;
-    let rest = &decl[at + "encoding".len()..];
-    let rest = rest.trim_start().strip_prefix('=')?.trim_start();
-    let quote = rest.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let rest = &rest[1..];
-    let close = rest.find(quote)?;
-    Some(rest[..close].to_owned())
 }
 
 /// Score one test case.
@@ -120,21 +85,26 @@ pub fn run_one(case: &TestCase) -> Scored {
             return scored(Outcome::Blocked, format!("unreadable: {e}"));
         }
     };
-    let Ok(source) = String::from_utf8(bytes) else {
-        return scored(Outcome::Unsupported, "non-utf-8-bytes".to_owned());
-    };
-
-    if let Some(reason) = unsupported_reason(case, Some(&source)) {
+    if let Some(reason) = unsupported_reason(case) {
         return scored(Outcome::Unsupported, reason.to_owned());
     }
 
     // `catch_unwind` so one panicking input reports as a panic rather
     // than ending the whole run. A panic is the worst outcome available
     // and must be visible per-test.
-    let parsed = std::panic::catch_unwind(|| oxml::parse(&source));
+    let parsed = std::panic::catch_unwind(|| oxml::parse_bytes(&bytes));
     let Ok(parsed) = parsed else {
         return scored(Outcome::Panic, "panicked".to_owned());
     };
+    // An encoding this crate cannot decode is out of scope rather than
+    // wrong. A *malformed* encoding name is not — that is a
+    // well-formedness error and is scored normally.
+    if matches!(
+        parsed.as_ref().err().map(|e| &e.kind),
+        Some(oxml::ErrorKind::UnsupportedEncoding)
+    ) {
+        return scored(Outcome::Unsupported, "unsupported-encoding".to_owned());
+    }
 
     match (case.kind, parsed) {
         // Must accept, and did.

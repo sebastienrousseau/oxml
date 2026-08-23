@@ -57,6 +57,23 @@ pub enum ErrorKind {
     ///
     /// [`Limits`]: crate::Limits
     EntityLimitExceeded,
+    /// The declaration names an XML version this parser does not
+    /// implement.
+    UnsupportedVersion,
+    /// A character appeared that the `Char` production forbids.
+    ///
+    /// Most C0 control characters are illegal anywhere in an XML
+    /// document, including inside comments and attribute values.
+    IllegalCharacter(char),
+    /// The bytes are not valid in the encoding the document declares,
+    /// or the declared `EncName` is not legal per production 81.
+    MalformedEncoding,
+    /// The document declares an encoding this crate cannot decode.
+    ///
+    /// Distinct from [`ErrorKind::MalformedEncoding`]: the name is
+    /// legal, the document may be perfectly well-formed, and a caller
+    /// can decode it themselves and use [`crate::parse`].
+    UnsupportedEncoding,
     /// The document type declaration is syntactically malformed.
     ///
     /// This is a well-formedness error, not a validity error: the
@@ -153,6 +170,18 @@ impl fmt::Display for Error {
             }
             ErrorKind::EntityLimitExceeded => {
                 f.write_str("entity expansion exceeds the limit")
+            }
+            ErrorKind::UnsupportedVersion => {
+                f.write_str("unsupported XML version")
+            }
+            ErrorKind::IllegalCharacter(c) => {
+                write!(f, "character U+{:04X} is not allowed in XML", *c as u32)
+            }
+            ErrorKind::MalformedEncoding => {
+                f.write_str("bytes are not valid in the declared encoding")
+            }
+            ErrorKind::UnsupportedEncoding => {
+                f.write_str("declared encoding is not supported")
             }
             ErrorKind::MalformedDtd(why) => {
                 write!(f, "malformed doctype: {why}")

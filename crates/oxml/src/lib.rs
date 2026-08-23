@@ -127,11 +127,12 @@ pub struct ReadmeDoctests;
 pub const MAX_DEPTH: usize = 256;
 
 mod dtd;
+pub mod encoding;
 mod limits;
 pub use limits::Limits;
 
 pub use error::{Error, ErrorKind, Result};
-pub use parser::{parse, parse_with};
+pub use parser::{parse, parse_bytes, parse_bytes_with, parse_with};
 pub use tree::{Attribute, Document, ExpandedName, NodeId, NodeKind};
 
 #[cfg(feature = "xpath")]

@@ -64,6 +64,13 @@ struct Parser<'a> {
     limits: Limits,
     /// Declarations from the document type declaration, once seen.
     dtd: Option<crate::dtd::Dtd>,
+    /// The version the XML declaration names.
+    ///
+    /// 1.1 differs from 1.0 in three ways that matter here: NEL and
+    /// LINE SEPARATOR normalise to LF, C1 controls must be escaped
+    /// rather than appearing literally, and the `Char` production
+    /// admits C0 controls when written as character references.
+    version: Version,
     /// Characters of entity expansion still permitted **for the whole
     /// document**.
     ///
@@ -85,6 +92,35 @@ pub fn parse(input: &str) -> Result<Document> {
     parse_with(input, Limits::default())
 }
 
+/// Parse an XML document from bytes.
+///
+/// Prefer [`parse`] when you already have a `&str`: it borrows from the
+/// input, while decoding a non-UTF-8 encoding must allocate.
+///
+/// # Errors
+///
+/// As [`parse`], and additionally if the bytes are not valid in their
+/// declared encoding.
+pub fn parse_bytes(input: &[u8]) -> Result<Document> {
+    parse_bytes_with(input, Limits::default())
+}
+
+/// Parse from bytes, decoding the encoding the document declares,
+/// under explicit resource bounds.
+///
+/// A byte-order mark wins, then the `encoding` pseudo-attribute of the
+/// XML declaration, then UTF-8. UTF-8 input is not transcoded, so the
+/// zero-copy path is preserved for the common case.
+///
+/// # Errors
+///
+/// As [`parse_with`], and additionally if the bytes are not valid in
+/// their declared encoding or that encoding is not supported.
+pub fn parse_bytes_with(input: &[u8], limits: Limits) -> Result<Document> {
+    let text = crate::encoding::decode(input)?;
+    parse_with(&text, limits)
+}
+
 /// Parse an XML document under explicit resource bounds.
 ///
 /// Use this for input from an untrusted source, where the defaults may
@@ -92,10 +128,25 @@ pub fn parse(input: &str) -> Result<Document> {
 ///
 /// # Errors
 ///
-/// Returns [`Error`] if the input is not well-formed, uses an undeclared
-/// namespace prefix, or exceeds one of `limits`. Each bound has its own
-/// [`ErrorKind`], so a caller can tell which one was hit.
+/// Returns [`Error`] if the input is not well-formed, uses an
+/// undeclared namespace prefix, contains a character the `Char`
+/// production forbids, or exceeds one of `limits`. Each bound has its
+/// own [`ErrorKind`], so a caller can tell which one was hit.
 pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
+    // Checked once over the whole input rather than at each construct.
+    // The `Char` production applies everywhere — content, attribute
+    // values, comments, even the DTD — so a per-construct check would
+    // have to be repeated in a dozen places and would be forgotten in
+    // the thirteenth. One pass is also faster than one branch per
+    // character in the hot loops.
+    let version = declared_version(input)?;
+    if let Some((offset, c)) = input
+        .char_indices()
+        .find(|(_, c)| !is_xml_char_for(*c, version))
+    {
+        return Err(Error::new(ErrorKind::IllegalCharacter(c), offset));
+    }
+
     let mut p = Parser {
         input,
         bytes: input.as_bytes(),
@@ -105,6 +156,7 @@ pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
         depth: 0,
         limits,
         dtd: None,
+        version,
         entity_budget: limits.max_entity_expansion,
     };
     p.parse_document()?;
@@ -646,6 +698,19 @@ impl Parser<'_> {
     /// somewhere we did not read, and rejecting would be wrong.
     fn expand_entity(&mut self, ent: &str, offset: usize) -> Result<String> {
         if let Some(direct) = decode_predefined(ent) {
+            // A character *reference* may not name a character the
+            // `Char` production forbids. `&#0;` is illegal in both 1.0
+            // and 1.1; the C0 controls are legal as references in 1.1
+            // only. Decoding without this check accepted 65 documents
+            // that are not well-formed.
+            if let Some(bad) =
+                direct.chars().find(|c| !is_xml_char_for(*c, self.version))
+            {
+                return Err(Error::new(
+                    ErrorKind::IllegalCharacter(bad),
+                    offset,
+                ));
+            }
             return Ok(direct);
         }
         let Some(dtd) = self.dtd.as_ref() else {
@@ -757,6 +822,99 @@ fn decode_predefined(ent: &str) -> Option<String> {
         }
     };
     Some(out)
+}
+
+/// The XML version a document declares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Version {
+    /// XML 1.0, the default when no declaration says otherwise.
+    V10,
+    /// XML 1.1.
+    V11,
+}
+
+/// The XML version the declaration names, defaulting to 1.0.
+///
+/// # Errors
+///
+/// Returns [`Error`] if the version is not one this parser implements.
+fn declared_version(input: &str) -> Result<Version> {
+    let Some(rest) = input.strip_prefix("<?xml") else {
+        return Ok(Version::V10);
+    };
+    let Some(end) = rest.find("?>") else {
+        return Ok(Version::V10);
+    };
+    let decl = &rest[..end];
+    let Some(at) = decl.find("version") else {
+        return Ok(Version::V10);
+    };
+    let after = decl[at + "version".len()..].trim_start();
+    let Some(after) = after.strip_prefix('=') else {
+        return Ok(Version::V10);
+    };
+    let after = after.trim_start();
+    let Some(quote) = after.chars().next() else {
+        return Ok(Version::V10);
+    };
+    if quote != '"' && quote != '\'' {
+        return Ok(Version::V10);
+    }
+    let body = &after[1..];
+    let Some(close) = body.find(quote) else {
+        return Ok(Version::V10);
+    };
+    match &body[..close] {
+        "1.0" => Ok(Version::V10),
+        "1.1" => Ok(Version::V11),
+        // XML 1.0 5th edition made an unrecognised 1.x version a
+        // *forwards-compatibility* matter rather than an error: a 1.0
+        // processor should accept the document and process it as 1.0.
+        v if v.starts_with("1.") => Ok(Version::V10),
+        _ => Err(Error::new(ErrorKind::UnsupportedVersion, 0)),
+    }
+}
+
+/// `Char`, for the version in force.
+///
+/// XML 1.1 widens the production to admit the C0 and C1 controls, but
+/// only as character references — a literal one is still forbidden, and
+/// that is checked where references are decoded rather than here.
+#[must_use]
+const fn is_xml_char_for(c: char, version: Version) -> bool {
+    match version {
+        Version::V10 => is_xml_char(c),
+        Version::V11 => matches!(c,
+            '\u{1}'..='\u{D7FF}'
+            | '\u{E000}'..='\u{FFFD}'
+            | '\u{10000}'..='\u{10FFFF}'
+        ),
+    }
+}
+
+/// Whether `c` matches XML 1.0 production 2, `Char`.
+///
+/// ```text
+/// Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD]
+///        | [#x10000-#x10FFFF]
+/// ```
+///
+/// Most C0 control characters are **not** legal anywhere in an XML
+/// document — not in content, not in an attribute value, not even
+/// inside a comment. A parser that accepts them is accepting documents
+/// that are not well-formed, and this accounted for 77 failures against
+/// the W3C suite.
+///
+/// Surrogates cannot appear: Rust's `char` cannot hold one. `#xFFFE`
+/// and `#xFFFF` can, and are excluded.
+#[must_use]
+pub(crate) const fn is_xml_char(c: char) -> bool {
+    matches!(c,
+        '\u{9}' | '\u{A}' | '\u{D}'
+        | '\u{20}'..='\u{D7FF}'
+        | '\u{E000}'..='\u{FFFD}'
+        | '\u{10000}'..='\u{10FFFF}'
+    )
 }
 
 pub(crate) fn is_name_start(c: char) -> bool {

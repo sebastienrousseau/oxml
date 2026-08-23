@@ -9,8 +9,8 @@ Suite release **`xmlts20130923`**, 2,585 tests.
 
 | | |
 |---|---|
-| **Pass rate** | **80.3%** (1,519 of 1,892 decided) |
-| **Coverage** | **73.2%** (1,892 of 2,585) — see the ceiling below |
+| **Pass rate** | **81.2%** (1,802 of 2,218 decided) |
+| **Coverage** | **85.8%** (2,218 of 2,585) — against a ceiling of 86.6% |
 | Panics | **0** |
 
 Both numbers are given because either alone is misleading. A pass rate
@@ -51,29 +51,29 @@ judgement about whether a test is fair.
 
 | Reason | Count |
 |---|---|
-| XML 1.0 5th edition only | 375 |
-| XML 1.1 | 238 |
-| Non-UTF-8 bytes | 81 |
+| XML 1.0 editions 1–4 only (not applicable — see the ceiling) | 309 |
 | `TYPE="error"` (optional per the suite's DTD) | 33 |
-| Non-UTF-8 declared encoding | 17 |
-| Namespaces 1.1 | 6 |
-| `NAMESPACE="no"` | 4 |
+| Namespaces 1.1 | 8 |
+| `NAMESPACE="no"` | 9 |
+| Unsupported encoding | 8 |
 
 ### What the failures are
 
 | Kind | Count |
 |---|---|
-| Accepted a document that is not well-formed | 780 |
-| Rejected a valid document | 126 |
-| Invalid document treated as not well-formed | 48 |
+| Accepted a document that is not well-formed | 415 |
+| Rejected a valid document | 1 |
 
-**759 of the 780 wrongly-accepted documents contain a `<!DOCTYPE`.**
-`oxml` skips the DTD rather than parsing it, so it cannot detect
-malformed DTD syntax or undeclared entities — and well-formedness
-constraints inside the DTD bind every parser, validating or not.
-Implementing internal-subset DTD *syntax* checking would move the pass
-rate to roughly 89% without any validation work. That is the single
-highest-value change this suite identifies.
+Effectively every remaining failure is a document accepted that should
+have been rejected. The wrongly-*rejected* class is gone: only one
+remains, down from 126.
+
+By spec section, the largest clusters are 2.8 (prolog and document type
+declaration), 3.4 (conditional sections), 3.2.1 (element content
+models) and 2.3 (common syntactic constructs). These are the
+well-formedness constraints the DTD parser does not yet enforce — it
+checks the *grammar* of a declaration but not, for example, that a
+conditional section keyword is `INCLUDE` or `IGNORE`.
 
 ## Running it
 

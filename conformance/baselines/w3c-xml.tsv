@@ -1,4 +1,4 @@
-#counts	pass=1519	fail=373	panic=0	unsupported=693	blocked=0	total=2585
+#counts	pass=1802	fail=416	panic=0	unsupported=367	blocked=0	total=2585
 sun	attlist03	fail	accepted a document that is not well-formed
 sun	attlist10	fail	accepted a document that is not well-formed
 sun	attlist11	fail	accepted a document that is not well-formed
@@ -9,225 +9,100 @@ sun	content02	fail	accepted a document that is not well-formed
 sun	content03	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
 sun	dtd07	fail	accepted a document that is not well-formed
-sun	encoding01	unsupported	non-utf-8-encoding
-sun	encoding02	unsupported	non-utf-8-encoding
-sun	encoding03	unsupported	non-utf-8-encoding
-sun	encoding04	unsupported	non-utf-8-encoding
-sun	encoding05	unsupported	non-utf-8-encoding
-sun	encoding06	unsupported	non-utf-8-encoding
 sun	encoding07	fail	accepted a document that is not well-formed
-eduni	hst-lhs-008	unsupported	non-utf-8-bytes
-eduni	hst-lhs-009	unsupported	non-utf-8-bytes
+eduni	hst-lhs-007	fail	accepted a document that is not well-formed
+eduni	hst-lhs-008	fail	accepted a document that is not well-formed
 eduni	ht-bh-ns11-007	unsupported	namespaces-1.1
 eduni	ht-bh-ns11-008	unsupported	namespaces-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n03.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n04.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n05.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n06.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n07.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n08.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n09.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n10.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n11.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n12.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n14.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n15.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n16.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n17.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n18.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n19.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n20.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n21.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n22.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n23.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n24.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n25.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n26.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n27.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n28.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n29.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n30.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n31.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n32.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n33.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n34.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n35.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n36.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n37.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n38.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n39.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n40.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n41.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n42.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n43.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n44.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n45.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n46.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n47.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n48.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n49.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n50.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n51.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n52.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n53.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n54.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n55.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n56.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n57.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n58.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P02-ibm02n59.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n60.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n61.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n62.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n63.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n64.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n65.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n66.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n67.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P02-ibm02n68.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n69.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n70.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P02-ibm02n71.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n03.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n04.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n05.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n06.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n07.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n08.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n09.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n10.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n11.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n12.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n13.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n14.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n15.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n16.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n17.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n18.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n19.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n20.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n21.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P04-ibm04n22.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P04-ibm04n23.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P04-ibm04n24.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P04-ibm04n25.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n26.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n27.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04-ibm04n28.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an03.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an04.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an05.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an06.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an07.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an08.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an09.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an10.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an11.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an12.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an13.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an14.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an15.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an16.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an17.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an18.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an19.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an20.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an21.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P04a-ibm04an22.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P04a-ibm04an23.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P04a-ibm04an24.xml	unsupported	non-utf-8-bytes
-ibm	ibm-1-1-not-wf-P04a-ibm04an25.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an26.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an27.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P04a-ibm04an28.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P05-ibm05n01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P05-ibm05n02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P05-ibm05n03.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P05-ibm05n04.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P05-ibm05n05.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P05-ibm05n06.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n03.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n04.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n05.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n06.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n07.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n08.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n09.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n10.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n11.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n12.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n13.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n14.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n15.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n16.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n17.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n18.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n19.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n20.xml	unsupported	xml-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n21.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P02-ibm02v01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P02-ibm02v02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P02-ibm02v03.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P02-ibm02v04.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P02-ibm02v05.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P02-ibm02v06.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P03-ibm03v01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P03-ibm03v02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P03-ibm03v03.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P03-ibm03v04.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P03-ibm03v05.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P03-ibm03v06.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P03-ibm03v07.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P03-ibm03v08.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P03-ibm03v09.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P04-ibm04av01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P04-ibm04v01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P047-ibm07v01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P05-ibm05v01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P05-ibm05v02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P05-ibm05v03.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P05-ibm05v04.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P05-ibm05v05.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P46-ibm46i01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P46-ibm46i02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v01.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v02.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v03.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v04.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v05.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v06.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v07.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v08.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v09.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v10.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v11.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v12.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v13.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v14.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v15.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v16.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v17.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v18.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v19.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v20.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v21.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v22.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v23.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v24.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v25.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v26.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v27.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v28.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v29.xml	unsupported	xml-1.1
-ibm	ibm-1-1-valid-P77-ibm77v30.xml	unsupported	xml-1.1
+ibm	ibm-1-1-not-wf-P02-ibm02n01.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n02.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n03.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n04.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n05.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n06.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n07.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n08.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n10.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n11.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n12.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n14.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n15.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n16.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n17.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n18.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n19.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n20.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n21.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n22.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n23.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n24.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n25.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n26.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n27.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n28.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n29.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n30.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n31.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n32.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n33.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n34.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n35.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n36.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n37.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n38.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n39.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n40.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n41.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n42.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n43.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n44.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n45.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n46.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n47.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n48.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n49.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n50.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n51.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n52.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n53.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n54.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n55.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n56.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n57.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n59.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n60.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n61.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n62.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n63.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n64.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n65.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P02-ibm02n66.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n01.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n02.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n03.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n04.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n05.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n06.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n07.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n08.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n09.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n10.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n11.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n12.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n13.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n14.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n15.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n16.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n17.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n18.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n19.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n20.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-not-wf-P77-ibm77n21.xml	fail	accepted a document that is not well-formed
+ibm	ibm-1-1-valid-P04-ibm04v01.xml	unsupported	namespace-processing-off
+ibm	ibm-1-1-valid-P05-ibm05v01.xml	unsupported	namespace-processing-off
+ibm	ibm-1-1-valid-P05-ibm05v02.xml	unsupported	namespace-processing-off
+ibm	ibm-1-1-valid-P05-ibm05v03.xml	unsupported	namespace-processing-off
+ibm	ibm-1-1-valid-P05-ibm05v05.xml	unsupported	namespace-processing-off
 ibm	ibm-invalid-P68-ibm68i01.xml	unsupported	optional-error-test
 ibm	ibm-invalid-P68-ibm68i02.xml	unsupported	optional-error-test
 ibm	ibm-invalid-P68-ibm68i03.xml	unsupported	optional-error-test
@@ -236,39 +111,6 @@ ibm	ibm-invalid-P69-ibm69i01.xml	unsupported	optional-error-test
 ibm	ibm-invalid-P69-ibm69i02.xml	unsupported	optional-error-test
 ibm	ibm-invalid-P69-ibm69i03.xml	unsupported	optional-error-test
 ibm	ibm-invalid-P69-ibm69i04.xml	unsupported	optional-error-test
-ibm	ibm-not-wf-P02-ibm02n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n02.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n03.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n04.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n05.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n06.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n07.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n08.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n09.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n10.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n11.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n12.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n13.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n14.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n15.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n16.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n17.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n18.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n19.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n20.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n21.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n22.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n23.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n24.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n25.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n26.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n27.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n28.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n29.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n30.xml	unsupported	non-utf-8-bytes
-ibm	ibm-not-wf-P02-ibm02n31.xml	unsupported	non-utf-8-bytes
-ibm	ibm-not-wf-P02-ibm02n32.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P02-ibm02n33.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P09-ibm09n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P10-ibm10n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P10-ibm10n05.xml	fail	accepted a document that is not well-formed
@@ -299,7 +141,6 @@ ibm	ibm-not-wf-P24-ibm24n08.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P24-ibm24n09.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P25-ibm25n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P25-ibm25n02.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P26-ibm26n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P29-ibm29n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P29-ibm29n04.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P30-ibm30n01.xml	fail	accepted a document that is not well-formed
@@ -375,10 +216,6 @@ ibm	ibm-not-wf-P66-ibm66n05.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P66-ibm66n07.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P66-ibm66n09.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P66-ibm66n11.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n12.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n13.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n14.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P66-ibm66n15.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n06.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n07.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n08.xml	fail	accepted a document that is not well-formed
@@ -403,15 +240,6 @@ ibm	ibm-not-wf-P80-ibm80n03.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P80-ibm80n04.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P80-ibm80n05.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P80-ibm80n06.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P81-ibm81n01.xml	unsupported	non-utf-8-encoding
-ibm	ibm-not-wf-P81-ibm81n02.xml	unsupported	non-utf-8-encoding
-ibm	ibm-not-wf-P81-ibm81n03.xml	unsupported	non-utf-8-encoding
-ibm	ibm-not-wf-P81-ibm81n04.xml	unsupported	non-utf-8-encoding
-ibm	ibm-not-wf-P81-ibm81n05.xml	unsupported	non-utf-8-encoding
-ibm	ibm-not-wf-P81-ibm81n06.xml	unsupported	non-utf-8-encoding
-ibm	ibm-not-wf-P81-ibm81n07.xml	unsupported	non-utf-8-encoding
-ibm	ibm-not-wf-P81-ibm81n08.xml	unsupported	non-utf-8-encoding
-ibm	ibm-not-wf-P81-ibm81n09.xml	unsupported	non-utf-8-encoding
 ibm	ibm-not-wf-P85-ibm85n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P85-ibm85n02.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P85-ibm85n03.xml	unsupported	xml-1.0-edition-1-to-4-only
@@ -746,10 +574,6 @@ xmltest	not-wf-sa-014	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-025	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-026	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-029	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-030	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-031	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-032	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-033	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-058	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-069	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-070	fail	accepted a document that is not well-formed
@@ -776,7 +600,6 @@ xmltest	not-wf-sa-097	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-098	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-099	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-100	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-101	unsupported	non-utf-8-encoding
 xmltest	not-wf-sa-102	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-103	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-113	fail	accepted a document that is not well-formed
@@ -798,9 +621,6 @@ xmltest	not-wf-sa-138	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-139	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-140	unsupported	xml-1.0-edition-1-to-4-only
 xmltest	not-wf-sa-141	unsupported	xml-1.0-edition-1-to-4-only
-xmltest	not-wf-sa-142	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-143	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-144	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-147	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-148	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-149	fail	accepted a document that is not well-formed
@@ -815,17 +635,6 @@ xmltest	not-wf-sa-157	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-160	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-161	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-162	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-166	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-167	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-168	unsupported	non-utf-8-bytes
-xmltest	not-wf-sa-169	unsupported	non-utf-8-bytes
-xmltest	not-wf-sa-170	unsupported	non-utf-8-bytes
-xmltest	not-wf-sa-171	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-172	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-173	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-174	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-175	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-177	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-180	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-181	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-182	fail	accepted a document that is not well-formed
@@ -838,37 +647,6 @@ sun	nwf-dtd00	fail	accepted a document that is not well-formed
 sun	nwf-dtd01	fail	accepted a document that is not well-formed
 oasis	o-p01fail1	fail	accepted a document that is not well-formed
 oasis	o-p01fail2	fail	accepted a document that is not well-formed
-oasis	o-p02fail1	unsupported	non-utf-8-bytes
-oasis	o-p02fail10	unsupported	non-utf-8-bytes
-oasis	o-p02fail11	unsupported	non-utf-8-bytes
-oasis	o-p02fail12	unsupported	non-utf-8-bytes
-oasis	o-p02fail13	unsupported	non-utf-8-bytes
-oasis	o-p02fail14	unsupported	non-utf-8-bytes
-oasis	o-p02fail15	unsupported	non-utf-8-bytes
-oasis	o-p02fail16	unsupported	non-utf-8-bytes
-oasis	o-p02fail17	unsupported	non-utf-8-bytes
-oasis	o-p02fail18	unsupported	non-utf-8-bytes
-oasis	o-p02fail19	unsupported	non-utf-8-bytes
-oasis	o-p02fail2	unsupported	non-utf-8-bytes
-oasis	o-p02fail20	unsupported	non-utf-8-bytes
-oasis	o-p02fail21	unsupported	non-utf-8-bytes
-oasis	o-p02fail22	unsupported	non-utf-8-bytes
-oasis	o-p02fail23	unsupported	non-utf-8-bytes
-oasis	o-p02fail24	unsupported	non-utf-8-bytes
-oasis	o-p02fail25	unsupported	non-utf-8-bytes
-oasis	o-p02fail26	unsupported	non-utf-8-bytes
-oasis	o-p02fail27	unsupported	non-utf-8-bytes
-oasis	o-p02fail28	unsupported	non-utf-8-bytes
-oasis	o-p02fail29	unsupported	non-utf-8-bytes
-oasis	o-p02fail3	unsupported	non-utf-8-bytes
-oasis	o-p02fail30	unsupported	non-utf-8-bytes
-oasis	o-p02fail31	unsupported	non-utf-8-bytes
-oasis	o-p02fail4	unsupported	non-utf-8-bytes
-oasis	o-p02fail5	unsupported	non-utf-8-bytes
-oasis	o-p02fail6	unsupported	non-utf-8-bytes
-oasis	o-p02fail7	unsupported	non-utf-8-bytes
-oasis	o-p02fail8	unsupported	non-utf-8-bytes
-oasis	o-p02fail9	unsupported	non-utf-8-bytes
 oasis	o-p04pass1	unsupported	namespace-processing-off
 oasis	o-p05pass1	unsupported	namespace-processing-off
 oasis	o-p08pass1	unsupported	namespace-processing-off
@@ -935,84 +713,38 @@ oasis	o-p63fail1	fail	accepted a document that is not well-formed
 oasis	o-p63fail2	fail	accepted a document that is not well-formed
 oasis	o-p64fail1	fail	accepted a document that is not well-formed
 oasis	o-p64fail2	fail	accepted a document that is not well-formed
-oasis	o-p66fail5	fail	accepted a document that is not well-formed
 oasis	o-p74fail1	fail	accepted a document that is not well-formed
 oasis	o-p76fail1	fail	accepted a document that is not well-formed
 sun	pi	fail	accepted a document that is not well-formed
 japanese	pr-xml-euc-jp	unsupported	optional-error-test
 japanese	pr-xml-iso-2022-jp	unsupported	optional-error-test
-japanese	pr-xml-little	unsupported	non-utf-8-bytes
 japanese	pr-xml-shift_jis	unsupported	optional-error-test
-japanese	pr-xml-utf-16	unsupported	non-utf-8-bytes
 sun	pubid01	fail	accepted a document that is not well-formed
 sun	pubid02	fail	accepted a document that is not well-formed
 sun	pubid03	fail	accepted a document that is not well-formed
 sun	pubid04	fail	accepted a document that is not well-formed
-eduni	rmt-001	unsupported	xml-1.1
-eduni	rmt-002	unsupported	xml-1.1
-eduni	rmt-003	unsupported	xml-1.1
-eduni	rmt-004	unsupported	xml-1.1
-eduni	rmt-005	unsupported	xml-1.1
-eduni	rmt-006	unsupported	xml-1.1
-eduni	rmt-007	unsupported	xml-1.1
+eduni	rmt-001	fail	accepted a document that is not well-formed
+eduni	rmt-002	fail	accepted a document that is not well-formed
+eduni	rmt-003	fail	accepted a document that is not well-formed
+eduni	rmt-004	fail	accepted a document that is not well-formed
+eduni	rmt-005	fail	accepted a document that is not well-formed
 eduni	rmt-008	unsupported	optional-error-test
 eduni	rmt-009	unsupported	optional-error-test
-eduni	rmt-010	unsupported	non-utf-8-bytes
-eduni	rmt-011	unsupported	non-utf-8-bytes
-eduni	rmt-012	unsupported	xml-1.1
-eduni	rmt-013	unsupported	xml-1.1
-eduni	rmt-014	unsupported	xml-1.1
-eduni	rmt-015	unsupported	xml-1.1
-eduni	rmt-016	unsupported	xml-1.1
-eduni	rmt-017	unsupported	xml-1.1
-eduni	rmt-018	unsupported	xml-1.1
-eduni	rmt-019	unsupported	xml-1.1
-eduni	rmt-020	unsupported	xml-1.1
-eduni	rmt-021	unsupported	xml-1.1
-eduni	rmt-022	unsupported	non-utf-8-bytes
-eduni	rmt-023	unsupported	non-utf-8-bytes
-eduni	rmt-024	unsupported	xml-1.1
-eduni	rmt-025	unsupported	xml-1.1
-eduni	rmt-026	unsupported	non-utf-8-bytes
-eduni	rmt-027	unsupported	non-utf-8-bytes
-eduni	rmt-028	unsupported	xml-1.1
-eduni	rmt-029	unsupported	xml-1.1
-eduni	rmt-030	unsupported	non-utf-8-bytes
-eduni	rmt-031	unsupported	non-utf-8-bytes
-eduni	rmt-032	unsupported	xml-1.1
-eduni	rmt-033	unsupported	xml-1.1
-eduni	rmt-034	unsupported	xml-1.1
-eduni	rmt-035	unsupported	xml-1.1
-eduni	rmt-036	unsupported	xml-1.1
-eduni	rmt-037	unsupported	xml-1.1
-eduni	rmt-038	unsupported	xml-1.1
-eduni	rmt-039	unsupported	xml-1.1
-eduni	rmt-040	unsupported	non-utf-8-bytes
-eduni	rmt-041	unsupported	non-utf-8-bytes
-eduni	rmt-042	unsupported	xml-1.1
-eduni	rmt-043	unsupported	xml-1.1
-eduni	rmt-044	unsupported	xml-1.1
-eduni	rmt-045	unsupported	xml-1.1
-eduni	rmt-046	unsupported	non-utf-8-bytes
-eduni	rmt-047	unsupported	non-utf-8-bytes
-eduni	rmt-048	unsupported	xml-1.1
-eduni	rmt-049	unsupported	xml-1.1
-eduni	rmt-050	unsupported	xml-1.1
-eduni	rmt-051	unsupported	xml-1.1
-eduni	rmt-052	unsupported	xml-1.1
-eduni	rmt-053	unsupported	xml-1.1
-eduni	rmt-054	unsupported	xml-1.1
+eduni	rmt-011	fail	accepted a document that is not well-formed
+eduni	rmt-013	fail	accepted a document that is not well-formed
+eduni	rmt-014	unsupported	xml-1.0-edition-1-to-4-only
+eduni	rmt-016	unsupported	xml-1.0-edition-1-to-4-only
+eduni	rmt-019	unsupported	xml-1.0-edition-1-to-4-only
+eduni	rmt-039	fail	accepted a document that is not well-formed
+eduni	rmt-041	fail	accepted a document that is not well-formed
 eduni	rmt-055	unsupported	optional-error-test
 eduni	rmt-056	unsupported	optional-error-test
 eduni	rmt-057	unsupported	optional-error-test
-eduni	rmt-e2e-22	fail	rejected a valid document: at byte 0: content after the root element
-eduni	rmt-e2e-27	unsupported	non-utf-8-bytes
 eduni	rmt-e2e-34	unsupported	optional-error-test
 eduni	rmt-e2e-38	fail	accepted a document that is not well-formed
-eduni	rmt-e2e-50	unsupported	non-utf-8-bytes
+eduni	rmt-e2e-50	fail	rejected a valid document: at byte 120: expected a name
 eduni	rmt-e2e-55	unsupported	optional-error-test
 eduni	rmt-e2e-57	unsupported	optional-error-test
-eduni	rmt-e2e-61	unsupported	non-utf-8-encoding
 eduni	rmt-e3e-12	fail	accepted a document that is not well-formed
 eduni	rmt-ns-e1.0-13a	fail	accepted a document that is not well-formed
 eduni	rmt-ns-e1.0-13b	fail	accepted a document that is not well-formed
@@ -1030,8 +762,8 @@ eduni	rmt-ns10-033	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-042	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-043	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-044	fail	accepted a document that is not well-formed
-eduni	rmt-ns11-001	unsupported	non-utf-8-bytes
-eduni	rmt-ns11-002	unsupported	non-utf-8-bytes
+eduni	rmt-ns11-001	unsupported	namespaces-1.1
+eduni	rmt-ns11-002	unsupported	namespaces-1.1
 eduni	rmt-ns11-003	unsupported	namespaces-1.1
 eduni	rmt-ns11-004	unsupported	namespaces-1.1
 eduni	rmt-ns11-005	unsupported	namespaces-1.1
@@ -1040,25 +772,10 @@ sun	sgml02	fail	accepted a document that is not well-formed
 sun	sgml03	fail	accepted a document that is not well-formed
 sun	sgml13	fail	accepted a document that is not well-formed
 sun	uri01	unsupported	optional-error-test
-sun	utf16b	unsupported	non-utf-8-bytes
-sun	utf16l	unsupported	non-utf-8-bytes
 xmltest	valid-sa-012	unsupported	namespace-processing-off
-xmltest	valid-sa-049	unsupported	non-utf-8-bytes
-xmltest	valid-sa-050	unsupported	non-utf-8-bytes
-xmltest	valid-sa-051	unsupported	non-utf-8-bytes
 japanese	weekly-euc-jp	unsupported	optional-error-test
 japanese	weekly-iso-2022-jp	unsupported	optional-error-test
-japanese	weekly-little	unsupported	non-utf-8-bytes
 japanese	weekly-shift_jis	unsupported	optional-error-test
-japanese	weekly-utf-16	unsupported	non-utf-8-bytes
-eduni	x-ibm-1-0.5-not-wf-P04-ibm04n21.xml	unsupported	non-utf-8-bytes
-eduni	x-ibm-1-0.5-not-wf-P04-ibm04n22.xml	unsupported	non-utf-8-bytes
-eduni	x-ibm-1-0.5-not-wf-P04-ibm04n23.xml	unsupported	non-utf-8-bytes
-eduni	x-ibm-1-0.5-not-wf-P04-ibm04n24.xml	unsupported	non-utf-8-bytes
-eduni	x-ibm-1-0.5-not-wf-P04a-ibm04an21.xml	unsupported	non-utf-8-bytes
-eduni	x-ibm-1-0.5-not-wf-P04a-ibm04an22.xml	unsupported	non-utf-8-bytes
-eduni	x-ibm-1-0.5-not-wf-P04a-ibm04an23.xml	unsupported	non-utf-8-bytes
-eduni	x-ibm-1-0.5-not-wf-P04a-ibm04an24.xml	unsupported	non-utf-8-bytes
 eduni	x-ibm-1-0.5-valid-P04-ibm04v01.xml	unsupported	namespace-processing-off
 eduni	x-ibm-1-0.5-valid-P05-ibm05v01.xml	unsupported	namespace-processing-off
 eduni	x-ibm-1-0.5-valid-P05-ibm05v02.xml	unsupported	namespace-processing-off
