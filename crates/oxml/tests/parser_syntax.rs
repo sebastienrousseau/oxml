@@ -286,3 +286,82 @@ fn an_unterminated_comment_is_rejected() {
         e.kind
     );
 }
+
+#[test]
+fn a_literal_cdata_terminator_is_rejected_in_content() {
+    // `]]>` must be written `]]&gt;` so that a reader can always tell
+    // where a CDATA section ends.
+    let e = parse("<doc>]]></doc>").expect_err("not well-formed");
+    assert!(matches!(e.kind, ErrorKind::IllegalCdataEnd), "{:?}", e.kind);
+    // Inside a CDATA section it is the terminator, not content.
+    assert!(parse("<doc><![CDATA[a]]></doc>").is_ok());
+    // Escaped, it is ordinary text.
+    let doc = parse("<doc>]]&gt;</doc>").expect("well-formed");
+    assert_eq!(doc.text(doc.root()), "]]>");
+}
+
+#[test]
+fn reserved_namespace_prefixes_are_enforced() {
+    const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+    // `xml` bound to its own namespace is the one legal case.
+    assert!(parse(&format!("<a xmlns:xml=\"{XML_NS}\"/>")).is_ok());
+    // Bound to anything else, it is not.
+    assert!(parse("<a xmlns:xml=\"urn:other\"/>").is_err());
+    // No other prefix may be bound to the XML namespace.
+    assert!(parse(&format!("<a xmlns:p=\"{XML_NS}\"/>")).is_err());
+    // `xmlns` may not be declared at all.
+    assert!(parse("<a xmlns:xmlns=\"urn:x\"/>").is_err());
+    // Nor may anything be bound to the xmlns namespace.
+    assert!(parse("<a xmlns:p=\"http://www.w3.org/2000/xmlns/\"/>").is_err());
+}
+
+#[test]
+fn comments_may_not_contain_a_double_hyphen() {
+    assert!(parse("<a><!-- ok --></a>").is_ok());
+    assert!(parse("<a><!-- no -- no --></a>").is_err());
+    assert!(parse("<a><!-- trailing ---></a>").is_err());
+}
+
+#[test]
+fn the_xml_declaration_must_match_its_grammar() {
+    assert!(parse("<?xml version=\"1.0\"?><a/>").is_ok());
+    assert!(parse("<?xml version=\"1.0\" standalone=\"yes\"?><a/>").is_ok());
+    // No whitespace between pseudo-attributes.
+    assert!(parse("<?xml version=\"1.0\"standalone=\"yes\"?><a/>").is_err());
+    // Wrong order.
+    assert!(parse("<?xml standalone=\"yes\" version=\"1.0\"?><a/>").is_err());
+    // `standalone` takes only yes or no.
+    assert!(parse("<?xml version=\"1.0\" standalone=\"maybe\"?><a/>").is_err());
+    // `version` is required.
+    assert!(parse("<?xml encoding=\"UTF-8\"?><a/>").is_err());
+}
+
+#[test]
+fn xml_is_a_reserved_processing_instruction_target() {
+    // A second declaration is not a misplaced declaration but an
+    // illegal processing instruction.
+    assert!(parse("<a/><?xml version=\"1.0\"?>").is_err());
+    assert!(parse("<a><?XmL x?></a>").is_err());
+    assert!(parse("<a><?xmlfoo x?></a>").is_ok(), "only exactly `xml`");
+}
+
+#[test]
+fn content_models_must_be_well_formed() {
+    let ok = |m: &str| {
+        parse(&format!("<!DOCTYPE a [<!ELEMENT a {m}>]><a/>")).is_ok()
+    };
+    assert!(ok("EMPTY"));
+    assert!(ok("ANY"));
+    assert!(ok("(#PCDATA)"));
+    assert!(ok("(#PCDATA|b)*"));
+    assert!(ok("(b,c)"));
+    assert!(ok("(b|c)+"));
+    assert!(ok("(b,(c|d)*)?"));
+    // `#PCDATA` must come first in a mixed model.
+    assert!(!ok("(b|#PCDATA)*"));
+    // A mixed model with alternatives must be starred.
+    assert!(!ok("(#PCDATA|b)"));
+    // A group may not mix separators.
+    assert!(!ok("(b|c,d)"));
+    assert!(!ok("(b,c|d)"));
+}

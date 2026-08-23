@@ -309,6 +309,21 @@ impl Parser<'_> {
         let raw_attrs = self.parse_attributes()?;
         for (name, value) in &raw_attrs {
             if let Some(prefix) = name.strip_prefix("xmlns:") {
+                // Namespaces in XML, section 3: `xml` may be bound only
+                // to the XML namespace and nothing else may be bound to
+                // it; `xmlns` may not be declared at all.
+                const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+                const XMLNS_NS: &str = "http://www.w3.org/2000/xmlns/";
+                if prefix == "xmlns"
+                    || (prefix == "xml" && value != XML_NS)
+                    || (prefix != "xml" && value == XML_NS)
+                    || value == XMLNS_NS
+                {
+                    return Err(Error::new(
+                        ErrorKind::ReservedNamespace,
+                        self.pos,
+                    ));
+                }
                 self.ns.bind(prefix.to_owned(), value.clone());
             } else if name == "xmlns" {
                 self.ns.bind(String::new(), value.clone());
@@ -466,6 +481,13 @@ impl Parser<'_> {
 
     fn parse_text_run(&mut self, out: &mut String) -> Result<()> {
         while self.pos < self.bytes.len() {
+            // `CharData ::= [^<&]* - ([^<&]* ']]>' [^<&]*)`. The
+            // sequence is forbidden literally so that a reader can
+            // always tell where a CDATA section ends; it must be
+            // written `]]&gt;`.
+            if self.starts_with("]]>") {
+                return Err(Error::new(ErrorKind::IllegalCdataEnd, self.pos));
+            }
             match self.bytes[self.pos] {
                 b'<' => break,
                 b'&' => {

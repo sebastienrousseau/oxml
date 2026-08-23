@@ -1,4 +1,4 @@
-#counts	pass=2339	fail=218	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2346	fail=211	panic=0	unsupported=28	blocked=0	total=2585
 sun	attlist03	fail	accepted a document that is not well-formed
 sun	attlist10	fail	accepted a document that is not well-formed
 sun	attlist11	fail	accepted a document that is not well-formed
@@ -120,7 +120,6 @@ xmltest	not-wf-not-sa-007	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-008	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-009	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-014	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-025	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-026	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-029	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-058	fail	accepted a document that is not well-formed
@@ -157,7 +156,6 @@ xmltest	not-wf-sa-153	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-160	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-162	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-180	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-181	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-182	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-185	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-186	fail	accepted a document that is not well-formed
@@ -221,11 +219,6 @@ eduni	rmt-ns-e1.0-13b	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-012	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-016	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-023	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-029	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-030	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-031	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-032	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-033	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-042	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-043	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-044	fail	accepted a document that is not well-formed

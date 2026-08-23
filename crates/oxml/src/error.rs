@@ -57,6 +57,10 @@ pub enum ErrorKind {
     ///
     /// [`Limits`]: crate::Limits
     EntityLimitExceeded,
+    /// `]]>` appeared literally in character data.
+    IllegalCdataEnd,
+    /// A reserved namespace prefix or URI was misused.
+    ReservedNamespace,
     /// A comment contains `--`, or ends with `-`.
     MalformedComment,
     /// The XML declaration does not match its grammar.
@@ -176,6 +180,12 @@ impl fmt::Display for Error {
             }
             ErrorKind::EntityLimitExceeded => {
                 f.write_str("entity expansion exceeds the limit")
+            }
+            ErrorKind::IllegalCdataEnd => {
+                f.write_str("`]]>` must be written `]]&gt;` in content")
+            }
+            ErrorKind::ReservedNamespace => {
+                f.write_str("reserved namespace prefix or URI")
             }
             ErrorKind::MalformedComment => {
                 f.write_str("`--` is not allowed inside a comment")
