@@ -119,6 +119,39 @@ event entry point over the same scanner, with no tree built.
 - **`oxml-mcp`: a handle-based flow**, so a large document need not
   cross the boundary on every call.
 
+## Releasing 0.0.4 — the ordering matters
+
+The suite ships one version across six crates, and this release
+contains a change that makes the order load-bearing.
+
+**oxml 0.0.4 resolves namespace prefixes in XPath name tests**, and an
+unbound prefix is now a compile error. The satellites pass expressions
+straight through and none of them can supply bindings:
+
+| Crate | Needs |
+|---|---|
+| `oxml-cli` | a `-n, --ns PREFIX=URI` flag — specified in its `doc/NAMESPACES.md`, not implemented |
+| `oxml-wasm` | a second argument on the query methods |
+| `oxml-mcp` | an optional `namespaces` argument on `xml_query`, and namespaces reported by `xml_inspect` |
+
+Bump a satellite's dependency without adding its binding mechanism and
+namespaced queries become **impossible** in that tool: a
+previously-wrong answer turns into an error with no remedy, which is
+worse than either.
+
+So for each satellite, **the dependency bump and the binding mechanism
+are one change**, not two commits:
+
+1. Merge and publish `oxml` 0.0.4.
+2. Per satellite: bump the dependency *and* add its bindings API,
+   together.
+3. Publish the satellites.
+
+`namespace-uri()` selects on a namespace without naming a prefix and
+works in every version, so it is the answer for anyone caught between
+the two — and it stays useful afterwards, for when the URI is known and
+the prefix is not.
+
 ## Not planned
 
 - **XSLT.** Use `libxml`.
