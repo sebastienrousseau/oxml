@@ -59,7 +59,7 @@ owning a `Vec`, and an element holds one into `attr_ids`. That removed
 one allocation per element with children and one per element with
 attributes: the measured figure went from **4.13 to 3.13 allocations
 per node** on a 16,002-node document, and interning names by borrowed
-parts took it to **2.25**.
+parts took it to **1.13**.
 
 Children need the `scratch` stack because a node's children are only
 known to be complete when its end tag arrives; they are copied into
@@ -114,10 +114,17 @@ looking up by those took it to 2.63, and deleting the now-dead resolve
 that still ran for every element took it to **2.25**: a repeated name
 costs a map probe and nothing else.
 
-Clippy found that last one, as an unused variable. It had been
-allocating an `ExpandedName` per element for no reason since the
-interning went in, and the measurement alone would not have located
-it.
+Clippy found that one, as an unused variable. It had been allocating
+an `ExpandedName` per element for no reason since the interning went
+in, and the measurement alone would not have located it.
+
+The largest single step came last and was the simplest:
+`parse_name_unchecked` copied each name out of the input with
+`to_owned()`. Every name in a document is already a slice of the
+input, and interning discards the copy immediately, so that was one
+allocation per element *and* per attribute for nothing. Returning a
+borrowed `&'a str` took the figure from 2.25 to **1.13** -- half the
+remaining allocations, from deleting two words.
 
 Either way, `ExpandedName` holds the namespace **URI** rather than the
 prefix, which makes namespace comparison correct by construction.

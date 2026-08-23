@@ -91,13 +91,14 @@ fn corpus(elements: usize) -> String {
 
 #[test]
 fn a_parse_costs_a_bounded_number_of_allocations_per_node() {
-    // The README publishes 2.25. The ceiling sits just above the
+    // The README publishes 1.13. The ceiling sits just above the
     // measured figure: close enough that a regression trips it, loose
     // enough that allocator capacity growth does not. It has come down
     // from 4.5 as child and attribute lists were flattened, names
-    // interned by borrowed parts, and a dead resolve removed. It comes
-    // down again when the document owns its input.
-    const CEILING: f64 = 2.5;
+    // interned by borrowed parts, a dead resolve removed, and names
+    // made to borrow the input rather than be copied out of it. It
+    // comes down again when text and attribute values do the same.
+    const CEILING: f64 = 1.3;
 
     let source = corpus(2_000);
     let (doc, allocations) =
@@ -112,7 +113,7 @@ fn a_parse_costs_a_bounded_number_of_allocations_per_node() {
     assert!(
         per_node <= CEILING,
         "{per_node:.2} allocations per node exceeds the ceiling of \
-         {CEILING:.1}; the README publishes 2.25"
+         {CEILING:.1}; the README publishes 1.13"
     );
 }
 

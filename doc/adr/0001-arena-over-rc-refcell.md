@@ -25,7 +25,7 @@ into those.
   borrow the tree. No lifetime parameter spreads through caller code.
 - Traversal is index arithmetic on a contiguous vector.
 - Ranges rather than a `Vec` per node, plus interned names, took the
-  measured figure from 4.13 to **2.25 allocations per node**. The rest
+  measured figure from 4.13 to **1.13 allocations per node**. The rest
   is owned strings — see
   [design/owned-input.md](../design/owned-input.md).
 

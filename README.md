@@ -819,7 +819,7 @@ XML, build the string, or use `quick-xml`'s writer.
 
 ### How much memory does a document take?
 
-Measured at **2.25 allocations per node** — 36,070 allocations for a
+Measured at **1.13 allocations per node** — 18,065 allocations for a
 16,002-node document, counted with a wrapping global allocator over the
 whole of `parse` and divided by `Document::len()`. A test holds that
 figure to a ceiling, so it cannot drift upward unnoticed.
@@ -828,11 +828,14 @@ The structure is a flat arena rather than a graph of `Rc`s. Child and
 attribute lists are `(start, len)` ranges into shared vectors and
 names are interned, so traversal is index arithmetic rather than
 pointer chasing and the document is `Send + Sync` for free. That work
-took the figure from 4.13 to 2.25.
+took the figure from 4.13 to 1.13.
 
 What remains is the owned `String`s: every text node and attribute
-value. Removing them means having the document own its input so both
-become ranges into it, which is not done — so 2.25 is the number.
+value. Element and attribute *names* no longer allocate at all — they
+are slices of the input until interning, and a repeated name costs a
+map probe. Removing the last two means having the document own its
+input so both become ranges into it, which is not done — so 1.13 is
+the number.
 
 That said: the whole document is in memory. See "When not to use oxml".
 

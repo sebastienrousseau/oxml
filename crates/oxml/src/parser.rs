@@ -267,7 +267,7 @@ fn parse_normalized(
     Ok(p.doc)
 }
 
-impl Parser<'_> {
+impl<'a> Parser<'a> {
     fn parse_document(&mut self) -> Result<()> {
         let root = self.doc.root();
         let mark = self.doc.scratch_mark();
@@ -431,7 +431,7 @@ impl Parser<'_> {
                     ));
                 }
                 self.ns.bind(prefix.to_owned(), value.clone());
-            } else if name == "xmlns" {
+            } else if *name == "xmlns" {
                 self.ns.bind(String::new(), value.clone());
             }
         }
@@ -458,18 +458,18 @@ impl Parser<'_> {
             if raw == "xmlns" || raw.starts_with("xmlns:") {
                 continue;
             }
-            let an = self.intern_qname(&raw, false, tag_start)?;
+            let an = self.intern_qname(raw, false, tag_start)?;
             if resolved.iter().any(|a| a.name == an) {
                 self.ns.pop_scope();
                 return Err(Error::new(
-                    ErrorKind::DuplicateAttribute(raw),
+                    ErrorKind::DuplicateAttribute(raw.to_owned()),
                     tag_start,
                 ));
             }
             resolved.push(Attribute { name: an, value });
         }
 
-        let name_id = self.intern_qname(&qname, true, tag_start)?;
+        let name_id = self.intern_qname(qname, true, tag_start)?;
         let node = self.doc.push(
             NodeKind::Element {
                 name: name_id,
@@ -502,7 +502,7 @@ impl Parser<'_> {
             return Ok(());
         }
 
-        self.parse_children(node, &qname)?;
+        self.parse_children(node, qname)?;
         self.ns.pop_scope();
         Ok(())
     }
@@ -540,7 +540,7 @@ impl Parser<'_> {
                         return Err(Error::new(
                             ErrorKind::MismatchedEndTag {
                                 expected: open_qname.to_owned(),
-                                found: close,
+                                found: close.to_owned(),
                             },
                             start,
                         ));
@@ -679,10 +679,12 @@ impl Parser<'_> {
         })?;
         let data = self.input[self.pos..self.pos + end].trim().to_owned();
         self.pos += end + 2;
-        Ok((target, data))
+        // A processing instruction keeps its target, so this one
+        // copy is retained rather than discarded.
+        Ok((target.to_owned(), data))
     }
 
-    fn parse_attributes(&mut self) -> Result<Vec<(String, String)>> {
+    fn parse_attributes(&mut self) -> Result<Vec<(&'a str, String)>> {
         let mut out = Vec::new();
         loop {
             self.skip_whitespace();
@@ -793,7 +795,7 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_name(&mut self) -> Result<String> {
+    fn parse_name(&mut self) -> Result<&'a str> {
         let name = self.parse_name_unchecked()?;
         if name.len() > self.limits.max_name_length {
             return Err(Error::new(ErrorKind::NameTooLong, self.pos));
@@ -801,9 +803,20 @@ impl Parser<'_> {
         Ok(name)
     }
 
-    fn parse_name_unchecked(&mut self) -> Result<String> {
+    /// A name, borrowed from the input.
+    ///
+    /// Every name in a document is a slice of the input already, and
+    /// copying each one out cost an allocation per element and per
+    /// attribute -- roughly 12,000 on a 16,002-node document, all of
+    /// them discarded immediately after the name was interned.
+    ///
+    /// The returned slice borrows the input rather than the parser, so
+    /// it outlives the `&mut self` that produced it.
+    fn parse_name_unchecked(&mut self) -> Result<&'a str> {
+        // Copy the reference, so the result does not reborrow `self`.
+        let input: &'a str = self.input;
         let start = self.pos;
-        let rest = &self.input[self.pos..];
+        let rest = &input[self.pos..];
         let mut chars = rest.char_indices();
         match chars.next() {
             Some((_, c)) if self.is_name_start(c) => {}
@@ -819,7 +832,7 @@ impl Parser<'_> {
             }
         }
         self.pos = start + end;
-        Ok(rest[..end].to_owned())
+        Ok(&rest[..end])
     }
 
     /// Split a `QName` and resolve its prefix.

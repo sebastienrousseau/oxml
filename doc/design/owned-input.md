@@ -7,14 +7,14 @@
 ## Where the allocations are
 
 Measured with a counting global allocator over a 16,002-node document:
-**36,070 allocations, 2.25 per node.**
+**18,065 allocations, 1.13 per node.**
 
 There are two pieces.
 
 **One — flatten and intern. Done.** Child lists and attribute lists are
 `(start, len)` ranges into two shared vectors, and element *and*
 attribute names are interned behind a `NameId`. That took the measured
-figure from 4.13 to **2.25 allocations per node**.
+figure from 4.13 to **1.13 allocations per node**.
 
 Worth recording how: interning by itself moved the figure by nothing.
 The name was resolved into a freshly allocated `ExpandedName` and only
@@ -29,12 +29,10 @@ The owned `String`s that remain:
 |---|---|
 | Attribute values | one per attribute |
 | Text node contents | one per text node |
-| The raw name and value pair `parse_attributes` builds | two per attribute |
 
-That last one is the next easy win and does not need this note's
-change: `parse_attributes` returns `Vec<(String, String)>`, so it
-allocates a `String` for each raw attribute name that is thrown away
-immediately after interning.
+Names are already gone: they borrow the input until interning, so a
+repeated name allocates nothing at all. What is left is exactly the two
+things this note is about.
 
 ## The change
 
