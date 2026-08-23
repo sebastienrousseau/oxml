@@ -27,7 +27,7 @@ one is listed as not done, however close it feels.
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
 | Line coverage | ≥95% | **97.4%**, gated | ✅ |
-| Conformance | Published with denominator | **95.0% of 2,557 decided; 98.9% of 2,585 reach a decision** | 🟡 |
+| Conformance | Published with denominator | **95.3% of 2,557 decided; 98.9% of 2,585 reach a decision** | 🟡 |
 | Allocations per node | ≤2 | **1.13** | ✅ |
 | Throughput | <100 ms at load | **Not measured** — see below | ❌ |
 | XPath 1.0 | Complete | 10 axes, 25 functions, namespaces resolved | 🟡 |
@@ -86,20 +86,27 @@ including the entity-expansion complication: a value containing
 
 Breaking: `Document::text` would return `&str` rather than `String`.
 
-### 3. Conformance — 129 failures, only 63 of which need the external subset
+### 3. Conformance — 119 failures, and the cheap ones are gone
 
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
 
-They split by what the failing document contains: **63 external
-subset, 61 internal subset only, 5 no `DOCTYPE` at all**. So 66 are
-rules that could be enforced today, and 63 wait on the external subset.
+**44 failures have been fixed since counting began** — 163 to 119,
+taking the pass rate from 93.6% to **95.3%**. Not one needed a feature;
+every one was a rule the parser already had the information to enforce.
+The external-subset group has not moved by a single test throughout: 63
+at the start, 63 now.
 
-Counting them is what found that. The assumption had been that the bulk
-needed the external subset; it was wrong. **34 failures have been fixed
-since counting began** — 163 to 129, taking the pass rate from 93.6% to
-95.0% — and the external-subset group has not moved once: 63 before, 63
-now. Not one fix needed a feature.
+What is left divides into two real pieces of work rather than more
+missing checks:
+
+- **~35** turn on the *content* of an external parsed entity — its
+  text declaration, version, standalone declaration. These need the
+  external-entity work, whatever the `DOCTYPE` looks like.
+- **Entity replacement text is substituted, not parsed.**
+  `<!ENTITY e "<foo/>">` referenced from content should produce an
+  element; oxml produces text. A real semantic gap, and the largest
+  genuinely-internal group remaining.
 
 The design constraint is fixed: the parser must never perform I/O. The
 shape is a caller-supplied map from identifier to content, so the

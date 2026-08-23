@@ -1162,6 +1162,16 @@ impl<'a> Parser<'a> {
         budget: &mut usize,
         in_attribute: bool,
     ) -> Result<()> {
+        // `WFC: No < in Attribute Values`. A literal `<` is legal in an
+        // entity's *value*, and illegal in an attribute value -- so an
+        // entity whose replacement text contains one may not be
+        // referenced from an attribute, however indirectly. Checking
+        // here rather than on the finished expansion catches it at any
+        // depth, and leaves `&#60;` alone: a character reference stands
+        // for the character and is permitted.
+        if in_attribute && text.contains('<') {
+            return Err(Error::new(ErrorKind::IllegalCharacter('<'), offset));
+        }
         if in_attribute && text.contains(['\n', '\t', '\r']) {
             let mut buf = String::with_capacity(text.len());
             push_attribute_normalized(&mut buf, text);

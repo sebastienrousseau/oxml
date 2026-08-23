@@ -380,3 +380,67 @@ mod reference_names {
         }
     }
 }
+
+/// `NDataDecl ::= S 'NDATA' S Name`, and only a *general* entity may
+/// have one.
+mod ndata {
+    use super::parse;
+
+    #[test]
+    fn whitespace_before_ndata_is_part_of_the_production() {
+        // Skipping whitespace before looking for the keyword accepted
+        // `"f.eps"NDATA n`, which is not an entity with a notation --
+        // it is malformed.
+        let bad = r#"<!DOCTYPE d [<!NOTATION n SYSTEM "e"><!ENTITY f SYSTEM "f.eps"NDATA n>]><d></d>"#;
+        let good = r#"<!DOCTYPE d [<!NOTATION n SYSTEM "e"><!ENTITY f SYSTEM "f.eps" NDATA n>]><d></d>"#;
+        assert!(parse(bad).is_err(), "missing space");
+        assert!(parse(good).is_ok(), "with space");
+    }
+
+    #[test]
+    fn a_parameter_entity_may_not_be_unparsed() {
+        // `PEDef ::= EntityValue | ExternalID` -- there is no
+        // NDataDecl in it. Only a general entity can be unparsed.
+        let bad = r#"<!DOCTYPE d [<!NOTATION J SYSTEM "J"><!ENTITY % p SYSTEM "i.jpg" NDATA J>]><d></d>"#;
+        let good = r#"<!DOCTYPE d [<!ENTITY % p SYSTEM "p.ent">]><d></d>"#;
+        assert!(parse(bad).is_err(), "parameter entity with NDATA");
+        assert!(parse(good).is_ok(), "external parameter entity");
+    }
+}
+
+/// `WFC: No < in Attribute Values`, including through an entity.
+mod less_than_via_entity {
+    use super::parse;
+
+    #[test]
+    fn an_entity_carrying_a_less_than_may_not_reach_an_attribute() {
+        // A literal `<` is legal in an entity's *value* and illegal in
+        // an attribute value, so the constraint is on where the entity
+        // is referenced -- not on the declaration.
+        let direct =
+            r#"<!DOCTYPE r [<!ENTITY w "has <lt> inside">]><r a="&w;"/>"#;
+        let indirect = r#"<!DOCTYPE r [<!ENTITY w "has <lt>"><!ENTITY i "&w;">]><r a="&i;"/>"#;
+        assert!(parse(direct).is_err(), "direct");
+        assert!(parse(indirect).is_err(), "indirect");
+    }
+
+    #[test]
+    fn a_character_reference_is_still_permitted() {
+        // `&#60;` stands for the character rather than introducing
+        // markup, which is exactly why it is the way to write one.
+        let doc = parse(r#"<r a="1 &#60; 2"/>"#).expect("character reference");
+        let root = doc.root_element().expect("root");
+        assert_eq!(doc.attribute(root, "a"), Some("1 < 2"));
+    }
+
+    #[test]
+    fn the_same_entity_is_fine_in_content() {
+        // Content may contain an entity whose text has a `<`; it is
+        // only attribute values the rule covers. oxml substitutes it as
+        // text rather than parsing it as markup -- see the note in
+        // doc/CONFORMANCE.md.
+        let source = r#"<!DOCTYPE r [<!ENTITY w "plain">]><r>&w;</r>"#;
+        let doc = parse(source).expect("well-formed");
+        assert_eq!(doc.text(doc.root()), "plain");
+    }
+}

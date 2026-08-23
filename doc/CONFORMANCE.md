@@ -20,8 +20,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2428 pass, 129 fail, 0 panic, 28 unsupported, 0 blocked
-         95.0% of 2557 decided (98.9% coverage of 2585)
+overall  2438 pass, 119 fail, 0 panic, 28 unsupported, 0 blocked
+         95.3% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -59,7 +59,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-129 failures, and **every one of them is the parser being too
+119 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -70,11 +70,22 @@ contains:
 | The document has | Count |
 |---|---|
 | An external subset (`SYSTEM`/`PUBLIC`) | 63 |
-| An internal subset only | 61 |
+| An internal subset only | 51 |
 | No `DOCTYPE` at all | 5 |
 
-Only the first group needs the external subset. **The other 66 are
-rules oxml could enforce today.**
+That table is coarser than it looks, and worth qualifying now that the
+easy group is gone. A document can have a purely internal subset and
+still fail on something external, because an entity it declares points
+at a separate file: of the 51, roughly 35 turn on the **content** of an
+external parsed entity — its text declaration, its version number, its
+standalone declaration. oxml never reads those files, so those are the
+external-subset problem wearing a different hat.
+
+**The largest genuinely-internal group left is entity replacement text
+being substituted rather than parsed.** `<!ENTITY e "<foo/>">`
+referenced from content should produce an *element*; oxml produces
+text. That is a real semantic gap, not a missing check, and it is the
+next substantial piece of work in this area.
 
 That categorisation is worth doing before assuming otherwise. This
 document once said "the bulk need the external DTD subset", which was a

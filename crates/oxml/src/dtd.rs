@@ -634,8 +634,30 @@ impl<'a> DtdParser<'a> {
             // different places: an unparsed entity may not be
             // referenced anywhere, an external parsed one only in an
             // attribute value.
+            //
+            // `NDataDecl ::= S 'NDATA' S Name` — the leading whitespace
+            // is part of the production, so `"image.jpg"NDATA n` is not
+            // an entity with a notation, it is malformed. Skipping
+            // whitespace before looking accepted both.
+            let before_ws = self.pos;
             self.skip_ws();
+            let had_ws = self.pos > before_ws;
             if self.starts_with("NDATA") {
+                if !had_ws {
+                    return Err((
+                        self.pos,
+                        "whitespace is required before NDATA",
+                    ));
+                }
+                // `PEDef ::= EntityValue | ExternalID` — a parameter
+                // entity has no NDataDecl. Only a general entity can be
+                // unparsed.
+                if parameter {
+                    return Err((
+                        self.pos,
+                        "a parameter entity may not have an NDataDecl",
+                    ));
+                }
                 self.pos += "NDATA".len();
                 self.require_ws()?;
                 let _ = self.name()?;
