@@ -117,7 +117,16 @@ impl Error {
     /// person looking at the file would count.
     #[must_use]
     pub fn line_column(&self, input: &str) -> (usize, usize) {
-        let upto = &input[..self.offset.min(input.len())];
+        // The offset comes from a byte-oriented scanner, so it can
+        // land inside a multi-byte character -- an `IllegalCharacter`
+        // offset routinely does. Slicing a `str` off a boundary
+        // panics, and a diagnostic that aborts the process is worse
+        // than the error it was trying to describe.
+        let mut end = self.offset.min(input.len());
+        while end > 0 && !input.is_char_boundary(end) {
+            end -= 1;
+        }
+        let upto = &input[..end];
         let line = upto.matches('\n').count() + 1;
         let column = upto
             .rsplit('\n')
@@ -220,3 +229,171 @@ impl std::error::Error for Error {}
 
 /// A parse result.
 pub type Result<T> = core::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
+
+    /// One value of every `ErrorKind` variant.
+    ///
+    /// Adding a variant without extending this list leaves its message
+    /// unrendered by any test, which is how placeholder text reaches a
+    /// release.
+    fn every_kind() -> Vec<ErrorKind> {
+        alloc::vec![
+            ErrorKind::UnexpectedEof,
+            ErrorKind::MismatchedEndTag {
+                expected: String::from("a"),
+                found: String::from("b"),
+            },
+            ErrorKind::UnexpectedEndTag(String::from("a")),
+            ErrorKind::InvalidName,
+            ErrorKind::UnquotedAttributeValue,
+            ErrorKind::DuplicateAttribute(String::from("id")),
+            ErrorKind::UnknownEntity(String::from("nope")),
+            ErrorKind::UnboundPrefix(String::from("p")),
+            ErrorKind::TrailingContent,
+            ErrorKind::NoRootElement,
+            ErrorKind::Unterminated("comment"),
+            ErrorKind::EntityLimitExceeded,
+            ErrorKind::IllegalCdataEnd,
+            ErrorKind::ReservedNamespace,
+            ErrorKind::MalformedComment,
+            ErrorKind::MalformedDeclaration,
+            ErrorKind::ReservedPiTarget,
+            ErrorKind::UnsupportedVersion,
+            ErrorKind::IllegalCharacter('\u{7}'),
+            ErrorKind::MalformedEncoding,
+            ErrorKind::UnsupportedEncoding,
+            ErrorKind::MalformedDtd("expected `>`"),
+            ErrorKind::DepthLimitExceeded,
+            ErrorKind::TooManyAttributes,
+            ErrorKind::AttributeTooLarge,
+            ErrorKind::NameTooLong,
+            ErrorKind::TooManyNodes,
+            ErrorKind::TextTooLong,
+        ]
+    }
+
+    #[test]
+    fn every_error_renders_a_message_a_human_can_act_on() {
+        for kind in every_kind() {
+            let text = Error::new(kind.clone(), 7).to_string();
+            assert!(
+                text.starts_with("at byte 7: "),
+                "{kind:?} lost its offset: {text:?}"
+            );
+            let body = &text["at byte 7: ".len()..];
+            assert!(!body.is_empty(), "{kind:?} renders nothing");
+            // A `Debug` fallback would echo the variant name verbatim.
+            assert!(
+                !body.starts_with(char::is_uppercase),
+                "{kind:?} looks like a Debug fallback: {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_two_errors_render_the_same_message() {
+        // Two distinct failures with one message is indistinguishable
+        // to a caller reading a log.
+        let mut seen: Vec<String> = every_kind()
+            .into_iter()
+            .map(|k| Error::new(k, 0).to_string())
+            .collect();
+        let before = seen.len();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(before, seen.len(), "duplicate error messages: {seen:?}");
+    }
+
+    #[test]
+    fn messages_quote_the_names_they_are_about() {
+        // The name is the useful part -- "mismatched end tag" alone
+        // sends the reader back to the document to find which one.
+        let text = Error::new(
+            ErrorKind::MismatchedEndTag {
+                expected: String::from("chapter"),
+                found: String::from("section"),
+            },
+            0,
+        )
+        .to_string();
+        assert!(
+            text.contains("chapter") && text.contains("section"),
+            "{text}"
+        );
+
+        for (kind, name) in [
+            (
+                ErrorKind::UnknownEntity(String::from("frobnicate")),
+                "frobnicate",
+            ),
+            (
+                ErrorKind::DuplicateAttribute(String::from("xml:id")),
+                "xml:id",
+            ),
+            (ErrorKind::UnboundPrefix(String::from("svg")), "svg"),
+            (ErrorKind::UnexpectedEndTag(String::from("br")), "br"),
+        ] {
+            let text = Error::new(kind, 0).to_string();
+            assert!(text.contains(name), "{name:?} missing from {text:?}");
+        }
+    }
+
+    #[test]
+    fn an_illegal_character_is_named_by_code_point_not_printed_raw() {
+        // Printing a control character into a terminal or log is how a
+        // diagnostic becomes unreadable, or worse, an escape sequence.
+        let text =
+            Error::new(ErrorKind::IllegalCharacter('\u{7}'), 0).to_string();
+        assert!(text.contains("U+0007"), "{text}");
+        assert!(!text.contains('\u{7}'), "raw control character in message");
+    }
+
+    #[test]
+    fn line_and_column_are_one_based_and_count_characters_not_bytes() {
+        let input = "<a>\n  <b>héllo</b>\n</a>";
+        assert_eq!(
+            Error::new(ErrorKind::InvalidName, 0).line_column(input),
+            (1, 1)
+        );
+
+        // Start of line 2.
+        let at = input.find("  <b>").expect("line 2");
+        assert_eq!(
+            Error::new(ErrorKind::InvalidName, at).line_column(input),
+            (2, 1)
+        );
+
+        // After the multi-byte `é`: column counts characters, so the
+        // reported column matches what an editor shows.
+        let at = input.find("llo").expect("past the accent");
+        assert_eq!(
+            Error::new(ErrorKind::InvalidName, at).line_column(input),
+            (2, 8)
+        );
+    }
+
+    #[test]
+    fn an_offset_past_the_end_clamps_instead_of_panicking() {
+        // Offsets can exceed the input after transcoding, and a
+        // diagnostic that panics is worse than the error it describes.
+        let input = "<a/>";
+        let (line, col) =
+            Error::new(ErrorKind::UnexpectedEof, 9_999).line_column(input);
+        assert_eq!((line, col), (1, 5));
+    }
+
+    #[test]
+    fn an_offset_inside_a_multibyte_character_does_not_panic() {
+        // Slicing a `str` at a non-boundary panics; the offset comes
+        // from a byte-oriented scanner, so it can land mid-character.
+        let input = "<a>é</a>";
+        let mid = input.find('é').expect("accent") + 1;
+        let _ = Error::new(ErrorKind::IllegalCharacter('é'), mid)
+            .line_column(input);
+    }
+}

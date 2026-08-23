@@ -176,4 +176,45 @@ proptest! {
             );
         }
     }
+
+    /// An error offset always falls on a character boundary of the
+    /// document it came from.
+    ///
+    /// `Error::line_column` slices the input at the offset, and
+    /// slicing a `str` off a boundary panics. The scanner works in
+    /// bytes, so nothing in the type system enforces this -- only
+    /// every arm that constructs an `Error` agreeing to be careful.
+    /// Rendering a diagnostic must never be more dangerous than the
+    /// failure being reported.
+    #[test]
+    fn error_offsets_land_on_character_boundaries(input in xml_ish()) {
+        if let Err(e) = parse(&input) {
+            prop_assert!(
+                e.offset > input.len() || input.is_char_boundary(e.offset),
+                "offset {} splits a character in {input:?} ({:?})",
+                e.offset,
+                e.kind
+            );
+            // The rendering itself must survive regardless.
+            let _ = e.line_column(&input);
+        }
+    }
+
+    /// `line_column` never panics, even when handed a document other
+    /// than the one that produced the error.
+    ///
+    /// The signature invites this: it takes any `&str`, and a caller
+    /// holding the original bytes of a transcoded document has offsets
+    /// that no longer correspond. A wrong column is a nuisance; a
+    /// panic in the error path takes down the process.
+    #[test]
+    fn line_column_survives_a_mismatched_document(
+        input in xml_ish(),
+        other in xml_ish(),
+    ) {
+        if let Err(e) = parse(&input) {
+            let (line, column) = e.line_column(&other);
+            prop_assert!(line >= 1 && column >= 1, "positions are one-based");
+        }
+    }
 }

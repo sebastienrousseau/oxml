@@ -193,7 +193,8 @@ fn utf16(bytes: &[u8], big_endian: bool) -> Result<String> {
     if bytes.len() % 2 != 0 {
         return Err(Error::new(ErrorKind::MalformedEncoding, bytes.len() - 1));
     }
-    #[allow(clippy::chunks_exact_to_as_chunks)] // `as_chunks` is unstable on MSRV
+    #[allow(clippy::chunks_exact_to_as_chunks)]
+    // `as_chunks` is unstable on MSRV
     let units = bytes.chunks_exact(2).map(|pair| {
         let pair = [pair[0], pair[1]];
         if big_endian {
@@ -208,7 +209,8 @@ fn utf16(bytes: &[u8], big_endian: bool) -> Result<String> {
     for unit in char::decode_utf16(units) {
         // An unpaired surrogate is not a character in any encoding, and
         // silently substituting U+FFFD would hide a corrupt document.
-        let c = unit.map_err(|_| Error::new(ErrorKind::MalformedEncoding, offset))?;
+        let c =
+            unit.map_err(|_| Error::new(ErrorKind::MalformedEncoding, offset))?;
         offset += c.len_utf16() * 2;
         out.push(c);
     }
@@ -405,13 +407,13 @@ mod tests {
         // the document simply hasn't named an encoding, so UTF-8
         // applies and any real problem surfaces in the parser instead.
         for decl in [
-            "<?xml version='1.0'",         // never terminated
-            "<?xml version='1.0'?>",       // no encoding pseudo-attribute
-            "<?xml encoding?>",            // no `=`
-            "<?xml encoding=?>",           // no value at all
-            "<?xml encoding=UTF-8?>",      // unquoted value
-            "<?xml encoding='UTF-8?>",     // never closed
-            "<?xmlno-space?>",             // not a declaration
+            "<?xml version='1.0'",     // never terminated
+            "<?xml version='1.0'?>",   // no encoding pseudo-attribute
+            "<?xml encoding?>",        // no `=`
+            "<?xml encoding=?>",       // no value at all
+            "<?xml encoding=UTF-8?>",  // unquoted value
+            "<?xml encoding='UTF-8?>", // never closed
+            "<?xmlno-space?>",         // not a declaration
         ] {
             let bytes = alloc::format!("{decl}<a/>");
             assert!(

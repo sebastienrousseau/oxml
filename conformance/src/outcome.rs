@@ -131,3 +131,158 @@ impl fmt::Display for Counts {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn counts(
+        pass: usize,
+        fail: usize,
+        unsupported: usize,
+        blocked: usize,
+        panic: usize,
+    ) -> Counts {
+        Counts {
+            pass,
+            fail,
+            unsupported,
+            blocked,
+            panic,
+        }
+    }
+
+    #[test]
+    fn skipping_a_hard_test_cannot_raise_the_pass_rate() {
+        // This is the honesty property of the whole metric. If
+        // `Unsupported` fed the pass-rate denominator the wrong way, a
+        // runner could reclassify every failure it disliked and watch
+        // its score climb. Adding unsupported tests must move coverage
+        // down and leave the pass rate exactly where it was.
+        let before = counts(9, 1, 0, 0, 0);
+        let after = counts(9, 1, 90, 0, 0);
+        assert!((before.pass_rate() - after.pass_rate()).abs() < f64::EPSILON);
+        assert!(
+            after.coverage() < before.coverage(),
+            "hiding 90 tests must show up as lost coverage: {} vs {}",
+            after.coverage(),
+            before.coverage()
+        );
+    }
+
+    #[test]
+    fn blocked_tests_are_excluded_the_same_way_unsupported_ones_are() {
+        let a = counts(3, 1, 0, 0, 0);
+        let b = counts(3, 1, 0, 40, 0);
+        assert!((a.pass_rate() - b.pass_rate()).abs() < f64::EPSILON);
+        assert!(b.coverage() < a.coverage());
+    }
+
+    #[test]
+    fn a_panic_counts_against_the_pass_rate_rather_than_being_set_aside() {
+        // A panic is a defect, not an unimplemented feature. Were it
+        // excluded like `Unsupported`, a parser that aborted on every
+        // hard input would score 100%.
+        let c = counts(1, 0, 0, 0, 1);
+        assert_eq!(c.decided(), 2);
+        assert!((c.pass_rate() - 50.0).abs() < f64::EPSILON);
+        assert!((c.coverage() - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn totals_account_for_every_outcome() {
+        let mut c = Counts::default();
+        let all = [
+            Outcome::Pass,
+            Outcome::Fail,
+            Outcome::Unsupported,
+            Outcome::Blocked,
+            Outcome::Panic,
+        ];
+        for o in all {
+            c.add(o);
+        }
+        assert_eq!(c.total(), all.len(), "a variant is not being tallied");
+        assert_eq!(c, counts(1, 1, 1, 1, 1));
+        assert_eq!(c.decided(), 3);
+    }
+
+    #[test]
+    fn is_decided_agrees_with_the_decided_tally() {
+        // Two independent statements of the same rule; they drift
+        // apart if only one is updated when a variant is added.
+        for o in [
+            Outcome::Pass,
+            Outcome::Fail,
+            Outcome::Unsupported,
+            Outcome::Blocked,
+            Outcome::Panic,
+        ] {
+            let mut c = Counts::default();
+            c.add(o);
+            assert_eq!(
+                o.is_decided(),
+                c.decided() == 1,
+                "{o} disagrees with itself"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_run_reports_zero_rather_than_nan() {
+        // `0/0` is NaN, and NaN compares false against every threshold,
+        // so a ratchet built on it would silently accept anything.
+        let c = Counts::default();
+        assert_eq!(c.total(), 0);
+        assert!((c.pass_rate() - 0.0).abs() < f64::EPSILON);
+        assert!((c.coverage() - 0.0).abs() < f64::EPSILON);
+        assert!(c.pass_rate().is_finite() && c.coverage().is_finite());
+    }
+
+    #[test]
+    fn outcomes_order_by_severity_so_a_run_summarises_to_its_worst() {
+        assert!(Outcome::Pass < Outcome::Unsupported);
+        assert!(Outcome::Unsupported < Outcome::Blocked);
+        assert!(Outcome::Blocked < Outcome::Fail);
+        assert!(Outcome::Fail < Outcome::Panic);
+
+        let run = [Outcome::Pass, Outcome::Panic, Outcome::Fail, Outcome::Pass];
+        assert_eq!(run.into_iter().max(), Some(Outcome::Panic));
+    }
+
+    #[test]
+    fn every_outcome_prints_a_distinct_stable_name() {
+        // These strings are the baseline file's on-disk format; a
+        // change here silently invalidates every recorded baseline.
+        let names: Vec<_> = [
+            Outcome::Pass,
+            Outcome::Unsupported,
+            Outcome::Blocked,
+            Outcome::Fail,
+            Outcome::Panic,
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        assert_eq!(names, ["pass", "unsupported", "blocked", "fail", "panic"]);
+    }
+
+    #[test]
+    fn the_summary_line_shows_both_numerators_and_both_denominators() {
+        // A pass rate without its denominator is how a thin run passes
+        // for a thorough one, so the Display impl must carry both.
+        let text = counts(9, 1, 5, 2, 0).to_string();
+        for part in [
+            "9 pass",
+            "1 fail",
+            "5 unsupported",
+            "2 blocked",
+            "90.0%",
+            "10",
+            "58.8%",
+            "17",
+        ] {
+            assert!(text.contains(part), "{part:?} missing from {text:?}");
+        }
+    }
+}
