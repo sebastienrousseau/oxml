@@ -540,3 +540,97 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally
 submitted for inclusion in the work by you shall be dual licensed as
 above, without any additional terms or conditions.
+
+## FAQ
+
+### Is it faster than quick-xml or roxmltree?
+
+Not yet, and the README will say so until it is. On a 16.86 MB document,
+measured on one machine: quick-xml 704 MB/s building no tree,
+roxmltree 291 MB/s building a borrowed tree, `oxml` 123 MB/s. The gap is
+allocation — `oxml` performs about two per node where a borrowed design
+performs almost none — and closing it is in progress.
+
+Any figure here states the machine and the method. During development
+the same binary measured 14.7 and 123.1 MB/s on a loaded host, which is
+why a number without its conditions is not a measurement.
+
+### How conformant is it?
+
+93.6% of decided tests in the W3C XML Conformance Test Suite, release
+`xmlts20130923`, with 98.9% coverage of the 2,585 tests and zero panics.
+Both numbers are published because either alone misleads: a pass rate
+can be raised by skipping the hard tests.
+
+Of the failures, most require the **external** DTD subset, which `oxml`
+never fetches — see below.
+
+### Why does it not fetch external entities?
+
+Because that is the XXE vulnerability, and a parser that cannot fetch
+cannot be made to leak a file. There is no option to enable it, which is
+the difference between safe and *safe if you remember to set the flag*.
+
+The cost is real and is stated rather than hidden: an error that lives
+inside an external entity cannot be detected, and those account for most
+of the remaining conformance failures. The specification does not
+require a non-validating parser to read the external subset.
+
+### Does it expand entities at all?
+
+Internal ones, yes — a conforming parser must, and many valid documents
+depend on it. Expansion is bounded on two axes, because either alone is
+insufficient: a depth cap stops the exponential "billion laughs" shape,
+and a **per-document** character budget stops the quadratic one. During
+development a per-*reference* budget let a single 100 KB entity
+referenced a thousand times produce 100 MB of text; both shapes are now
+rejected and both have tests.
+
+### Does it validate?
+
+No. `oxml` checks well-formedness, including the constraints that live
+inside the DTD. Validation against a schema is
+[`xmlschema`](https://crates.io/crates/xmlschema), which covers XSD.
+
+### Which XML version and edition?
+
+XML 1.0 and 1.1, with namespaces. XML 1.0 has two incompatible editions
+— the 5th relaxed the name rules and the two genuinely disagree — so
+both are implemented and `Limits::edition` selects. The 5th is the
+default.
+
+### Does it really work without `std`?
+
+Yes, and CI builds for `thumbv7em-none-eabihf`,
+`riscv32imac-unknown-none-elf` and `aarch64-unknown-none` to prove it.
+`cargo check --no-default-features` on a host proves nothing, because
+the host still has `std` — which is exactly how `no_std` support for
+`XPath` regressed unnoticed once.
+
+`XPath` additionally needs the `libm` feature, since `floor`, `ceil` and
+`trunc` live in `std` rather than `core`. Requesting `xpath` without it
+fails with one clear message rather than a dozen missing-method errors.
+
+### Is `forbid(unsafe_code)` just marketing?
+
+It is CI-enforced, and it prevents memory-unsafety. It does **not**
+prevent a parser exhausting memory or spending ten minutes in a
+quadratic loop — two HIGH-severity 2026 advisories against another Rust
+XML crate were exactly that, in entirely safe code. `Limits` exists for
+that class, and the fuzz targets exist to find it.
+
+### Why is my document rejected when another parser accepts it?
+
+Most often one of: a `--` inside a comment, a literal `]]>` in content,
+a missing space between attributes, `<` in an attribute value, or a
+control character. All are forbidden by XML 1.0 and all are accepted by
+some parsers. The error names the constraint and the byte offset.
+
+### When should I not use it?
+
+If you need XSLT, XQuery, or XPath 2.0+, none of which exist here — see
+[Xee](https://github.com/Paligo/xee) for XPath 3.1. If you need to
+resolve external entities. If you are parsing multi-gigabyte documents
+where a DOM will not fit; a streaming API is planned and this is not it
+yet.
+
