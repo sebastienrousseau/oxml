@@ -137,17 +137,19 @@ jobs:
       # respectively — and the figure measures which tests were
       # available rather than what the library does.
       - run: cargo run -p oxml-conformance --bin download
-      # Scoped to `-p oxml`: the conformance harness is unpublished and
-      # its coverage depends on whether the 15 MB W3C suite was
-      # downloaded, so including it measures the CI cache rather than
-      # the library and drags the total under the floor.
+      # Only the two `main()` entry points are excluded. They shell out
+      # to the network and to `tar`, so covering them would mean
+      # asserting on a 15 MB download rather than on any logic of ours.
+      # Everything else in the harness is included on purpose: it
+      # decides whether a conformance test passed, and a scoring bug
+      # would misreport the library's own headline numbers.
       #
       # Every defect fixed in 0.0.3 was found by raising coverage, not
       # by reading the code. The floor keeps that from eroding: a new
       # branch nothing exercises fails here rather than shipping.
       - run: >
           cargo llvm-cov --workspace --all-features --fail-under-lines 95
-          --ignore-filename-regex 'builds/cargo/package|conformance/'
+          --ignore-filename-regex 'builds/cargo/package|conformance/src/bin/'
 
   no-std:
     name: no_std (bare metal)
