@@ -64,6 +64,9 @@ struct Parser<'a> {
     limits: Limits,
     /// Declarations from the document type declaration, once seen.
     dtd: Option<crate::dtd::Dtd>,
+    /// Local name -> candidate interned ids, so interning does not
+    /// scan the whole name table.
+    name_index: alloc::collections::BTreeMap<String, alloc::vec::Vec<u32>>,
     /// The version the XML declaration names.
     ///
     /// 1.1 differs from 1.0 in three ways that matter here: NEL and
@@ -162,6 +165,7 @@ pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
         depth: 0,
         limits,
         dtd: None,
+        name_index: alloc::collections::BTreeMap::new(),
         version,
         entity_budget: limits.max_entity_expansion,
     };
@@ -371,9 +375,10 @@ impl Parser<'_> {
             resolved.push(Attribute { name: an, value });
         }
 
+        let name_id = self.intern(&name);
         let node = self.doc.push(
             NodeKind::Element {
-                name: name.clone(),
+                name: name_id,
                 attributes: Vec::new(),
             },
             parent,
@@ -769,6 +774,30 @@ impl Parser<'_> {
         {
             self.pos += 1;
         }
+    }
+
+    /// Intern an element name, returning a handle to it.
+    ///
+    /// Names repeat heavily — the benchmark document has 500,001
+    /// elements sharing six distinct names — so this replaces half a
+    /// million allocations with six. The index is keyed on the local
+    /// part so a document with many distinct names does not degrade to
+    /// a linear scan of the whole table.
+    fn intern(&mut self, name: &ExpandedName) -> crate::tree::NameId {
+        if let Some(candidates) = self.name_index.get(name.local.as_str()) {
+            for &id in candidates {
+                if self.doc.names[id as usize].namespace == name.namespace {
+                    return crate::tree::NameId(id);
+                }
+            }
+        }
+        let id = u32::try_from(self.doc.names.len()).unwrap_or(u32::MAX);
+        self.doc.names.push(name.clone());
+        self.name_index
+            .entry(name.local.clone())
+            .or_default()
+            .push(id);
+        crate::tree::NameId(id)
     }
 
     /// `NameStartChar`, for the edition in force.

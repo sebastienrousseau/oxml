@@ -88,8 +88,14 @@ pub enum NodeKind {
     Root,
     /// An element.
     Element {
-        /// The element's expanded name.
-        name: ExpandedName,
+        /// The element's name, interned.
+        ///
+        /// Names repeat heavily — a 500,001-element document in the
+        /// benchmark suite has **six** distinct ones — so storing an
+        /// `ExpandedName` per element allocated half a million strings
+        /// to hold six values. Resolve it with
+        /// [`Document::element_name`].
+        name: NameId,
         /// Ids of this element's attribute nodes, in document order.
         attributes: Vec<NodeId>,
     },
@@ -114,6 +120,13 @@ pub enum NodeKind {
     },
 }
 
+/// A handle to an interned [`ExpandedName`].
+///
+/// Opaque: compare handles for equality to compare names, which is a
+/// `u32` compare rather than two string compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NameId(pub(crate) u32);
+
 #[derive(Debug, Clone)]
 pub(crate) struct Node {
     pub(crate) kind: NodeKind,
@@ -127,6 +140,8 @@ pub(crate) struct Node {
 #[derive(Debug, Clone)]
 pub struct Document {
     pub(crate) nodes: Vec<Node>,
+    /// Every distinct element name in the document, once.
+    pub(crate) names: Vec<ExpandedName>,
 }
 
 impl Document {
@@ -144,7 +159,10 @@ impl Document {
             parent: None,
             children: Vec::new(),
         });
-        Self { nodes: v }
+        Self {
+            nodes: v,
+            names: Vec::new(),
+        }
     }
 
     /// The document root.
@@ -235,9 +253,15 @@ impl Document {
     #[must_use]
     pub fn element_name(&self, id: NodeId) -> Option<&ExpandedName> {
         match self.kind(id) {
-            Some(NodeKind::Element { name, .. }) => Some(name),
+            Some(NodeKind::Element { name, .. }) => self.name(*name),
             _ => None,
         }
+    }
+
+    /// Resolve an interned name handle.
+    #[must_use]
+    pub fn name(&self, id: NameId) -> Option<&ExpandedName> {
+        self.names.get(id.0 as usize)
     }
 
     /// The ids of an element's attribute nodes.
