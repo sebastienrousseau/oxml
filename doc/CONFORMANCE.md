@@ -20,8 +20,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2408 pass, 149 fail, 0 panic, 28 unsupported, 0 blocked
-         94.2% of 2557 decided (98.9% coverage of 2585)
+overall  2419 pass, 138 fail, 0 panic, 28 unsupported, 0 blocked
+         94.6% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -59,7 +59,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-149 failures, and **every one of them is the parser being too
+138 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -69,20 +69,21 @@ contains:
 
 | The document has | Count |
 |---|---|
-| An internal subset only | 81 |
+| An internal subset only | 70 |
 | An external subset (`SYSTEM`/`PUBLIC`) | 63 |
 | No `DOCTYPE` at all | 5 |
 
-Only the middle group needs the external subset. **The other 86 are
+Only the middle group needs the external subset. **The other 75 are
 rules oxml could enforce today.**
 
 That categorisation is worth doing before assuming otherwise. This
-document previously said "the bulk need the external DTD subset", which
-was a guess and was wrong: at the time it was 84 internal-only against
-63 external. Counting them instead found 16 failures with no `DOCTYPE`
-at all, of which 14 were fixed the same afternoon — three scanner bugs
-of one shape, an unvalidated version number, and three namespace rules.
-Those 14 are the difference between 163 failures and 149.
+document once said "the bulk need the external DTD subset", which was a
+guess and was wrong: the split was 84 internal-only against 63
+external. Counting instead of guessing found 16 failures with no
+`DOCTYPE` at all and a further set that needed only declarations
+already parsed. **25 of them have since been fixed**, taking the
+failure count from 163 to 138, and the external-subset group has not
+moved at all — it was 63 then and it is 63 now.
 
 That asymmetry matters. A parser that wrongly accepts produces a tree
 from a document another implementation would reject, so two systems
@@ -95,7 +96,8 @@ here.
 | Accepted a document that is not well-formed | 149 |
 | Rejected a valid document | 0 |
 
-63 of them need the **external DTD subset** — declarations in a
+63 of them — unchanged throughout — need the **external DTD
+  subset** — declarations in a
 separate file, referenced by `SYSTEM` or `PUBLIC`. oxml parses the
 internal subset in full but never fetches an external one, by the same
 design that forecloses XXE. A document whose only defect is a violation

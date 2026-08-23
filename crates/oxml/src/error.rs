@@ -45,6 +45,14 @@ pub enum ErrorKind {
     DuplicateAttribute(String),
     /// An entity reference that is not defined.
     UnknownEntity(String),
+    /// A reference the specification forbids in the place it appears.
+    ///
+    /// An external parsed entity may not be referenced in an attribute
+    /// value (`WFC: No External Entity References`), and an unparsed
+    /// entity may not be referenced anywhere (`WFC: Parsed Entity`).
+    /// Distinct from [`ErrorKind::UnknownEntity`]: the entity is
+    /// declared, and the declaration is the problem.
+    ForbiddenEntityReference(String),
     /// A namespace prefix was used without being declared.
     UnboundPrefix(String),
     /// Content appeared after the root element closed.
@@ -163,6 +171,9 @@ impl fmt::Display for ErrorKind {
             ErrorKind::DuplicateAttribute(n) => {
                 write!(f, "duplicate attribute {n}")
             }
+            ErrorKind::ForbiddenEntityReference(n) => {
+                write!(f, "`&{n};` may not be referenced here")
+            }
             ErrorKind::UnknownEntity(n) => {
                 write!(f, "unknown entity &{n};")
             }
@@ -262,6 +273,7 @@ mod tests {
             ErrorKind::UnquotedAttributeValue,
             ErrorKind::DuplicateAttribute(String::from("id")),
             ErrorKind::UnknownEntity(String::from("nope")),
+            ErrorKind::ForbiddenEntityReference(String::from("ext")),
             ErrorKind::UnboundPrefix(String::from("p")),
             ErrorKind::TrailingContent,
             ErrorKind::NoRootElement,

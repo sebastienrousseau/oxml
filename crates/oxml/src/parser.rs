@@ -1095,7 +1095,28 @@ impl<'a> Parser<'a> {
                 self.entity_budget = budget;
                 out
             }
-            Some(crate::dtd::EntityValue::External) => Ok(String::new()),
+            // `WFC: No External Entity References`. In content an
+            // external parsed entity expands to nothing, because
+            // nothing is ever fetched; in an attribute value the
+            // reference itself is forbidden.
+            Some(crate::dtd::EntityValue::External) => {
+                if in_attribute {
+                    Err(Error::new(
+                        ErrorKind::ForbiddenEntityReference(ent.to_owned()),
+                        offset,
+                    ))
+                } else {
+                    Ok(String::new())
+                }
+            }
+            // `WFC: Parsed Entity`. An unparsed entity may not be
+            // referenced anywhere -- it is not text and has no
+            // replacement. Naming it as the value of an `ENTITY`-typed
+            // attribute is a different construct and still allowed.
+            Some(crate::dtd::EntityValue::Unparsed) => Err(Error::new(
+                ErrorKind::ForbiddenEntityReference(ent.to_owned()),
+                offset,
+            )),
             None if dtd.incomplete => Ok(String::new()),
             None => Err(Error::new(
                 ErrorKind::UnknownEntity(ent.to_owned()),
@@ -1183,6 +1204,22 @@ impl<'a> Parser<'a> {
             }
             let inner = match self.dtd.as_ref().and_then(|d| d.entity(name)) {
                 Some(crate::dtd::EntityValue::Internal(t)) => t.clone(),
+                // An indirect reference is still a reference: an
+                // internal entity whose text names an external one is
+                // forbidden in an attribute value just as a direct
+                // reference is.
+                Some(crate::dtd::EntityValue::External) if in_attribute => {
+                    return Err(Error::new(
+                        ErrorKind::ForbiddenEntityReference(name.to_owned()),
+                        offset,
+                    ));
+                }
+                Some(crate::dtd::EntityValue::Unparsed) => {
+                    return Err(Error::new(
+                        ErrorKind::ForbiddenEntityReference(name.to_owned()),
+                        offset,
+                    ));
+                }
                 _ => continue,
             };
             // Already normalised by the recursive call if needed.

@@ -28,11 +28,22 @@ use alloc::string::String;
 pub(crate) enum EntityValue {
     /// A literal replacement text from the internal subset.
     Internal(String),
-    /// An external or unparsed entity. Its replacement text is not
+    /// An external *parsed* entity. Its replacement text is not
     /// available — `oxml` never fetches external resources — but the
     /// *declaration* is, which is enough to tell "undeclared" from
     /// "declared but not retrievable".
+    ///
+    /// Referencing one in an attribute value is forbidden
+    /// (`WFC: No External Entity References`); in content it is
+    /// permitted and expands to nothing here.
     External,
+    /// An unparsed entity: an `ExternalID` with an `NDataDecl`.
+    ///
+    /// Referencing one **anywhere** is forbidden
+    /// (`WFC: Parsed Entity`). It may only be named as the value of an
+    /// `ENTITY`-typed attribute, which is a different construct from a
+    /// reference.
+    Unparsed,
 }
 
 /// Declarations gathered from a document type declaration.
@@ -49,6 +60,15 @@ pub(crate) struct Dtd {
     /// somewhere we did not read. Reporting it as undeclared would
     /// reject valid documents, so entity checking relaxes.
     pub(crate) incomplete: bool,
+    /// Whether declarations from outside the internal subset could have
+    /// been pulled in.
+    ///
+    /// Distinct from `incomplete`, which also becomes true merely
+    /// because a parameter entity was *declared*. Declaring one pulls
+    /// nothing in, so the `WFC: PEs in Internal Subset` rule still
+    /// applies afterwards -- conflating the two switched that check off
+    /// for every declaration following the first `<!ENTITY % … >`.
+    pub(crate) external_seen: bool,
 }
 
 impl Dtd {
@@ -204,6 +224,7 @@ impl<'a> DtdParser<'a> {
                 let _ = self.quoted()?;
             }
             dtd.incomplete = true;
+            dtd.external_seen = true;
             self.skip_ws();
         }
 
@@ -239,6 +260,7 @@ impl<'a> DtdParser<'a> {
                         "unterminated parameter entity reference",
                     )?;
                     dtd.incomplete = true;
+                    dtd.external_seen = true;
                 }
                 Some(b'<') => self.parse_markup_decl(dtd)?,
                 _ => return Err((self.pos, "expected a markup declaration")),
@@ -581,7 +603,7 @@ impl<'a> DtdParser<'a> {
             // only when it is used: a malformed character reference
             // makes the document not well-formed even if nothing ever
             // references the entity.
-            validate_entity_value(text, start, dtd.incomplete)?;
+            validate_entity_value(text, start, dtd.external_seen)?;
             EntityValue::Internal(text.to_owned())
         } else {
             let public = self.starts_with("PUBLIC");
@@ -600,14 +622,20 @@ impl<'a> DtdParser<'a> {
             } else {
                 let _ = self.quoted()?;
             }
-            // NDataDecl, for an unparsed entity.
+            // NDataDecl, for an unparsed entity. Kept apart from an
+            // external *parsed* entity because the two are forbidden in
+            // different places: an unparsed entity may not be
+            // referenced anywhere, an external parsed one only in an
+            // attribute value.
             self.skip_ws();
             if self.starts_with("NDATA") {
                 self.pos += "NDATA".len();
                 self.require_ws()?;
                 let _ = self.name()?;
+                EntityValue::Unparsed
+            } else {
+                EntityValue::External
             }
-            EntityValue::External
         };
 
         self.skip_ws();
@@ -616,7 +644,10 @@ impl<'a> DtdParser<'a> {
         if parameter {
             // The replacement text of a parameter entity can contain
             // declarations we have not expanded, so treat its presence
-            // as making the subset incomplete.
+            // as making the entity set incomplete. It does **not** make
+            // the subset external: nothing has been pulled in until the
+            // entity is referenced, so `WFC: PEs in Internal Subset`
+            // still applies to every declaration after this one.
             dtd.incomplete = true;
         } else {
             // "the first declaration binds" — a later duplicate is not

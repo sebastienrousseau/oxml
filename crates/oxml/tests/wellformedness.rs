@@ -165,3 +165,99 @@ mod namespaces {
         assert!(parse("<?ab bogus?>\n<foo/>").is_ok());
     }
 }
+
+/// Constraints declared in the internal subset that were parsed and
+/// then not enforced.
+mod internal_subset {
+    use super::{ErrorKind, parse};
+
+    #[test]
+    fn a_parameter_entity_reference_may_not_appear_inside_a_declaration() {
+        // `WFC: PEs in Internal Subset`. A `%name;` may appear *where a
+        // declaration can appear*, but not *inside* one. In the
+        // external subset it is permitted, which is why this rule is
+        // conditional rather than absolute.
+        for source in [
+            r#"<!DOCTYPE d [<!ENTITY % e ""><!ENTITY f "%e;">]><d/>"#,
+            r#"<!DOCTYPE d [<!ENTITY % e1 ""><!ENTITY % e2 "%e1;">]><d/>"#,
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn declaring_a_parameter_entity_does_not_switch_the_rule_off() {
+        // This is how the rule came to be unenforced: declaring a
+        // parameter entity set the same flag that means "declarations
+        // from outside may have been pulled in", so the first
+        // `<!ENTITY % … >` in a document disabled the check for every
+        // declaration after it -- including the one that violates it.
+        let source = r#"<!DOCTYPE d [
+            <!ENTITY % harmless "text">
+            <!ENTITY % second "more">
+            <!ENTITY offender "%harmless;">
+        ]><d/>"#;
+        assert!(parse(source).is_err(), "the third declaration violates it");
+    }
+
+    #[test]
+    fn an_external_entity_may_not_be_referenced_in_an_attribute_value() {
+        // `WFC: No External Entity References`. Directly, and through
+        // an internal entity whose text names it -- an indirect
+        // reference is still a reference.
+        let direct = r#"<!DOCTYPE r [<!ENTITY x SYSTEM "x.ent">]><r a="&x;"/>"#;
+        let indirect = r#"<!DOCTYPE r [<!ENTITY x SYSTEM "x.ent"><!ENTITY i "&x;">]><r a="&i;"/>"#;
+        for source in [direct, indirect] {
+            let error = parse(source).expect_err(source);
+            assert!(
+                matches!(error.kind, ErrorKind::ForbiddenEntityReference(_)),
+                "{source}: {:?}",
+                error.kind
+            );
+        }
+    }
+
+    #[test]
+    fn an_external_entity_in_content_is_still_permitted() {
+        // The rule is about attribute values. In content the reference
+        // is legal and expands to nothing, because nothing is ever
+        // fetched -- which is the design, not a limitation being
+        // papered over.
+        let source = r#"<!DOCTYPE r [<!ENTITY x SYSTEM "x.ent">]><r>&x;</r>"#;
+        let doc = parse(source).expect("legal in content");
+        assert_eq!(doc.text(doc.root()), "");
+    }
+
+    #[test]
+    fn an_unparsed_entity_may_not_be_referenced_anywhere() {
+        // `WFC: Parsed Entity`. An `NDATA` entity is not text and has
+        // no replacement, so a reference to one is meaningless in
+        // content as well as in an attribute.
+        let decl =
+            r#"<!NOTATION J SYSTEM "J"><!ENTITY im SYSTEM "i.jpg" NDATA J>"#;
+        for source in [
+            &alloc_fmt(decl, r#"<r a="&im;"/>"#),
+            &alloc_fmt(decl, r"<r>&im;</r>"),
+        ] {
+            let error = parse(source).expect_err(source);
+            assert!(
+                matches!(error.kind, ErrorKind::ForbiddenEntityReference(_)),
+                "{source}: {:?}",
+                error.kind
+            );
+        }
+    }
+
+    fn alloc_fmt(decl: &str, body: &str) -> String {
+        format!("<!DOCTYPE r [{decl}]>{body}")
+    }
+
+    #[test]
+    fn an_ordinary_internal_entity_is_unaffected() {
+        let source = r#"<!DOCTYPE r [<!ENTITY g "hi">]><r a="&g;">&g;</r>"#;
+        let doc = parse(source).expect("well-formed");
+        let root = doc.root_element().expect("root");
+        assert_eq!(doc.attribute(root, "a"), Some("hi"));
+        assert_eq!(doc.text(root), "hi");
+    }
+}
