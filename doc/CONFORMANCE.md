@@ -20,8 +20,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2514 pass, 43 fail, 0 panic, 28 unsupported, 0 blocked
-         98.3% of 2557 decided (98.9% coverage of 2585)
+overall  2520 pass, 37 fail, 0 panic, 28 unsupported, 0 blocked
+         98.6% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -59,7 +59,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-43 failures, and **every one of them is the parser being too
+37 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 

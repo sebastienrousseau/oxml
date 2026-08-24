@@ -27,7 +27,7 @@ one is listed as not done, however close it feels.
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
 | Line coverage | ≥95% | **97.4%**, gated | ✅ |
-| Conformance | Published with denominator | **98.3% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
+| Conformance | Published with denominator | **98.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **1.13** | ✅ |
 | Throughput | <100 ms at load | **Not measured** — see below | ❌ |
 | XPath 1.0 | Complete | 10 axes, 25 functions, namespaces resolved | 🟡 |

@@ -1,4 +1,4 @@
-#counts	pass=2514	fail=43	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2520	fail=37	panic=0	unsupported=28	blocked=0	total=2585
 sun	cond01	fail	accepted a document that is not well-formed
 sun	cond02	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
@@ -7,8 +7,6 @@ eduni	ht-bh-ns11-008	unsupported	namespaces-1.1
 ibm	ibm-1-1-not-wf-P77-ibm77n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n02.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n03.xml	fail	accepted a document that is not well-formed
-ibm	ibm-1-1-not-wf-P77-ibm77n07.xml	fail	accepted a document that is not well-formed
-ibm	ibm-1-1-not-wf-P77-ibm77n08.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n16.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n17.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n18.xml	fail	accepted a document that is not well-formed
@@ -21,15 +19,11 @@ ibm	ibm-1-1-valid-P05-ibm05v05.xml	unsupported	namespace-processing-off
 ibm	ibm-not-wf-P32-ibm32n09.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n06.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P75-ibm75n07.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P77-ibm77n02.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P77-ibm77n03.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P77-ibm77n04.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P78-ibm78n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P78-ibm78n02.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P79-ibm79n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P79-ibm79n02.xml	fail	accepted a document that is not well-formed
 xmltest	not-wf-ext-sa-001	fail	accepted a document that is not well-formed
-xmltest	not-wf-ext-sa-003	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-008	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-074	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-090	fail	accepted a document that is not well-formed

@@ -234,3 +234,52 @@ fn the_keyword_may_come_from_a_parameter_entity() {
     let bogus = r#"<!ENTITY % maybe "PERHAPS"><![%maybe;[ <!ENTITY g "x"> ]]>"#;
     assert!(with(doc, &[("d.dtd", bogus)]).is_err());
 }
+
+#[test]
+fn a_text_declaration_must_come_first_or_not_at_all() {
+    // `extParsedEnt ::= TextDecl? content`. Anything before it -- even
+    // a blank line -- makes it an ordinary processing instruction with
+    // the reserved target `xml`, which is not legal anywhere.
+    let doc = r#"<!DOCTYPE d [<!ENTITY g SYSTEM "g.ent">]><d>&g;</d>"#;
+    for bad in [
+        "content first\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>content",
+        " <?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+    ] {
+        assert!(with(doc, &[("g.ent", bad)]).is_err(), "{bad:?}");
+    }
+    let good = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>content";
+    assert!(with(doc, &[("g.ent", good)]).is_ok());
+}
+
+#[test]
+fn the_text_declaration_keyword_is_lower_case() {
+    // The target is reserved case-insensitively, so `<?XML …?>` is an
+    // error even in the position a declaration may occupy: `TextDecl`
+    // spells it in lower case and nothing else may use the name.
+    let doc = r#"<!DOCTYPE d [<!ENTITY g SYSTEM "g.ent">]><d>&g;</d>"#;
+    assert!(with(doc, &[("g.ent", r#"<?XML encoding="UTF-8"?>x"#)]).is_err());
+}
+
+#[test]
+fn an_entity_is_judged_by_its_own_declared_version() {
+    // U+0085 is a line terminator in XML 1.1 and an ordinary character
+    // in 1.0, so which version an entity declares is observable in what
+    // its content becomes. Each entity is normalised by *its own*
+    // version, not the document's -- an entity may declare 1.0 inside a
+    // 1.1 document and keep 1.0's rules.
+    let doc = "<?xml version=\"1.1\"?>\
+        <!DOCTYPE d [<!ENTITY g SYSTEM \"g.ent\">]><d>&g;</d>";
+
+    let as_11 = "<?xml version='1.1' encoding='UTF-8'?>a\u{85}b";
+    let parsed = with(doc, &[("g.ent", as_11)]).expect("1.1 entity");
+    assert_eq!(parsed.text(parsed.root()), "a\nb", "NEL is a line ending");
+
+    let as_10 = "<?xml version='1.0' encoding='UTF-8'?>a\u{85}b";
+    let parsed = with(doc, &[("g.ent", as_10)]).expect("1.0 entity");
+    assert_eq!(
+        parsed.text(parsed.root()),
+        "a\u{85}b",
+        "in 1.0 it is an ordinary character, even inside a 1.1 document"
+    );
+}

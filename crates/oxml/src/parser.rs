@@ -461,8 +461,24 @@ impl<'a> Parser<'a> {
                         let version = entity_version(content, self.version);
                         let normalized =
                             normalize_line_endings(content, version);
+                        check_text_decl_position(&normalized, self.pos)?;
                         check_text_decl(&normalized, self.version, self.pos)?;
                         let body = strip_text_decl(&normalized);
+                        // The subset's characters are judged by the
+                        // subset's own declared version. An external
+                        // DTD declaring 1.0 may not contain characters
+                        // only 1.1 allows, even when the document that
+                        // includes it is 1.1 -- which is what carrying
+                        // a version per entity is for.
+                        if let Some((_, c)) = body
+                            .char_indices()
+                            .find(|(_, c)| !is_literal_char_for(*c, version))
+                        {
+                            return Err(Error::new(
+                                ErrorKind::IllegalCharacter(c),
+                                self.pos,
+                            ));
+                        }
                         let mut sub = crate::dtd::DtdParser::new(
                             body,
                             0,
@@ -1258,6 +1274,7 @@ impl<'a> Parser<'a> {
                         let normalized =
                             normalize_line_endings(content, entity_version);
                         let content: &str = &normalized;
+                        check_text_decl_position(content, offset)?;
                         check_text_decl(content, self.version, offset)?;
                         let body = strip_text_decl(content);
                         // The content is parsed for illegal characters
@@ -1540,6 +1557,33 @@ fn entity_version(content: &str, document: Version) -> Version {
         Ok(version) => version,
         Err(_) => document,
     }
+}
+
+/// Reject a text declaration that is not where one may be.
+///
+/// `extParsedEnt ::= TextDecl? content` -- the declaration comes first
+/// or not at all. A blank line before it, or content before it, makes
+/// it an ordinary processing instruction with the reserved target
+/// `xml`, which is not legal anywhere.
+///
+/// The target is reserved case-insensitively, so `<?XML …?>` is an
+/// error even at the start: `TextDecl` spells it in lower case.
+fn check_text_decl_position(content: &str, offset: usize) -> Result<()> {
+    let mut at = 0;
+    while let Some(i) = content[at..].find("<?") {
+        let start = at + i;
+        let after = &content[start + 2..];
+        let end = after
+            .find(|c: char| c.is_whitespace() || c == '?')
+            .unwrap_or(after.len());
+        let target = &after[..end];
+        if target.eq_ignore_ascii_case("xml") && (start != 0 || target != "xml")
+        {
+            return Err(Error::new(ErrorKind::ReservedPiTarget, offset));
+        }
+        at = start + 2;
+    }
+    Ok(())
 }
 
 fn strip_text_decl(content: &str) -> &str {
