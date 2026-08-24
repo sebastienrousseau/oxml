@@ -11,4 +11,5 @@ steps of 0.0.1 — see
 
 | Version | Notes |
 |---|---|
+| 0.0.5 | [notes](0.0.5.md) |
 | 0.0.4 | [notes](0.0.4.md) |
