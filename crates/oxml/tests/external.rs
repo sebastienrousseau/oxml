@@ -137,3 +137,47 @@ fn an_external_entity_is_still_refused_in_an_attribute() {
     let doc = r#"<!DOCTYPE d [<!ENTITY g SYSTEM "g.ent">]><d a="&g;"/>"#;
     assert!(with(doc, &[("g.ent", "hello")]).is_err());
 }
+
+#[test]
+fn parameter_entities_are_expanded_in_the_external_subset() {
+    // `<!ELEMENT d (a,%choice;,c)>` is legal there, and expanding it is
+    // what makes the declaration checkable rather than merely skipped.
+    let doc = r#"<!DOCTYPE d SYSTEM "d.dtd"><d/>"#;
+    let dtd = r#"
+        <!ENTITY % choice "(a|b)">
+        <!ELEMENT d (a,%choice;,c)>
+    "#;
+    assert!(with(doc, &[("d.dtd", dtd)]).is_ok());
+}
+
+#[test]
+fn a_parameter_entity_can_expand_to_a_whole_declaration() {
+    // The specification's own "tricky" example, section 4.5. Character
+    // references in an entity value are expanded when it is
+    // **declared**, so `&#37;` becomes `%` and `&#60;` becomes `<`:
+    // `%xx;` therefore references `zz`, whose text is an entity
+    // declaration. Storing the raw text left the whole chain inert.
+    let doc = "<?xml version='1.0'?>\n\
+        <!DOCTYPE test [\n\
+        <!ELEMENT test (#PCDATA) >\n\
+        <!ENTITY % xx '&#37;zz;'>\n\
+        <!ENTITY % zz '&#60;!ENTITY tricky \"error-prone\" >' >\n\
+        %xx;\n\
+        ]>\n\
+        <test>This sample shows a &tricky; method.</test>";
+    let parsed = parse(doc).expect("well-formed");
+    assert!(
+        parsed.text(parsed.root()).contains("error-prone"),
+        "the entity `tricky` should have been declared by expansion"
+    );
+}
+
+#[test]
+fn parameter_entity_recursion_is_bounded() {
+    // A parameter entity whose text references itself would otherwise
+    // recurse forever, and a DTD is untrusted input like anything else.
+    let doc = r#"<!DOCTYPE d SYSTEM "d.dtd"><d/>"#;
+    let dtd = r#"<!ENTITY % a "%b;"><!ENTITY % b "%a;"><!ELEMENT d (%a;)>"#;
+    // Either outcome is acceptable; hanging is not.
+    let _ = with(doc, &[("d.dtd", dtd)]);
+}

@@ -1,4 +1,4 @@
-#counts	pass=2496	fail=61	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2497	fail=60	panic=0	unsupported=28	blocked=0	total=2585
 sun	cond01	fail	accepted a document that is not well-formed
 sun	cond02	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
@@ -42,7 +42,6 @@ ibm	ibm-not-wf-P79-ibm79n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P79-ibm79n02.xml	fail	accepted a document that is not well-formed
 xmltest	not-wf-ext-sa-001	fail	accepted a document that is not well-formed
 xmltest	not-wf-ext-sa-003	fail	accepted a document that is not well-formed
-xmltest	not-wf-not-sa-002	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-006	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-008	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-074	fail	accepted a document that is not well-formed

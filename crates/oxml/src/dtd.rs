@@ -64,6 +64,12 @@ pub(crate) struct Dtd {
     /// definition. A later duplicate declaration is ignored, as the
     /// specification requires.
     pub(crate) general: BTreeMap<String, EntityValue>,
+    /// Parameter entities, by name, with their replacement text.
+    ///
+    /// Only internal ones: an external parameter entity's text is not
+    /// available unless the caller supplied it, and a reference to one
+    /// leaves the subset incomplete.
+    pub(crate) parameters: BTreeMap<String, String>,
     /// Whether an external subset or a parameter entity was referenced.
     ///
     /// When either is true the internal subset is not the whole story,
@@ -229,7 +235,7 @@ impl<'a> DtdParser<'a> {
         &mut self,
         dtd: &mut Dtd,
     ) -> Result<(), DtdError> {
-        self.parse_subset_decls(dtd, None)
+        self.parse_subset_decls(dtd, None, 0)
     }
 
     /// Parse the whole declaration, starting at `<!DOCTYPE`.
@@ -363,7 +369,7 @@ impl<'a> DtdParser<'a> {
     }
 
     fn parse_internal_subset(&mut self, dtd: &mut Dtd) -> Result<(), DtdError> {
-        self.parse_subset_decls(dtd, Some(b']'))
+        self.parse_subset_decls(dtd, Some(b']'), 0)
     }
 
     /// The shared `extSubsetDecl` loop.
@@ -374,6 +380,7 @@ impl<'a> DtdParser<'a> {
         &mut self,
         dtd: &mut Dtd,
         terminator: Option<u8>,
+        depth: usize,
     ) -> Result<(), DtdError> {
         loop {
             self.skip_ws();
@@ -386,13 +393,30 @@ impl<'a> DtdParser<'a> {
                 // the subset is no longer fully known to us.
                 Some(b'%') => {
                     self.pos += 1;
-                    let _ = self.name()?;
+                    let name = self.name()?.to_owned();
                     self.expect(
                         b';',
                         "unterminated parameter entity reference",
                     )?;
-                    dtd.incomplete = true;
                     dtd.external_seen = true;
+                    // The replacement text of a known parameter entity
+                    // is `extSubsetDecl` in its own right, so it is
+                    // parsed as one. Only an entity we do not have
+                    // leaves the subset incomplete.
+                    match dtd.parameters.get(&name).cloned() {
+                        Some(text) if depth < MAX_PE_DEPTH => {
+                            let mut sub =
+                                DtdParser::new(&text, 0, self.edition);
+                            sub.parse_subset_decls(dtd, None, depth + 1)?;
+                        }
+                        Some(_) => {
+                            return Err((
+                                self.pos,
+                                "parameter entities nested too deeply",
+                            ));
+                        }
+                        None => dtd.incomplete = true,
+                    }
                 }
                 Some(b'<') => {
                     // A declaration whose text contains a parameter
@@ -404,8 +428,23 @@ impl<'a> DtdParser<'a> {
                     // reported as malformed. Failing here rejected
                     // valid documents outright.
                     if terminator.is_none() && self.decl_uses_pe() {
+                        let start = self.pos;
                         self.skip_decl();
-                        dtd.incomplete = true;
+                        let raw = &self.input[start..self.pos];
+                        // Expand what we know and parse the result. A
+                        // reference we cannot resolve leaves the
+                        // declaration unparsed, as before -- better an
+                        // unchecked constraint than a rejected document.
+                        match expand_pes(raw, dtd, depth) {
+                            Some(expanded) => {
+                                let mut sub =
+                                    DtdParser::new(&expanded, 0, self.edition);
+                                if sub.parse_markup_decl(dtd).is_err() {
+                                    dtd.incomplete = true;
+                                }
+                            }
+                            None => dtd.incomplete = true,
+                        }
                     } else {
                         self.parse_markup_decl(dtd)?;
                     }
@@ -826,6 +865,17 @@ impl<'a> DtdParser<'a> {
             // entity is referenced, so `WFC: PEs in Internal Subset`
             // still applies to every declaration after this one.
             dtd.incomplete = true;
+            if let EntityValue::Internal(text) = &value {
+                // Character references in an entity value are expanded
+                // when it is **declared**, not when it is used. The
+                // specification's own "tricky" example turns on this:
+                // `<!ENTITY % xx '&#37;zz;'>` stores `%zz;`, so
+                // referencing `xx` references `zz`. Storing the raw
+                // text left the chain inert.
+                let expanded = expand_char_refs(text);
+                let _ =
+                    dtd.parameters.entry(name.to_owned()).or_insert(expanded);
+            }
         } else {
             // "the first declaration binds" — a later duplicate is not
             // an error, it is ignored.
@@ -860,6 +910,102 @@ impl<'a> DtdParser<'a> {
         }
         self.expect(b'>', "unterminated notation declaration")
     }
+}
+
+/// Expand character references in an entity's replacement text.
+///
+/// Done when the entity is declared, per XML section 4.5: `&#37;`
+/// becomes `%` and `&#60;` becomes `<`, so a parameter entity can be
+/// built that expands to a declaration. General entity references are
+/// **not** expanded here -- they are bypassed and left for use.
+fn expand_char_refs(text: &str) -> String {
+    if !text.contains("&#") {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("&#") {
+        let (before, tail) = rest.split_at(i);
+        out.push_str(before);
+        let after = &tail[2..];
+        let Some(semi) = after.find(';') else {
+            out.push_str(tail);
+            return out;
+        };
+        let digits = &after[..semi];
+        let value = if let Some(hex) = digits.strip_prefix(['x', 'X']) {
+            u32::from_str_radix(hex, 16).ok()
+        } else {
+            digits.parse::<u32>().ok()
+        };
+        match value.and_then(char::from_u32) {
+            Some(c) => out.push(c),
+            // Malformed references are reported by
+            // `validate_entity_value`; leave the text alone here.
+            None => {
+                out.push_str(&tail[..semi + 3]);
+            }
+        }
+        rest = &after[semi + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// How deep parameter entity expansion may nest.
+///
+/// A parameter entity whose text references itself would otherwise
+/// recurse forever, and the DTD is untrusted input like everything
+/// else.
+const MAX_PE_DEPTH: usize = 40;
+
+/// Replace every `%name;` in `text` with its replacement text.
+///
+/// `None` when a reference names an entity we do not have, or when
+/// expansion nests too deeply -- the caller then leaves the declaration
+/// unparsed rather than guessing at it.
+fn expand_pes(text: &str, dtd: &Dtd, depth: usize) -> Option<String> {
+    if depth >= MAX_PE_DEPTH {
+        return None;
+    }
+    if !text.contains('%') {
+        return Some(text.to_owned());
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut quote: Option<char> = None;
+    while let Some(i) = rest.find(['%', '"', '\'']) {
+        let (before, tail) = rest.split_at(i);
+        out.push_str(before);
+        let c = tail.chars().next()?;
+        match (quote, c) {
+            // A `%` inside a literal is data, not a reference.
+            (Some(q), _) if c == q => {
+                quote = None;
+                out.push(c);
+                rest = &tail[c.len_utf8()..];
+            }
+            (Some(_), _) => {
+                out.push(c);
+                rest = &tail[c.len_utf8()..];
+            }
+            (None, '"' | '\'') => {
+                quote = Some(c);
+                out.push(c);
+                rest = &tail[c.len_utf8()..];
+            }
+            (None, _) => {
+                let after = &tail[1..];
+                let semi = after.find(';')?;
+                let name = &after[..semi];
+                let value = dtd.parameters.get(name)?;
+                out.push_str(&expand_pes(value, dtd, depth + 1)?);
+                rest = &after[semi + 1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    Some(out)
 }
 
 /// `PubidChar`, XML 1.0 production 13.

@@ -20,8 +20,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2496 pass, 61 fail, 0 panic, 28 unsupported, 0 blocked
-         97.6% of 2557 decided (98.9% coverage of 2585)
+overall  2497 pass, 60 fail, 0 panic, 28 unsupported, 0 blocked
+         97.7% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -59,7 +59,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-61 failures, and **every one of them is the parser being too
+60 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -67,23 +67,21 @@ They are not all waiting on one feature, which is what this document
 previously implied. Categorised by what the failing document actually
 contains:
 
-| What the failure needs | Count |
-|---|---|
-| **Parameter entity expansion** in the DTD | ~35 |
-| Entity replacement text parsed as markup | ~11 |
-| Other | ~15 |
+| What the failure needs | Section | Count |
+|---|---|---|
+| Conditional section keywords validated | §3.4 | 17 |
+| Text declaration position and ordering | §4.3.2 | 11 |
+| Version agreement between document and entity | §4.3.4 | 10 |
+| `<` reaching an attribute through markup in an entity | §2.3 | 5 |
+| Standalone declarations in external entities | §4.3.1 | 4 |
+| Everything else | | 13 |
 
-Neither external entity *content* nor the external *subset* is on that
-list any more: a caller can supply both, which settled 47 failures
-between them.
-
-What is left in the DTD is **parameter entity expansion**. A
-declaration whose text contains `%name;` cannot be resolved without
-it, and in the external subset that is legal and common —
-`<!ELEMENT x (a,%choice;,c)>`. Such declarations are currently skipped
-as unknown rather than reported as malformed, which keeps valid
-documents parsing but means the constraints they declare go
-unchecked.
+That table has been wrong twice, in the same direction both times: I
+estimated what a group needed instead of counting it. The estimate
+before this one put ~35 failures on parameter entity expansion;
+implementing it moved **one**. Counting afterwards showed the real
+leader was conditional section keywords, which oxml skips wholesale
+rather than validating.
 
 Counted by what the failure *needs* rather than by where the `DOCTYPE`
 points, which is what the earlier table did and why it read as more
