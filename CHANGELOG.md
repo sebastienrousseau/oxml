@@ -20,6 +20,18 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 - **`Document::prefix`**, the prefix an interned name was written with,
   and **`Document::element_by_id`**, the element carrying an `ID`-typed
   attribute with a given value.
+- **The `following` and `preceding` axes**, taking `XPath` from 10 of
+  the 13 axes to 12. Only `namespace` remains, which needs namespace
+  declarations retained as nodes rather than resolved and discarded.
+- **Three benchmark groups**: `encoding` (the zero-copy UTF-8 path
+  against the three that must allocate), `tree` (traversal, subtree
+  text, attribute lookup) and `entities` (expansion against a control
+  with the same output and no entities). 7 benchmarks to 19.
+- **An `external_entities` example.** `parse_with_external` counted as
+  covered only because `parse_with` delegates to it internally, so the
+  43/43 figure was true and meant nothing.
+- **`scripts/check-doc-links.py`**, gated in CI: every markdown link
+  and in-page anchor must resolve.
 
 ### Fixed
 
@@ -42,6 +54,32 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   interned id.** Making ids prefix-sensitive would otherwise have
   admitted `p:x` and `q:x` with both prefixes bound to one namespace,
   which Namespaces in XML forbids.
+
+### Documentation
+
+- **Four broken anchors**, all contents entries pointing at renamed
+  headings -- including one titled "Entity expansion is not supported"
+  for a section explaining that expansion happens, boundedly.
+- **Each README had broken links the other did not.** They are
+  byte-identical but sit at different depths, so the root copy pointed
+  at examples under `crates/oxml/` and the crate copy -- the one
+  docs.rs renders as the crate documentation -- pointed at a
+  `SECURITY.md` and `CHANGELOG.md` that exist only at the repository
+  root. Both now use absolute URLs.
+- **The README published six absolute timings** while
+  `doc/BENCHMARKS.md` states that no figure is published without its
+  machine, toolchain, load average and confidence interval. The table
+  now says what each benchmark isolates and publishes no number. It
+  also documented `parse/deep_500`, renamed to `deep_max` when 500
+  levels exceeded `MAX_DEPTH`, and omitted `eval_numeric_predicate`.
+- **`doc/CONFORMANCE.md` stated 98.6% in one paragraph and 93.6% in
+  another**, and carried a per-submission table from the 93.6% era that
+  understated `xmltest` by eight points. Conformance figures in `doc/`
+  are now pinned by a test against the harness output.
+- Stale counts corrected throughout: 25 functions (21 listed, 21
+  implemented), 244 tests, 16 doctests, 97.4% coverage.
+- `#![deny(missing_docs)]` rather than `warn`, as the house style
+  specifies.
 
 ### Changed
 

@@ -46,6 +46,7 @@ step "no_std audit"   ./scripts/check-no-std.sh
 step "conformance"    cargo "+$TOOLCHAIN" test -p oxml-conformance --release
 step "rustdoc"        env RUSTDOCFLAGS="-D warnings" cargo "+$TOOLCHAIN" doc --no-deps -p oxml --all-features
 step "READMEs match"  ./scripts/check-readmes-match.sh
+step "doc links"      python3 ./scripts/check-doc-links.py
 step "doc tests generated" bash -c '
   python3 scripts/generate-doc-tests.py >/dev/null &&
   git diff --exit-code crates/oxml/tests/doc_examples.rs'

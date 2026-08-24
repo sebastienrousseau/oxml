@@ -10,7 +10,7 @@ decisions.
 
 - [The shape of the crate](#the-shape-of-the-crate)
 - [The document is an arena](#the-document-is-an-arena)
-- [Element names are interned](#element-names-are-interned)
+- [Names are interned](#names-are-interned)
 - [Parsing is recursive descent](#parsing-is-recursive-descent)
 - [The encoding layer runs first](#the-encoding-layer-runs-first)
 - [Limits are a value, not a mode](#limits-are-a-value-not-a-mode)

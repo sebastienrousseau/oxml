@@ -314,7 +314,15 @@ impl Document {
     pub fn children(&self, id: NodeId) -> &[NodeId] {
         self.nodes.get(id.0).map_or(&[], |n| {
             let (start, len) = (n.children.0 as usize, n.children.1 as usize);
-            self.child_ids.get(start..start + len).unwrap_or(&[])
+            // `saturating_add` because on a 32-bit target -- and this
+            // crate builds for three bare-metal ones -- two `u32`
+            // values can overflow a `usize`. No document that large
+            // fits in such a machine's memory, so this is unreachable
+            // rather than merely unlikely; it costs nothing to make
+            // the totality obvious instead of argued.
+            self.child_ids
+                .get(start..start.saturating_add(len))
+                .unwrap_or(&[])
         })
     }
 
@@ -379,7 +387,9 @@ impl Document {
             Some(NodeKind::Element { attributes, .. }) => {
                 let (start, len) =
                     (attributes.0 as usize, attributes.1 as usize);
-                self.attr_ids.get(start..start + len).unwrap_or(&[])
+                self.attr_ids
+                    .get(start..start.saturating_add(len))
+                    .unwrap_or(&[])
             }
             _ => &[],
         }

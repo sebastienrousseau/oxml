@@ -314,3 +314,74 @@ fn every_axis_is_reachable_by_its_full_name() {
     }
     assert!(XPath::compile("//book/nosuchaxis::*").is_err());
 }
+
+/// `following::` is everything after the context node in document
+/// order that is not beneath it.
+///
+/// The distinction from `following-sibling::` is what makes this axis
+/// worth having: from the second book, `following-sibling::` reaches
+/// the third book but not its `title`, while `following::` reaches
+/// both.
+#[test]
+fn the_following_axis_leaves_the_parent_behind() {
+    // Book 2's following: book 3 and everything inside it, plus the
+    // processing instruction. Not book 2's own title or year, which
+    // are descendants, and not book 1, which is before it.
+    assert_eq!(texts("//book[2]/following::title"), ["Neuromancer"]);
+    assert_eq!(texts("//book[2]/following::year"), ["1984"]);
+    assert_eq!(count("//book[2]/following::book"), 1);
+    // A descendant is excluded even though it is later in the arena.
+    assert_eq!(count("//book[2]/following::*[.='Germinal']"), 0);
+    // From the first title, every later element in the document.
+    assert_eq!(count("//book[1]/title/following::title"), 2);
+    // The last node in the document has nothing following it.
+    assert_eq!(count("//book[3]/year/following::*"), 0);
+    // Nothing follows the root element: everything else is inside it.
+    assert_eq!(count("/library/following::*"), 0);
+}
+
+/// `preceding::` is the mirror, and excludes ancestors rather than
+/// descendants.
+#[test]
+fn the_preceding_axis_leaves_the_ancestors_behind() {
+    assert_eq!(texts("//book[2]/preceding::title"), ["Dune"]);
+    assert_eq!(count("//book[2]/preceding::book"), 1);
+    // `library` is an ancestor of book 2, so it is not preceding it,
+    // even though it opens earlier in the document.
+    assert_eq!(count("//book[2]/preceding::library"), 0);
+    // Nor is `book[3]`'s own parent chain.
+    assert_eq!(count("//book[3]/title/preceding::book"), 2);
+    // The first element has nothing before it but its ancestors.
+    assert_eq!(count("//book[1]/preceding::*"), 0);
+    // A comment is a node and does precede the first book.
+    assert_eq!(count("//book[1]/preceding::comment()"), 1);
+}
+
+/// Attribute nodes are on neither axis, however they are positioned.
+///
+/// They sit between their element and its children in document order,
+/// so an index comparison alone would sweep them in.
+#[test]
+fn attributes_are_on_neither_following_nor_preceding() {
+    // Before `book[2]`, excluding its ancestors: the comment,
+    // `book[1]`, its `title` and `year`, and their two text nodes --
+    // six. Were attributes included, `library/@count` and `book[1]`'s
+    // `@id` and `@lang` would make it nine.
+    assert_eq!(count("//book[2]/preceding::node()"), 6);
+    // After it, excluding its descendants: `book[3]`, its `title` and
+    // `year`, their two text nodes, and the processing instruction --
+    // six again. `book[3]`'s two attributes would make it eight.
+    assert_eq!(count("//book[2]/following::node()"), 6);
+    // The attribute axis still reaches them, of course.
+    assert_eq!(count("//book[2]/attribute::*"), 2);
+}
+
+/// Both axes are reachable by their full names only; there is no
+/// abbreviation for either.
+#[test]
+fn following_and_preceding_have_no_abbreviation() {
+    assert_eq!(count("//book[2]/following::book"), 1);
+    assert_eq!(count("//book[2]/preceding::book"), 1);
+    // `//` is `descendant-or-self`, not `following`.
+    assert_eq!(count("//book"), 3);
+}

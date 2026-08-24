@@ -638,6 +638,8 @@ fn axis_from_name(n: &str) -> Option<Axis> {
         "attribute" => Axis::Attribute,
         "following-sibling" => Axis::FollowingSibling,
         "preceding-sibling" => Axis::PrecedingSibling,
+        "following" => Axis::Following,
+        "preceding" => Axis::Preceding,
         _ => return None,
     })
 }
