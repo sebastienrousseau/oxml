@@ -23,6 +23,55 @@ pub struct XPathError {
     pub offset: usize,
 }
 
+/// Every function `XPath` 1.0 defines, section 4, with the number of
+/// arguments each accepts as `(name, minimum, maximum)`.
+///
+/// The evaluator matches on these names; the parser checks against the
+/// same list so an expression naming anything else, or passing the
+/// wrong number of arguments, fails to compile instead of quietly
+/// evaluating to something plausible. There are no extension
+/// functions, so the two sets are the same by construction.
+///
+/// Arity matters as much as the name. A missing argument used to read
+/// as an empty string, so `starts-with("abc")` answered **true** --
+/// every string starts with the empty string -- and
+/// `translate("abc", "ab")` silently deleted the characters it had no
+/// replacement for. Both are wrong answers that look like real ones.
+const FUNCTIONS: &[(&str, usize, usize)] = &[
+    // Node-set
+    ("last", 0, 0),
+    ("position", 0, 0),
+    ("count", 1, 1),
+    ("id", 1, 1),
+    ("local-name", 0, 1),
+    ("namespace-uri", 0, 1),
+    ("name", 0, 1),
+    // String
+    ("string", 0, 1),
+    // `concat` is the one variadic function: two arguments or more.
+    ("concat", 2, usize::MAX),
+    ("starts-with", 2, 2),
+    ("contains", 2, 2),
+    ("substring-before", 2, 2),
+    ("substring-after", 2, 2),
+    ("substring", 2, 3),
+    ("string-length", 0, 1),
+    ("normalize-space", 0, 1),
+    ("translate", 3, 3),
+    // Boolean
+    ("boolean", 1, 1),
+    ("not", 1, 1),
+    ("true", 0, 0),
+    ("false", 0, 0),
+    ("lang", 1, 1),
+    // Number
+    ("number", 0, 1),
+    ("sum", 1, 1),
+    ("floor", 1, 1),
+    ("ceiling", 1, 1),
+    ("round", 1, 1),
+];
+
 impl core::fmt::Display for XPathError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "at {}: {}", self.offset, self.message)
@@ -348,6 +397,19 @@ impl P<'_> {
                 }
                 if !self.eat(")") {
                     return Err(self.err("expected ) after arguments"));
+                }
+                // An unknown name is rejected here rather than left to
+                // evaluate to an empty node-set. Returning empty makes
+                // a misspelling indistinguishable from a document that
+                // genuinely has no match -- the caller gets a wrong
+                // answer with nothing attached to say so.
+                let Some(&(_, min, max)) =
+                    FUNCTIONS.iter().find(|(f, _, _)| *f == name)
+                else {
+                    return Err(self.err("unknown function"));
+                };
+                if args.len() < min || args.len() > max {
+                    return Err(self.err("wrong number of arguments"));
                 }
                 return Ok(Expr::Function { name, args });
             }

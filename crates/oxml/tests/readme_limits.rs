@@ -111,3 +111,58 @@ fn the_table_documents_every_field() {
         );
     }
 }
+
+/// The README's list of `XPath` functions must be the functions that
+/// exist.
+///
+/// The list previously announced "25 functions" and then named 21, of
+/// which the library implemented 21 — three different numbers, none
+/// checked against another. Six functions the specification requires
+/// were absent from all three and from the tests, and compiled to an
+/// empty result rather than an error, so nothing failed.
+#[test]
+fn the_readme_lists_every_xpath_function_and_no_others() {
+    let readme = include_str!("../README.md");
+    let start = readme
+        .find("- All 27 functions: ")
+        .expect("the function list is in the README");
+    let bullet: String = readme[start..]
+        .lines()
+        .take_while(|l| !l.starts_with("- Arithmetic"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let listed: Vec<&str> = bullet.split('`').skip(1).step_by(2).collect();
+
+    assert_eq!(
+        listed.len(),
+        27,
+        "the README names {} functions but says 27: {listed:?}",
+        listed.len()
+    );
+
+    // Every name listed must compile as a call at *some* arity, and
+    // anything not listed at none. Trying each arity rather than
+    // asserting a particular one keeps the specified argument counts in
+    // one place -- the parser's table -- instead of restating them here
+    // where they could drift.
+    for name in &listed {
+        assert!(
+            compiles_at_some_arity(name),
+            "README lists `{name}` but no call to it compiles"
+        );
+    }
+    assert!(
+        !compiles_at_some_arity("definitely-not-a-function"),
+        "an unlisted name must not compile at any arity"
+    );
+}
+
+/// Whether a call to `name` compiles with anywhere from zero to three
+/// arguments.
+fn compiles_at_some_arity(name: &str) -> bool {
+    (0..=3).any(|n| {
+        let args = ["'a'"; 3][..n].join(",");
+        oxml::XPath::compile(&format!("{name}({args})")).is_ok()
+    })
+}

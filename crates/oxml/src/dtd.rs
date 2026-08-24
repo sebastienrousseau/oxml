@@ -95,12 +95,35 @@ pub(crate) struct Dtd {
     ///
     /// [`ExternalSource`]: crate::external::ExternalSource
     pub(crate) external_subset: Option<(String, Option<String>)>,
+    /// Attributes declared with type `ID`, as element name to the
+    /// attribute names on it that are ID-typed.
+    ///
+    /// `XPath`'s `id()` selects "the element with the unique ID", and
+    /// what makes an attribute an ID is this declaration -- not being
+    /// spelled `id`. Without keeping it, `id()` has nothing to match
+    /// against and every call answers the empty node-set.
+    ///
+    /// Keyed by the names as *written*, because that is what the
+    /// document body will present too; neither side is namespace
+    /// resolved at this point.
+    pub(crate) id_attributes: BTreeMap<String, Vec<String>>,
 }
 
 impl Dtd {
     /// The replacement text of a general entity, if it has one.
     pub(crate) fn entity(&self, name: &str) -> Option<&EntityValue> {
         self.general.get(name)
+    }
+
+    /// Whether `attribute` on `element` was declared with type `ID`.
+    pub(crate) fn is_id_attribute(
+        &self,
+        element: &str,
+        attribute: &str,
+    ) -> bool {
+        self.id_attributes
+            .get(element)
+            .is_some_and(|names| names.iter().any(|n| n == attribute))
     }
 }
 
@@ -717,9 +740,9 @@ impl<'a> DtdParser<'a> {
         }
     }
 
-    fn parse_attlist_decl(&mut self, dtd: &Dtd) -> Result<(), DtdError> {
+    fn parse_attlist_decl(&mut self, dtd: &mut Dtd) -> Result<(), DtdError> {
         self.require_ws()?;
-        let _ = self.name()?;
+        let element = self.name()?;
         loop {
             self.skip_ws();
             if self.peek() == Some(b'>') {
@@ -730,28 +753,40 @@ impl<'a> DtdParser<'a> {
                 return Err((self.pos, "unterminated attribute list"));
             }
             // AttDef: Name AttType DefaultDecl
-            let _ = self.name()?;
+            let attribute = self.name()?;
             self.require_ws()?;
-            self.parse_att_type()?;
+            let is_id = self.parse_att_type()?;
             self.require_ws()?;
             let _ = self.parse_default_decl(dtd)?;
+            if is_id {
+                let names =
+                    dtd.id_attributes.entry(element.to_owned()).or_default();
+                // A repeated declaration of the same attribute is
+                // ignored rather than stored twice, matching how a
+                // duplicate entity declaration is treated.
+                if !names.iter().any(|n| n == attribute) {
+                    names.push(attribute.to_owned());
+                }
+            }
         }
     }
 
-    fn parse_att_type(&mut self) -> Result<(), DtdError> {
+    /// Parse an `AttType`, reporting whether it was `ID`.
+    fn parse_att_type(&mut self) -> Result<bool, DtdError> {
         if self.peek() == Some(b'(') {
-            return self.parse_enumeration(false);
+            return self.parse_enumeration(false).map(|()| false);
         }
         let kw = self.name()?;
         match kw {
-            "CDATA" | "ID" | "IDREF" | "IDREFS" | "ENTITY" | "ENTITIES"
-            | "NMTOKEN" | "NMTOKENS" => Ok(()),
+            "ID" => Ok(true),
+            "CDATA" | "IDREF" | "IDREFS" | "ENTITY" | "ENTITIES"
+            | "NMTOKEN" | "NMTOKENS" => Ok(false),
             "NOTATION" => {
                 self.require_ws()?;
                 if self.peek() != Some(b'(') {
                     return Err((self.pos, "NOTATION needs a name list"));
                 }
-                self.parse_enumeration(true)
+                self.parse_enumeration(true).map(|()| false)
             }
             _ => Err((self.pos, "unknown attribute type")),
         }

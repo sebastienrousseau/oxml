@@ -269,11 +269,14 @@ Two architectural choices motivate the design:
 - Node tests: name, `*`, `text()`, `comment()`, `node()`
 - Predicates, including positional (`[1]`) and existential comparison
 - All four value types with the specified conversions
-- 25 functions: `count`, `sum`, `position`, `last`, `string`, `number`,
-  `boolean`, `not`, `true`, `false`, `concat`, `contains`,
-  `starts-with`, `substring`, `string-length`, `normalize-space`,
-  `local-name`, `namespace-uri`, `floor`, `ceiling`, `round`, and
-  arithmetic, comparison, boolean and union operators
+- All 27 functions: `last`, `position`, `count`, `id`, `local-name`,
+  `namespace-uri`, `name`, `string`, `concat`, `starts-with`,
+  `contains`, `substring-before`, `substring-after`, `substring`,
+  `string-length`, `normalize-space`, `translate`, `boolean`, `not`,
+  `true`, `false`, `lang`, `number`, `sum`, `floor`, `ceiling`, `round`
+- Arithmetic, comparison, boolean and union operators
+- An unknown function name, or the wrong number of arguments, is a
+  compile error rather than a plausible-looking empty result
 - Compiled once, evaluated many times; `Send + Sync`
 
 **Safety and limits**
