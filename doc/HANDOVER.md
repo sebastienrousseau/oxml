@@ -14,7 +14,9 @@ committed and pushed; nothing is half-written.
 | oxml-mcp / -lsp / -wasm | `main` | toolchain pin only |
 | xmlschema | PR #5 | toolchain pin (`master` is protected) |
 
-All six crates are published at **0.0.3**. Nothing above is released.
+All six crates are published at **0.0.3**. `oxml` on this branch is
+versioned **0.0.4** and unpublished; the satellites stay at 0.0.3 until
+it is. See [RELEASING.md](RELEASING.md) for why the order matters.
 
 ## FIRST: finish CI on PR #1
 

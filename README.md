@@ -66,14 +66,14 @@
 
 ```toml
 [dependencies]
-oxml = "0.0.3"
+oxml = "0.0.4"
 ```
 
 Parsing only, without the XPath engine:
 
 ```toml
 [dependencies]
-oxml = { version = "0.0.3", default-features = false, features = ["std"] }
+oxml = { version = "0.0.4", default-features = false, features = ["std"] }
 ```
 
 From source:
