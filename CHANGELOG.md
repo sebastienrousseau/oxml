@@ -10,6 +10,45 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [Unreleased]
+
+### Added
+
+- **The six `XPath` 1.0 functions that were missing**: `substring-before`,
+  `substring-after`, `translate`, `name`, `id` and `lang`. The library
+  now implements all 27 the specification defines.
+- **`Document::prefix`**, the prefix an interned name was written with,
+  and **`Document::element_by_id`**, the element carrying an `ID`-typed
+  attribute with a given value.
+
+### Fixed
+
+- **An unknown function is now a compile error.** It used to compile and
+  evaluate to an empty node-set, so `substring-bfore(...)` -- or any of
+  the six functions above -- returned "no matches" rather than an error.
+  A caller could not distinguish a misspelled function, an unimplemented
+  one, and a document that genuinely had no match.
+- **The wrong number of arguments is now a compile error.** Arity was
+  not checked, so a missing argument read as the empty string and the
+  call returned something plausible: `starts-with("abc")` answered
+  **true**, because every string starts with the empty string, and
+  `translate("abc", "ab")` returned `"c"`, having silently deleted the
+  characters it had no replacement for.
+- **`name()` reports the prefix.** Names are interned by expanded name,
+  which discards the prefix, and namespace declarations are not retained
+  as attributes, so there was nothing left to rebuild a QName from.
+  Interned names now carry the prefix they were written with.
+- **Attributes are compared for duplication by expanded name, not by
+  interned id.** Making ids prefix-sensitive would otherwise have
+  admitted `p:x` and `q:x` with both prefixes bound to one namespace,
+  which Namespaces in XML forbids.
+
+### Changed
+
+- `NameId` equality now means the names were written identically,
+  prefix included -- not that they denote the same expanded name.
+  Compare `Document::name` values where that is the question.
+
 ## [0.0.4] - 2026-08-24
 
 ### Added

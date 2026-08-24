@@ -96,6 +96,11 @@ name = "decode_bytes"
 path = "examples/decode_bytes.rs"
 required-features = ["std"]
 
+[[example]]
+name = "names_and_ids"
+path = "examples/names_and_ids.rs"
+required-features = ["std", "xpath"]
+
 [[test]]
 name = "doc_examples"
 path = "tests/doc_examples.rs"

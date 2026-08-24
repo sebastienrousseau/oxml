@@ -173,6 +173,40 @@ fn duplicate_attributes_are_rejected() {
     assert!(matches!(err.kind, ErrorKind::DuplicateAttribute(_)));
 }
 
+/// Two prefixes bound to one namespace give two attributes the same
+/// expanded name, which Namespaces in XML forbids even though the two
+/// are spelled differently.
+///
+/// Only the W3C suite covered this, so it survived a change that made
+/// interned name ids prefix-sensitive: the ids stopped being equal and
+/// an id comparison stopped seeing the collision. Names, not ids,
+/// decide whether two attributes are the same attribute.
+#[test]
+fn attributes_colliding_only_after_expansion_are_rejected() {
+    let err = parse(r#"<a xmlns:p="urn:u" xmlns:q="urn:u" p:x="1" q:x="2"/>"#)
+        .expect_err("same expanded name");
+    assert!(
+        matches!(err.kind, ErrorKind::DuplicateAttribute(_)),
+        "got {:?}",
+        err.kind
+    );
+
+    // The mirror image must still parse: same local name, genuinely
+    // different namespaces.
+    assert!(
+        parse(r#"<a xmlns:p="urn:u" xmlns:q="urn:v" p:x="1" q:x="2"/>"#)
+            .is_ok(),
+        "different namespaces are different attributes"
+    );
+
+    // An unprefixed attribute is in no namespace even when a default
+    // namespace is declared, so it cannot collide with a prefixed one.
+    assert!(
+        parse(r#"<a xmlns="urn:u" xmlns:p="urn:u" x="1" p:x="2"/>"#).is_ok(),
+        "an unprefixed attribute is in no namespace"
+    );
+}
+
 #[test]
 fn content_after_the_root_element_is_rejected() {
     let err = parse("<a/><b/>").expect_err("two roots");

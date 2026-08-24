@@ -465,6 +465,45 @@ fn compare_equality(doc: &Document, l: &Value, r: &Value) -> bool {
     }
 }
 
+/// `substring(string, start, length?)`.
+///
+/// The specification defines the result by *position*, not by a start
+/// and a count: it keeps every character whose 1-based position `p`
+/// satisfies
+///
+/// ```text
+/// p >= round(start)  and  p < round(start) + round(length)
+/// ```
+///
+/// Clamping the start to 1 and then taking `length` characters is a
+/// different function -- it gives `"123"` for the specification's own
+/// example, `substring("12345", 0, 3)`, which must be `"12"`, because
+/// positions 0 and below still consume part of the window.
+fn substring(s: &str, start: f64, length: Option<f64>) -> Value {
+    let start = xpath_round(start);
+    let end = match length {
+        Some(length) => {
+            let length = xpath_round(length);
+            if length.is_nan() || start.is_nan() {
+                f64::NAN
+            } else {
+                start + length
+            }
+        }
+        None => f64::INFINITY,
+    };
+    Value::String(
+        s.chars()
+            .enumerate()
+            .filter(|(i, _)| {
+                let p = *i as f64 + 1.0;
+                p >= start && p < end
+            })
+            .map(|(_, c)| c)
+            .collect(),
+    )
+}
+
 /// Dispatch a function call.
 ///
 /// Split across two functions purely for length: the node and numeric
@@ -499,6 +538,26 @@ fn eval_function(
             Value::Number(arg(0).map_or(f64::NAN, |v| v.to_number(doc)))
         }
         "boolean" => Value::Boolean(arg(0).is_some_and(|v| v.to_boolean())),
+        _ => eval_string_function(doc, name, args, ctx, position, size),
+    }
+}
+
+/// The string half of the function library.
+///
+/// Split out of [`eval_function`] purely for length, as the node and
+/// numeric families are.
+fn eval_string_function(
+    doc: &Document,
+    name: &str,
+    args: &[Expr],
+    ctx: NodeId,
+    position: usize,
+    size: usize,
+) -> Value {
+    let arg = |i: usize| -> Option<Value> {
+        args.get(i).map(|a| eval(doc, a, ctx, position, size))
+    };
+    match name {
         "concat" => {
             let mut s = String::new();
             for a in args {
@@ -527,41 +586,62 @@ fn eval_function(
                 .map_or_else(|| string_value(doc, ctx), |v| v.to_str(doc));
             Value::String(s.split_whitespace().collect::<Vec<_>>().join(" "))
         }
-        "substring" => {
+        "substring" => substring(
+            &arg(0).map(|v| v.to_str(doc)).unwrap_or_default(),
+            arg(1).map_or(1.0, |v| v.to_number(doc)),
+            arg(2).map(|v| v.to_number(doc)),
+        ),
+        // All three are defined over *characters*, not bytes, but
+        // `find` returns a byte offset and slicing at it is therefore
+        // safe: a match of `needle` inside `haystack` always begins and
+        // ends on a character boundary.
+        "substring-before" => {
+            let haystack = arg(0).map(|v| v.to_str(doc)).unwrap_or_default();
+            let needle = arg(1).map(|v| v.to_str(doc)).unwrap_or_default();
+            Value::String(
+                haystack
+                    .find(&needle)
+                    .map(|at| haystack[..at].to_owned())
+                    .unwrap_or_default(),
+            )
+        }
+        "substring-after" => {
+            let haystack = arg(0).map(|v| v.to_str(doc)).unwrap_or_default();
+            let needle = arg(1).map(|v| v.to_str(doc)).unwrap_or_default();
+            Value::String(
+                haystack
+                    .find(&needle)
+                    .map(|at| haystack[at + needle.len()..].to_owned())
+                    .unwrap_or_default(),
+            )
+        }
+        "translate" => {
             let s = arg(0).map(|v| v.to_str(doc)).unwrap_or_default();
-            let chars: Vec<char> = s.chars().collect();
-            let start = xpath_round(arg(1).map_or(1.0, |v| v.to_number(doc)));
-
-            // The specification defines the result by *position*, not
-            // by a start and a count: it keeps every character whose
-            // 1-based position p satisfies
-            //     p >= round(start)  and  p < round(start) + round(len)
-            // Clamping the start to 1 and then taking `len` characters
-            // is a different function — it gives "123" for the
-            // specification's own example, `substring("12345", 0, 3)`,
-            // which must be "12", because positions 0 and below still
-            // consume part of the window.
-            let end = match arg(2) {
-                Some(v) => {
-                    let len = xpath_round(v.to_number(doc));
-                    if len.is_nan() || start.is_nan() {
-                        f64::NAN
-                    } else {
-                        start + len
-                    }
-                }
-                None => f64::INFINITY,
-            };
-
-            let out: String = chars
-                .into_iter()
-                .enumerate()
-                .filter(|(i, _)| {
-                    let p = *i as f64 + 1.0;
-                    p >= start && p < end
-                })
-                .map(|(_, c)| c)
+            let from: Vec<char> = arg(1)
+                .map(|v| v.to_str(doc))
+                .unwrap_or_default()
+                .chars()
                 .collect();
+            let to: Vec<char> = arg(2)
+                .map(|v| v.to_str(doc))
+                .unwrap_or_default()
+                .chars()
+                .collect();
+            let mut out = String::with_capacity(s.len());
+            for c in s.chars() {
+                match from.iter().position(|&f| f == c) {
+                    // Shorter replacement string than search string:
+                    // the character is *removed*, not left alone. A
+                    // repeated character in the search string takes its
+                    // first position, which `position` already gives.
+                    Some(i) => {
+                        if let Some(&r) = to.get(i) {
+                            out.push(r);
+                        }
+                    }
+                    None => out.push(c),
+                }
+            }
             Value::String(out)
         }
         _ => eval_node_function(doc, name, args, ctx, position, size),
@@ -594,6 +674,99 @@ fn name_parts(doc: &Document, id: NodeId) -> Option<(&str, Option<&str>)> {
         }
         NodeKind::Root | NodeKind::Text(_) | NodeKind::Comment(_) => None,
     }
+}
+
+/// The namespace `xml:` is bound to by specification, and so the one
+/// `xml:lang` carries once names are resolved.
+const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
+
+/// The value of an attribute on a node, by expanded name, without
+/// building the intermediate `Vec` that [`Document::attributes`]
+/// returns.
+fn attribute_by_name<'d>(
+    doc: &'d Document,
+    id: NodeId,
+    namespace: Option<&str>,
+    local: &str,
+) -> Option<&'d str> {
+    doc.attribute_nodes(id).iter().find_map(|&a| {
+        let NodeKind::Attr(attribute) = doc.kind(a)? else {
+            return None;
+        };
+        let name = doc.name(attribute.name)?;
+        (name.local == local && name.namespace.as_deref() == namespace)
+            .then_some(attribute.value.as_str())
+    })
+}
+
+/// The `xml:lang` in scope for a node: the one on the node itself, or
+/// failing that the one on its nearest ancestor that carries it.
+///
+/// `xml:lang` is defined to be inherited, so reading only the context
+/// node would answer `false` for every element below the one that
+/// declares the language -- which is nearly always where the text is.
+fn in_scope_lang(doc: &Document, id: NodeId) -> Option<&str> {
+    let mut at = id;
+    loop {
+        if let Some(value) =
+            attribute_by_name(doc, at, Some(XML_NAMESPACE), "lang")
+        {
+            return Some(value);
+        }
+        at = doc.parent(at)?;
+    }
+}
+
+/// `lang(s)`: whether the in-scope language is `s`, or is `s` followed
+/// by `-` and a subtag, so `lang("en")` is true for `en-GB`.
+///
+/// Language tags are ASCII and compared without regard to case.
+fn lang_matches(doc: &Document, ctx: NodeId, want: &str) -> bool {
+    let Some(have) = in_scope_lang(doc, ctx) else {
+        return false;
+    };
+    if have.eq_ignore_ascii_case(want) {
+        return true;
+    }
+    // A suffix only counts when a `-` separates it, so `lang("e")` is
+    // false for `en`. Taking the prefix with `get` rather than slicing
+    // keeps a multi-byte character straddling the boundary from
+    // panicking, though the `-` test already implies a boundary.
+    have.as_bytes().get(want.len()) == Some(&b'-')
+        && have
+            .get(..want.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(want))
+}
+
+/// The `QName` `name()` reports: the prefix the name was written
+/// with, a colon, then the local part -- or just the local part when
+/// the name had no prefix.
+///
+/// A processing instruction's name is its target, which never has a
+/// prefix. Everything without an expanded name answers the empty
+/// string, as `local-name` does.
+fn qualified_name(doc: &Document, id: NodeId) -> Option<String> {
+    let name_id = match doc.kind(id)? {
+        NodeKind::Element { name, .. } => *name,
+        NodeKind::Attr(attribute) => attribute.name,
+        NodeKind::ProcessingInstruction { target, .. } => {
+            return Some(target.clone());
+        }
+        NodeKind::Root | NodeKind::Text(_) | NodeKind::Comment(_) => {
+            return None;
+        }
+    };
+    let local = &doc.name(name_id)?.local;
+    Some(match doc.prefix(name_id) {
+        Some(prefix) => {
+            let mut out = String::with_capacity(prefix.len() + 1 + local.len());
+            out.push_str(prefix);
+            out.push(':');
+            out.push_str(local);
+            out
+        }
+        None => local.clone(),
+    })
 }
 
 fn node_argument(
@@ -659,6 +832,44 @@ fn eval_node_function(
                 .map(str::to_owned)
                 .unwrap_or_default(),
         ),
+        "lang" => Value::Boolean(lang_matches(
+            doc,
+            ctx,
+            &arg(0).map(|v| v.to_str(doc)).unwrap_or_default(),
+        )),
+        "name" => Value::String(
+            node_argument(doc, args, ctx, position, size)
+                .and_then(|n| qualified_name(doc, n))
+                .unwrap_or_default(),
+        ),
+        // `id()` takes a whitespace-separated list of IDs, not one
+        // ID. Given a node-set it uses each node's string-value as such
+        // a list; given anything else, its string-value. The result is
+        // a node-set, so it must come back in document order and
+        // without duplicates -- ids are arena indices assigned in
+        // document order, so sorting by index gives exactly that.
+        "id" => {
+            let mut out = Vec::new();
+            let collect = |list: &str, out: &mut Vec<NodeId>| {
+                for token in list.split_whitespace() {
+                    if let Some(found) = doc.element_by_id(token) {
+                        out.push(found);
+                    }
+                }
+            };
+            match arg(0) {
+                Some(Value::NodeSet(nodes)) => {
+                    for node in nodes {
+                        collect(&string_value(doc, node), &mut out);
+                    }
+                }
+                Some(other) => collect(&other.to_str(doc), &mut out),
+                None => {}
+            }
+            out.sort_unstable();
+            out.dedup();
+            Value::NodeSet(out)
+        }
         "sum" => {
             let total = arg(0)
                 .and_then(|v| v.nodes().map(<[NodeId]>::to_vec))
@@ -679,9 +890,11 @@ fn eval_node_function(
         "round" => Value::Number(xpath_round(
             arg(0).map_or(f64::NAN, |v| v.to_number(doc)),
         )),
-        // An unknown function yields an empty node-set rather than
-        // panicking: an expression naming a function this engine does
-        // not implement should degrade, not abort a caller's program.
+        // Unreachable: the parser checks every function name against
+        // `FUNCTIONS` and refuses to compile an expression naming
+        // anything else, so no unknown name survives to be evaluated.
+        // An empty node-set rather than a panic keeps that a
+        // total function even if the two lists ever drift.
         _ => Value::NodeSet(Vec::new()),
     }
 }

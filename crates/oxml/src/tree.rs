@@ -13,6 +13,7 @@
 //! [`Document`] that issued it. Using one against a different document
 //! is a logic error; the accessors return `None` rather than panicking.
 
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -139,6 +140,12 @@ pub enum NodeKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NameId(pub(crate) u32);
 
+// Two ids being equal means the names were written identically, prefix
+// included -- it does **not** mean they are the same name. `p:a` and
+// `q:a` with both prefixes bound to one namespace are the same expanded
+// name and get different ids. Compare `Document::name` values, not ids,
+// wherever the question is whether two names refer to the same thing.
+
 #[derive(Debug, Clone)]
 pub(crate) struct Node {
     pub(crate) kind: NodeKind,
@@ -161,6 +168,17 @@ pub struct Document {
     pub(crate) nodes: Vec<Node>,
     /// Every distinct element name in the document, once.
     pub(crate) names: Vec<ExpandedName>,
+    /// The prefix each interned name was written with, parallel to
+    /// `names`.
+    ///
+    /// Kept separately rather than added to [`ExpandedName`] because a
+    /// prefix is not part of a name's identity -- two prefixes bound to
+    /// one namespace name the same thing -- but `name()` in `XPath` has
+    /// to report a usable `QName`, and resolution discards the prefix.
+    /// Namespace declarations are not retained as attributes (they are
+    /// namespace nodes, not attributes), so there is nothing else left
+    /// to reconstruct it from.
+    pub(crate) name_prefixes: Vec<Option<String>>,
     /// All attribute lists, concatenated.
     pub(crate) attr_ids: Vec<NodeId>,
     /// All child lists, concatenated. Each node's slice is described by
@@ -173,6 +191,14 @@ pub struct Document {
     /// arrives, at which point they are moved into `child_ids` as a
     /// contiguous block.
     pub(crate) scratch: Vec<NodeId>,
+    /// Elements carrying an `ID`-typed attribute, by that attribute's
+    /// value.
+    ///
+    /// Built while parsing rather than searched for on demand, because
+    /// what counts as an ID is a DTD declaration and the DTD is not
+    /// kept past parsing. Empty for the overwhelming majority of
+    /// documents, which declare no `ID` attribute at all.
+    pub(crate) ids: BTreeMap<String, NodeId>,
 }
 
 impl Document {
@@ -193,9 +219,11 @@ impl Document {
         Self {
             nodes: v,
             names: Vec::new(),
+            name_prefixes: Vec::new(),
             attr_ids: Vec::new(),
             child_ids: Vec::with_capacity(nodes),
             scratch: Vec::new(),
+            ids: BTreeMap::new(),
         }
     }
 
@@ -322,6 +350,26 @@ impl Document {
     #[must_use]
     pub fn name(&self, id: NameId) -> Option<&ExpandedName> {
         self.names.get(id.0 as usize)
+    }
+
+    /// The element whose `ID`-typed attribute has this value.
+    ///
+    /// An attribute is an ID because the DTD declared it as one, not
+    /// because it is spelled `id`; a document with no DTD has no IDs
+    /// and this always answers `None`.
+    #[must_use]
+    pub fn element_by_id(&self, value: &str) -> Option<NodeId> {
+        self.ids.get(value).copied()
+    }
+
+    /// The prefix an interned name was written with, if it had one.
+    ///
+    /// `None` covers both an unprefixed name and an id from another
+    /// document. Use it with [`Document::name`] to rebuild the `QName`
+    /// as it appeared in the source.
+    #[must_use]
+    pub fn prefix(&self, id: NameId) -> Option<&str> {
+        self.name_prefixes.get(id.0 as usize)?.as_deref()
     }
 
     /// The ids of an element's attribute nodes.

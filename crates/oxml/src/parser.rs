@@ -621,17 +621,38 @@ impl<'a> Parser<'a> {
         // before any node is created — otherwise a rejected element
         // would already be in the arena.
         let mut resolved: Vec<Attribute> = Vec::with_capacity(raw_attrs.len());
+        // Values of this element's `ID`-typed attributes, held until
+        // the element node exists to point them at.
+        let mut id_values: Vec<String> = Vec::new();
         for (raw, value) in raw_attrs {
             if raw == "xmlns" || raw.starts_with("xmlns:") {
                 continue;
             }
             let an = self.intern_qname(raw, false, tag_start)?;
-            if resolved.iter().any(|a| a.name == an) {
+            // Compared by *expanded* name, not by id. Namespaces in
+            // XML forbids two attributes with the same expanded name
+            // however they are spelled, so `p:a` and `q:a` with `p` and
+            // `q` bound to one namespace collide. Ids no longer settle
+            // that on their own: they distinguish prefixes, so the two
+            // get different ids and an id comparison would let the pair
+            // through.
+            let expanded = &self.doc.names[an.0 as usize];
+            if resolved
+                .iter()
+                .any(|a| self.doc.names[a.name.0 as usize] == *expanded)
+            {
                 self.ns.pop_scope();
                 return Err(Error::new(
                     ErrorKind::DuplicateAttribute(raw.to_owned()),
                     tag_start,
                 ));
+            }
+            if self
+                .dtd
+                .as_ref()
+                .is_some_and(|d| d.is_id_attribute(qname, raw))
+            {
+                id_values.push(value.clone());
             }
             resolved.push(Attribute { name: an, value });
         }
@@ -654,6 +675,14 @@ impl<'a> Parser<'a> {
             let id = self.doc.push_detached(NodeKind::Attr(at), node);
             self.doc.attr_ids.push(id);
         }
+        for value in id_values {
+            // Two elements sharing an ID makes the document invalid,
+            // which this parser does not enforce. `id()` still has to
+            // answer with one node, so the first declaration wins
+            // rather than the last silently replacing it.
+            let _ = self.doc.ids.entry(value).or_insert(node);
+        }
+
         let len = self.doc.attr_ids.len() - start;
         if let Some(NodeKind::Element { attributes, .. }) =
             self.doc.kind_mut(node)
@@ -1085,13 +1114,23 @@ impl<'a> Parser<'a> {
         is_element: bool,
         offset: usize,
     ) -> Result<crate::tree::NameId> {
+        let prefix = qname.split_once(':').map(|(p, _)| p);
         {
             let (local, namespace) =
                 self.resolve_parts(qname, is_element, offset)?;
             if let Some(candidates) = self.name_index.get(local) {
                 for &id in candidates {
+                    // The prefix has to match as well as the namespace.
+                    // Two prefixes bound to one namespace expand to the
+                    // same name, so keying on the expansion alone gave
+                    // them one id -- and then `name()` had to report a
+                    // single prefix for both, which is wrong for one of
+                    // them. Distinct prefixes get distinct ids; the
+                    // cost is one extra entry per prefix actually used.
                     if self.doc.names[id as usize].namespace.as_deref()
                         == namespace
+                        && self.doc.name_prefixes[id as usize].as_deref()
+                            == prefix
                     {
                         return Ok(crate::tree::NameId(id));
                     }
@@ -1100,7 +1139,7 @@ impl<'a> Parser<'a> {
         }
         // Cold path: a name this document has not used before.
         let name = self.expand(qname, is_element, offset)?;
-        Ok(self.intern(&name))
+        Ok(self.intern(&name, prefix))
     }
 
     fn expand(
@@ -1334,16 +1373,23 @@ impl<'a> Parser<'a> {
     /// Names repeat heavily -- a catalogue of 2,000 items has a handful
     /// of distinct element names -- so storing an `ExpandedName` per
     /// element allocated thousands of strings to hold a few values.
-    fn intern(&mut self, name: &ExpandedName) -> crate::tree::NameId {
+    fn intern(
+        &mut self,
+        name: &ExpandedName,
+        prefix: Option<&str>,
+    ) -> crate::tree::NameId {
         if let Some(candidates) = self.name_index.get(name.local.as_str()) {
             for &id in candidates {
-                if self.doc.names[id as usize].namespace == name.namespace {
+                if self.doc.names[id as usize].namespace == name.namespace
+                    && self.doc.name_prefixes[id as usize].as_deref() == prefix
+                {
                     return crate::tree::NameId(id);
                 }
             }
         }
         let id = u32::try_from(self.doc.names.len()).unwrap_or(u32::MAX);
         self.doc.names.push(name.clone());
+        self.doc.name_prefixes.push(prefix.map(str::to_owned));
         self.name_index
             .entry(name.local.clone())
             .or_default()
