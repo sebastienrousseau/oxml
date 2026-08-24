@@ -1,0 +1,7 @@
+# Downloaded at test time, never vendored.
+#
+# The suite ships no LICENSE file — the terms live only in the W3C FAQ,
+# and James Clark's portion (xmltest/) explicitly forbids redistribution
+# in modified form. Downloading rather than vendoring keeps us clear of
+# that entirely, and keeps 15 MB of third-party data out of the repo.
+data/

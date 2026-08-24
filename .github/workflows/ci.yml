@@ -23,7 +23,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Test
         run: cargo test --all-features
@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -65,6 +65,12 @@ jobs:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
       - name: Build at the declared MSRV
+        # `rust-toolchain.toml` pins 1.98.0 and would override the MSRV
+        # toolchain this job just installed, quietly turning the check
+        # into "does it build on 1.98" — which it does, and which proves
+        # nothing about the version the manifest claims.
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
         run: cargo build --all-features
 
   unsafe:
@@ -88,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       # A short measurement: this proves the benchmarks still run and
       # produce numbers, without pretending a shared runner gives
@@ -101,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Every example must run
         run: |
@@ -116,14 +122,243 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
+      - name: Cache the conformance suite
+        uses: actions/cache@v4
+        with:
+          path: conformance/data
+          key: xmlconf-xmlts20130923-v1
+      # The W3C suite is part of the test corpus, not an extra. Without
+      # it `dtd.rs` and `encoding.rs` are barely executed — 53% and 5%
+      # respectively — and the figure measures which tests were
+      # available rather than what the library does.
+      - run: cargo run -p oxml-conformance --bin download
+      # Only the two `main()` entry points are excluded. They shell out
+      # to the network and to `tar`, so covering them would mean
+      # asserting on a 15 MB download rather than on any logic of ours.
+      # Everything else in the harness is included on purpose: it
+      # decides whether a conformance test passed, and a scoring bug
+      # would misreport the library's own headline numbers.
+      #
       # Every defect fixed in 0.0.3 was found by raising coverage, not
       # by reading the code. The floor keeps that from eroding: a new
       # branch nothing exercises fails here rather than shipping.
       - run: >
-          cargo llvm-cov --all-features --fail-under-lines 95
-          --ignore-filename-regex 'builds/cargo/package'
+          cargo llvm-cov --workspace --all-features --fail-under-lines 95
+          --ignore-filename-regex 'builds/cargo/package|conformance/src/bin/'
+
+  example-coverage:
+    name: Examples cover the public API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      # The README says the examples cover the public API. Left to
+      # itself that claim decays quietly -- a function added in one
+      # commit and documented in none looks, from outside, exactly like
+      # one the examples exercise. This runs them under coverage and
+      # checks the execution count on every `pub fn`, so the claim is
+      # measured rather than asserted. Mentioning a function in a
+      # comment does not count; calling it does.
+      - run: python3 scripts/check-example-coverage.py
+      # The root README is what GitHub shows; the crate README is what
+      # docs.rs shows and the only one compiled as doctests. When they
+      # drift it is always the root one that goes stale, and its
+      # doctests stay green because they run against the other file.
+      - run: ./scripts/check-readmes-match.sh
+      # Code blocks under doc/ are compiled as tests. Regenerate and
+      # diff, so editing a document without re-running the script
+      # fails here rather than leaving a block unverified.
+      - run: |
+          python3 scripts/generate-doc-tests.py
+          git diff --exit-code crates/oxml/tests/doc_examples.rs \
+            || { echo "::error::doc/ changed; re-run scripts/generate-doc-tests.py"; exit 1; }
+
+  no-std:
+    name: no_std (bare metal)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - thumbv7em-none-eabihf
+          - riscv32imac-unknown-none-elf
+          - aarch64-unknown-none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      # `cargo check --no-default-features` on the host proves nothing:
+      # the host target still has std, so std-only calls compile. Only a
+      # target without std catches them. This is how `xpath` silently
+      # stopped building for no_std.
+      - name: Parser and tree, no std
+        run: cargo check -p oxml --no-default-features --target ${{ matrix.target }}
+      # `libm` on its own: a combination nobody writes by hand, which
+      # is exactly why it rots. The powerset covers it on the host,
+      # where std exists and hides the failure.
+      - name: libm without xpath, no std
+        run: >
+          cargo check -p oxml --no-default-features
+          --features libm --target ${{ matrix.target }}
+      - name: XPath, no std
+        run: >
+          cargo check -p oxml --no-default-features
+          --features xpath,libm --target ${{ matrix.target }}
+      - name: XPath without libm must fail with a clear message
+        run: |
+          if cargo check -p oxml --no-default-features --features xpath \
+               --target ${{ matrix.target }} 2>err.txt; then
+            echo "::error::xpath without std or libm should not compile"
+            exit 1
+          fi
+          grep -q 'requires feature `libm`' err.txt || {
+            echo "::error::failed, but not with the guard message:"
+            cat err.txt
+            exit 1
+          }
+          echo "guard fired correctly"
+
+  feature-powerset:
+    name: Feature powerset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: taiki-e/install-action@cargo-hack
+      - uses: Swatinem/rust-cache@v2
+      # Every combination, so a new feature cannot rot a configuration
+      # nobody builds by hand.
+      #
+      # `xpath` and `libm` are grouped because {xpath} alone without std
+      # is a deliberately impossible configuration — the guard in
+      # float.rs rejects it. Grouping stops the powerset generating it
+      # while still covering std+xpath (via the `default` feature) and
+      # no_std+xpath+libm.
+      - run: >
+          cargo hack check -p oxml --feature-powerset --no-dev-deps
+          --group-features xpath,libm
+
+  no-std-audit:
+    name: no_std audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf,aarch64-unknown-none
+      - uses: Swatinem/rust-cache@v2
+      # Every no_std feature combination on every bare-metal target,
+      # plus a grep for `std::` that is not behind its feature gate.
+      # The builds above catch a std-only call in code they compile;
+      # this catches one sitting in a combination nothing builds.
+      - run: ./scripts/check-no-std.sh
+
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    # As for Miri: cargo-fuzz needs nightly, and the pin would otherwise
+    # replace it.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse, tree_walk, parse_limits, xpath_compile, xpath_eval]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      # `cargo install` rather than a prebuilt: the prebuilt landed
+      # somewhere `cargo fuzz` could not find it under the pinned
+      # toolchain, giving `error: no such command: fuzz`. Installing
+      # with the same cargo that runs it removes the question.
+      - run: cargo install cargo-fuzz --locked
+      - uses: Swatinem/rust-cache@v2
+      # Seeds matter more than run time. Starting cold, libFuzzer spends
+      # almost the whole budget on inputs that are not valid XML — a run
+      # from an empty corpus reached essentially no coverage, while the
+      # same target seeded reaches ~1000 edges in seconds.
+      - name: Seed the corpus
+        run: |
+          mkdir -p fuzz/corpus/${{ matrix.target }}
+          case "${{ matrix.target }}" in
+            xpath_compile) cp fuzz/seeds/xpath_compile/* fuzz/corpus/${{ matrix.target }}/ ;;
+            xpath_eval)    : ;;   # structure-aware; generates its own input
+            *)             cp fuzz/seeds/parse/* fuzz/corpus/${{ matrix.target }}/ ;;
+          esac
+      - name: Fuzz for 300s
+        run: >
+          cargo fuzz run ${{ matrix.target }} --
+          -max_total_time=300
+          -dict=fuzz/dictionaries/xml.dict
+          -print_final_stats=1
+      - name: Upload any crash
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    # `rust-toolchain.toml` outranks the toolchain this action installs,
+    # so pinning it to 1.98.0 hid the nightly Miri needs. `RUSTUP_TOOLCHAIN`
+    # is the one thing that outranks the file.
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      # This crate is `#![forbid(unsafe_code)]`, so Miri will not find
+      # undefined behaviour — safe Rust cannot express it. It is kept
+      # for three things it *does* catch: arithmetic overflow under
+      # debug semantics, out-of-bounds indexing, and any UB introduced
+      # by a future dependency or a lifted `forbid`. It has already
+      # earned its place here by catching a float-precision divergence
+      # between backends that the test suite could not see.
+      #
+      # The integration tests are excluded: Miri is 50-200x slower and
+      # the depth tests parse 100,000-element documents, which would
+      # dominate the job without testing anything Miri is good at.
+      - run: cargo miri test --all-features --lib
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+
+  conformance:
+    name: W3C conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache the suite
+        uses: actions/cache@v4
+        with:
+          path: conformance/data
+          key: xmlconf-xmlts20130923-v1
+      # The download verifies a pinned SHA-256. That is not ceremony:
+      # www.w3.org sits behind Cloudflare and returns a 5,850-byte HTML
+      # challenge page with HTTP 200 to a request without a browser
+      # User-Agent. Piping that into `tar` gives an empty directory, and
+      # the job would then report success having run zero tests.
+      - run: cargo run -p oxml-conformance --bin download
+      # Gates the merge. A regression fails; so does an unreviewed
+      # improvement, which is the point of a ratchet.
+      - run: cargo test -p oxml-conformance
+      - name: Report
+        if: always()
+        run: cargo run -p oxml-conformance --bin report

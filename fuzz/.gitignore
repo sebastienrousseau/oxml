@@ -1,0 +1,7 @@
+# Generated: libFuzzer grows these from `seeds/`. Only the hand-written
+# seeds are tracked — a corpus of thousands of mutated files is build
+# output, and OSS-Fuzz maintains its own anyway.
+corpus/
+artifacts/
+coverage/
+target/

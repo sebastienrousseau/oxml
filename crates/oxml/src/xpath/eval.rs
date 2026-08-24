@@ -9,6 +9,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use super::ast::{Axis, BinaryOp, Expr, NodeTest, Step};
+use super::float;
 use crate::tree::{Document, NodeId, NodeKind};
 
 /// A value produced by evaluating an expression.
@@ -116,27 +117,34 @@ fn format_number(n: f64) -> String {
     if n.is_infinite() {
         return if n > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
     }
-    // `n == n.trunc()` is an exact integrality test, which is the one
+    // `n == trunc(n)` is an exact integrality test, which is the one
     // case where comparing floats for equality is right rather than
     // sloppy: a value either is its own truncation or it is not, and
     // an epsilon here would misclassify values near an integer.
     #[allow(clippy::float_cmp)]
-    let is_integral = n == n.trunc();
+    let is_integral = n == float::trunc(n);
     if is_integral && n.abs() < 1e21 {
         return format!("{}", n as i64);
     }
     // Round to 15 significant figures, then let Rust print the
-    // shortest form of *that*. Scaling by a power of ten and rounding
-    // is what drops the trailing IEEE 754 noise; formatting to a fixed
-    // number of decimal places would not, because the noise sits at a
-    // different decimal position depending on magnitude.
-    let magnitude = n.abs().log10().floor();
-    let scale = 10f64.powf(14.0 - magnitude);
-    let rounded = if scale.is_finite() && scale > 0.0 {
-        (n * scale).round() / scale
-    } else {
-        n
-    };
+    // shortest form of *that*. That is what drops the trailing IEEE 754
+    // noise; formatting to a fixed number of *decimal places* would
+    // not, because the noise sits at a different decimal position
+    // depending on magnitude.
+    //
+    // This is done through scientific notation rather than by scaling
+    // with `log10`/`powf`. Rust does not specify the precision of those
+    // two — Miri's implementation and `libm`'s disagree with the host's
+    // by a few ULP on values as ordinary as `17.49`. Since `magnitude`
+    // is fed to `floor`, a 1-ULP difference near an exact power of ten
+    // flips it to the next integer, changing the digit position that
+    // gets rounded and therefore the printed result. A `no_std` build
+    // would then print a different number from a `std` build.
+    //
+    // `{:.14e}` is exact decimal conversion: 15 significant digits,
+    // identical on every platform, and it needs no transcendental
+    // functions at all.
+    let rounded: f64 = format!("{n:.14e}").parse().unwrap_or(n);
     let mut s = rounded.to_string();
     if s.contains('.') {
         s = s.trim_end_matches('0').trim_end_matches('.').to_owned();
@@ -308,15 +316,23 @@ fn test_matches(
             (NodeTest::Wildcard | NodeTest::Any, Some(NodeKind::Attr(_))) => {
                 true
             }
-            (NodeTest::Name(n), Some(NodeKind::Attr(a))) => &a.name.local == n,
+            (NodeTest::Name { namespace, local }, Some(NodeKind::Attr(a))) => {
+                doc.name(a.name).is_some_and(|name| {
+                    &name.local == local
+                        && name.namespace.as_deref() == namespace.as_deref()
+                })
+            }
             _ => false,
         };
     }
     match test {
         NodeTest::Any => true,
         NodeTest::Wildcard => doc.is_element(node),
-        NodeTest::Name(n) => {
-            doc.element_name(node).is_some_and(|e| &e.local == n)
+        NodeTest::Name { namespace, local } => {
+            doc.element_name(node).is_some_and(|e| {
+                &e.local == local
+                    && e.namespace.as_deref() == namespace.as_deref()
+            })
         }
         NodeTest::Text => {
             matches!(doc.kind(node), Some(NodeKind::Text(_)))
@@ -556,6 +572,30 @@ fn eval_function(
 /// node of its argument node-set, or the context node when it takes no
 /// argument. Returns `None` when an argument was supplied but selected
 /// nothing, which is not the same as having no argument at all.
+/// The expanded name of a node, as `local-name` and `namespace-uri`
+/// define it.
+///
+/// `XPath` 1.0 gives an expanded-name to elements **and attributes**;
+/// reading only `Document::element_name` here meant both functions
+/// answered the empty string for every attribute, which silently broke
+/// the one workaround available for selecting by namespace. A
+/// processing instruction has a local part -- its target -- and no
+/// namespace. Everything else has neither.
+fn name_parts(doc: &Document, id: NodeId) -> Option<(&str, Option<&str>)> {
+    match doc.kind(id)? {
+        NodeKind::Element { .. } => doc
+            .element_name(id)
+            .map(|n| (n.local.as_str(), n.namespace.as_deref())),
+        NodeKind::Attr(attribute) => doc
+            .name(attribute.name)
+            .map(|n| (n.local.as_str(), n.namespace.as_deref())),
+        NodeKind::ProcessingInstruction { target, .. } => {
+            Some((target.as_str(), None))
+        }
+        NodeKind::Root | NodeKind::Text(_) | NodeKind::Comment(_) => None,
+    }
+}
+
 fn node_argument(
     doc: &Document,
     args: &[Expr],
@@ -584,7 +624,7 @@ fn xpath_round(n: f64) -> f64 {
     if n.is_nan() || n.is_infinite() {
         return n;
     }
-    (n + 0.5).floor()
+    float::floor(n + 0.5)
 }
 
 /// The node-oriented and numeric half of the function library.
@@ -608,14 +648,15 @@ fn eval_node_function(
         // the empty string.
         "local-name" => Value::String(
             node_argument(doc, args, ctx, position, size)
-                .and_then(|n| doc.element_name(n))
-                .map(|n| n.local.clone())
+                .and_then(|n| name_parts(doc, n))
+                .map(|(local, _)| local.to_owned())
                 .unwrap_or_default(),
         ),
         "namespace-uri" => Value::String(
             node_argument(doc, args, ctx, position, size)
-                .and_then(|n| doc.element_name(n))
-                .and_then(|n| n.namespace.clone())
+                .and_then(|n| name_parts(doc, n))
+                .and_then(|(_, namespace)| namespace)
+                .map(str::to_owned)
                 .unwrap_or_default(),
         ),
         "sum" => {
@@ -629,12 +670,12 @@ fn eval_node_function(
                 .sum();
             Value::Number(total)
         }
-        "floor" => {
-            Value::Number(arg(0).map_or(f64::NAN, |v| v.to_number(doc)).floor())
-        }
-        "ceiling" => {
-            Value::Number(arg(0).map_or(f64::NAN, |v| v.to_number(doc)).ceil())
-        }
+        "floor" => Value::Number(float::floor(
+            arg(0).map_or(f64::NAN, |v| v.to_number(doc)),
+        )),
+        "ceiling" => Value::Number(float::ceil(
+            arg(0).map_or(f64::NAN, |v| v.to_number(doc)),
+        )),
         "round" => Value::Number(xpath_round(
             arg(0).map_or(f64::NAN, |v| v.to_number(doc)),
         )),

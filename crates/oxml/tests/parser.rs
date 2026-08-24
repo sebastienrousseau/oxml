@@ -3,6 +3,8 @@
 
 //! Parser behaviour and well-formedness rules.
 
+use std::fmt::Write as _;
+
 use oxml::{ErrorKind, NodeKind, parse};
 
 #[test]
@@ -37,26 +39,79 @@ fn resolves_numeric_character_references() {
 }
 
 /// External and custom entities are never expanded.
-///
-/// This is the XXE and billion-laughs surface. The parser rejects the
-/// reference rather than resolving it, so a document cannot be made to
-/// read a file or explode in memory through an entity.
+/// External entities are never dereferenced, which makes XXE
+/// structurally impossible rather than merely mitigated. Internal
+/// entities *are* expanded — a conforming parser must, and many valid
+/// documents depend on it — but under a per-document budget and a depth
+/// cap.
 #[test]
-fn refuses_to_expand_custom_entities() {
+fn an_external_entity_is_never_dereferenced() {
     let src = r#"<!DOCTYPE a [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
                  <a>&xxe;</a>"#;
-    let err = parse(src).expect_err("must not expand");
-    assert!(matches!(err.kind, ErrorKind::UnknownEntity(_)));
+    let doc = parse(src).expect("declared, so not an error");
+    assert_eq!(doc.text(doc.root()).trim(), "");
 }
 
 #[test]
-fn billion_laughs_does_not_expand() {
-    let src = r#"<!DOCTYPE lolz [
-        <!ENTITY lol "lol">
-        <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;">
-    ]><lolz>&lol2;</lolz>"#;
-    let err = parse(src).expect_err("must not expand");
-    assert!(matches!(err.kind, ErrorKind::UnknownEntity(_)));
+fn an_undeclared_entity_is_still_an_error() {
+    let src = "<!DOCTYPE a [<!ENTITY known \"x\">]><a>&unknown;</a>";
+    let err = parse(src).expect_err("undeclared");
+    assert!(matches!(err.kind, ErrorKind::UnknownEntity(_)), "{err:?}");
+}
+
+#[test]
+fn an_undeclared_entity_is_tolerated_when_the_dtd_is_incomplete() {
+    let src = r#"<!DOCTYPE a SYSTEM "a.dtd"><a>&maybe;</a>"#;
+    assert!(parse(src).is_ok());
+}
+
+#[test]
+fn internal_entities_expand() {
+    let src = "<!DOCTYPE a [<!ENTITY greet \"hello\">]><a>&greet; world</a>";
+    let doc = parse(src).expect("valid");
+    assert_eq!(doc.text(doc.root()), "hello world");
+}
+
+#[test]
+fn billion_laughs_is_rejected_by_the_depth_bound() {
+    let mut src = String::from("<!DOCTYPE lolz [<!ENTITY lol \"lol\">");
+    for i in 1..=9 {
+        let prev = if i == 1 {
+            "lol".to_owned()
+        } else {
+            format!("lol{}", i - 1)
+        };
+        let _ = write!(
+            src,
+            "<!ENTITY lol{i} \"{}\">",
+            format!("&{prev};").repeat(10)
+        );
+    }
+    src.push_str("]><lolz>&lol9;</lolz>");
+    let err = parse(&src).expect_err("must not expand");
+    assert!(
+        matches!(err.kind, ErrorKind::EntityLimitExceeded),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn quadratic_blowup_is_rejected_by_the_document_budget() {
+    // One large entity referenced many times at depth one. The depth
+    // cap cannot see this; only a per-document budget can. A
+    // per-reference budget let it through, yielding 100 MB of text from
+    // 100 KB of input.
+    let big = "x".repeat(100_000);
+    let mut src = format!("<!DOCTYPE q [<!ENTITY big \"{big}\">]><q>");
+    for _ in 0..1000 {
+        src.push_str("&big;");
+    }
+    src.push_str("</q>");
+    let err = parse(&src).expect_err("must not expand");
+    assert!(
+        matches!(err.kind, ErrorKind::EntityLimitExceeded),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -84,7 +139,7 @@ fn default_namespace_applies_to_elements_not_attributes() {
     );
     let attrs = d.attributes(root);
     assert_eq!(attrs.len(), 1);
-    assert_eq!(attrs[0].name.namespace, None);
+    assert_eq!(d.name(attrs[0].name).expect("interned").namespace, None);
 }
 
 #[test]
@@ -98,7 +153,10 @@ fn the_xml_prefix_is_bound_without_declaration() {
     let d = parse(r#"<a xml:lang="en"/>"#).expect("parses");
     let root = d.root_element().unwrap();
     assert_eq!(
-        d.attributes(root)[0].name.namespace.as_deref(),
+        d.name(d.attributes(root)[0].name)
+            .expect("interned")
+            .namespace
+            .as_deref(),
         Some("http://www.w3.org/XML/1998/namespace")
     );
 }

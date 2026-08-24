@@ -74,8 +74,14 @@ impl ExpandedName {
 /// An attribute on an element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attribute {
-    /// The attribute's expanded name.
-    pub name: ExpandedName,
+    /// The attribute's name, interned.
+    ///
+    /// A handle rather than an `ExpandedName` because attribute names
+    /// repeat as heavily as element names do -- a catalogue with 2,000
+    /// items and three attributes each has three distinct names, and
+    /// storing them per attribute allocated thousands of strings to
+    /// hold three values. Resolve it with [`Document::name`].
+    pub name: NameId,
     /// The attribute's value, with entities already resolved.
     pub value: String,
 }
@@ -88,10 +94,22 @@ pub enum NodeKind {
     Root,
     /// An element.
     Element {
-        /// The element's expanded name.
-        name: ExpandedName,
-        /// Ids of this element's attribute nodes, in document order.
-        attributes: Vec<NodeId>,
+        /// The element's name, interned.
+        ///
+        /// Names repeat heavily — a 500,001-element document in the
+        /// benchmark suite has **six** distinct ones — so storing an
+        /// `ExpandedName` per element allocated half a million strings
+        /// to hold six values. Resolve it with
+        /// [`Document::element_name`].
+        name: NameId,
+        /// Where this element's attribute nodes live in the document's
+        /// flat attribute arena, as `(start, len)`. Resolve it with
+        /// [`Document::attribute_nodes`].
+        ///
+        /// Attributes are pushed together when the start tag is read,
+        /// so they are already contiguous — no scratch stack needed,
+        /// unlike children.
+        attributes: (u32, u32),
     },
     /// An attribute.
     ///
@@ -114,11 +132,25 @@ pub enum NodeKind {
     },
 }
 
+/// A handle to an interned [`ExpandedName`].
+///
+/// Opaque: compare handles for equality to compare names, which is a
+/// `u32` compare rather than two string compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NameId(pub(crate) u32);
+
 #[derive(Debug, Clone)]
 pub(crate) struct Node {
     pub(crate) kind: NodeKind,
     pub(crate) parent: Option<NodeId>,
-    pub(crate) children: Vec<NodeId>,
+    /// Where this node's children live in the document's flat child
+    /// arena, as `(start, len)`.
+    ///
+    /// A `Vec` per node meant one allocation for every element that has
+    /// children — about a million on the benchmark document. Children
+    /// are contiguous in `child_ids` because they are copied there as a
+    /// block when the element closes.
+    pub(crate) children: (u32, u32),
 }
 
 /// A parsed XML document.
@@ -127,16 +159,43 @@ pub(crate) struct Node {
 #[derive(Debug, Clone)]
 pub struct Document {
     pub(crate) nodes: Vec<Node>,
+    /// Every distinct element name in the document, once.
+    pub(crate) names: Vec<ExpandedName>,
+    /// All attribute lists, concatenated.
+    pub(crate) attr_ids: Vec<NodeId>,
+    /// All child lists, concatenated. Each node's slice is described by
+    /// its `children` range.
+    pub(crate) child_ids: Vec<NodeId>,
+    /// Children of elements still open, innermost last.
+    ///
+    /// A single shared stack rather than one buffer per element: a
+    /// node's children are only known to be complete when its end tag
+    /// arrives, at which point they are moved into `child_ids` as a
+    /// contiguous block.
+    pub(crate) scratch: Vec<NodeId>,
 }
 
 impl Document {
-    pub(crate) fn new() -> Self {
+    /// A document sized for roughly `nodes` entries.
+    ///
+    /// The parser can estimate the node count in one cheap pass before
+    /// parsing — every element, comment and processing instruction
+    /// begins with `<`. Without this the arena reallocates and copies
+    /// on the way to a million nodes, and each growth is an allocation
+    /// plus a memcpy of everything so far.
+    pub(crate) fn with_capacity(nodes: usize) -> Self {
+        let mut v = Vec::with_capacity(nodes.saturating_add(1));
+        v.push(Node {
+            kind: NodeKind::Root,
+            parent: None,
+            children: (0, 0),
+        });
         Self {
-            nodes: alloc::vec![Node {
-                kind: NodeKind::Root,
-                parent: None,
-                children: Vec::new(),
-            }],
+            nodes: v,
+            names: Vec::new(),
+            attr_ids: Vec::new(),
+            child_ids: Vec::with_capacity(nodes),
+            scratch: Vec::new(),
         }
     }
 
@@ -155,10 +214,33 @@ impl Document {
         self.nodes.push(Node {
             kind,
             parent: Some(parent),
-            children: Vec::new(),
+            children: (0, 0),
         });
-        self.nodes[parent.0].children.push(id);
+        // Held on the scratch stack until `parent` closes, so that its
+        // children can be written to `child_ids` as one block.
+        self.scratch.push(id);
         id
+    }
+
+    /// Where the scratch stack currently ends.
+    ///
+    /// Take this before parsing an element's content and pass it back
+    /// to [`Document::finish_children`] afterwards.
+    pub(crate) fn scratch_mark(&self) -> usize {
+        self.scratch.len()
+    }
+
+    /// Move everything pushed since `mark` into `parent`'s child list.
+    pub(crate) fn finish_children(&mut self, parent: NodeId, mark: usize) {
+        let start = self.child_ids.len();
+        self.child_ids.extend_from_slice(&self.scratch[mark..]);
+        self.scratch.truncate(mark);
+        if let Some(n) = self.nodes.get_mut(parent.0) {
+            n.children = (
+                u32::try_from(start).unwrap_or(u32::MAX),
+                u32::try_from(self.child_ids.len() - start).unwrap_or(0),
+            );
+        }
     }
 
     /// Append a node without linking it into its parent's children.
@@ -174,7 +256,7 @@ impl Document {
         self.nodes.push(Node {
             kind,
             parent: Some(parent),
-            children: Vec::new(),
+            children: (0, 0),
         });
         id
     }
@@ -202,7 +284,10 @@ impl Document {
     /// id that does not belong to this document.
     #[must_use]
     pub fn children(&self, id: NodeId) -> &[NodeId] {
-        self.nodes.get(id.0).map_or(&[], |n| n.children.as_slice())
+        self.nodes.get(id.0).map_or(&[], |n| {
+            let (start, len) = (n.children.0 as usize, n.children.1 as usize);
+            self.child_ids.get(start..start + len).unwrap_or(&[])
+        })
     }
 
     /// The document's root element, if it has one.
@@ -228,16 +313,26 @@ impl Document {
     #[must_use]
     pub fn element_name(&self, id: NodeId) -> Option<&ExpandedName> {
         match self.kind(id) {
-            Some(NodeKind::Element { name, .. }) => Some(name),
+            Some(NodeKind::Element { name, .. }) => self.name(*name),
             _ => None,
         }
+    }
+
+    /// Resolve an interned name handle.
+    #[must_use]
+    pub fn name(&self, id: NameId) -> Option<&ExpandedName> {
+        self.names.get(id.0 as usize)
     }
 
     /// The ids of an element's attribute nodes.
     #[must_use]
     pub fn attribute_nodes(&self, id: NodeId) -> &[NodeId] {
         match self.kind(id) {
-            Some(NodeKind::Element { attributes, .. }) => attributes,
+            Some(NodeKind::Element { attributes, .. }) => {
+                let (start, len) =
+                    (attributes.0 as usize, attributes.1 as usize);
+                self.attr_ids.get(start..start + len).unwrap_or(&[])
+            }
             _ => &[],
         }
     }
@@ -263,7 +358,7 @@ impl Document {
     pub fn attribute(&self, id: NodeId, local: &str) -> Option<&str> {
         self.attributes(id)
             .into_iter()
-            .find(|a| a.name.local == local)
+            .find(|a| self.name(a.name).is_some_and(|n| n.local == local))
             .map(|a| a.value.as_str())
     }
 

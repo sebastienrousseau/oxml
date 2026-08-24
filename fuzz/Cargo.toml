@@ -1,0 +1,60 @@
+[workspace]
+
+[package]
+name = "oxml-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.oxml]
+path = "../crates/oxml"
+features = ["std", "xpath"]
+
+# Fuzzing wants the optimised build; debug assertions stay on so
+# overflow checks and `debug_assert!` still fire on found inputs.
+[profile.release]
+debug = true
+debug-assertions = true
+overflow-checks = true
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_limits"
+path = "fuzz_targets/parse_limits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xpath_compile"
+path = "fuzz_targets/xpath_compile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xpath_eval"
+path = "fuzz_targets/xpath_eval.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tree_walk"
+path = "fuzz_targets/tree_walk.rs"
+test = false
+doc = false
+bench = false

@@ -10,6 +10,63 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [0.0.4] - 2026-08-24
+
+### Added
+
+- **`parse_with_external` and the `ExternalSource` trait.** oxml still
+  performs no I/O; a caller supplies external entity and subset content
+  and the parser asks for it by identifier. With content available, the
+  rules only that content can settle are checked -- a text declaration
+  must be well formed, name an encoding, omit `standalone`, and not
+  declare a version later than the document's.
+- **`XPath::compile_with_namespaces`.** A prefix in an expression now
+  resolves against bindings supplied with the query.
+- **`Document::name` and `NameId`.** Element and attribute names are
+  interned; `NodeKind::Element` and `Attribute::name` carry a handle.
+- **`Display for ErrorKind`**, so a caller drawing a caret can print the
+  message without repeating the byte offset.
+
+### Fixed
+
+- **Line endings were not normalised.** `<a>x\r\ny</a>` returned
+  `"x\r\ny"` where the specification requires `"x\ny"` -- every document
+  written on Windows. XML 1.1's NEL and LINE SEPARATOR are handled too.
+- **Attribute values were not normalised.** An attribute wrapped across
+  two lines carried the newline and the next line's indentation.
+- **XPath name tests ignored namespace prefixes.** `//x:item` selected
+  every `item` regardless of namespace -- a wrong answer with no error
+  attached. An unbound prefix is now a compile error, and an unprefixed
+  name test matches only nodes in no namespace, as XPath 1.0 requires.
+- **`local-name()` and `namespace-uri()` returned `""` for every
+  attribute node.**
+- **`Error::line_column` could panic** on an offset inside a multi-byte
+  character -- a panic in the error-reporting path.
+- Around twenty further well-formedness rules that were parsed and not
+  enforced: `]]>` in text, `<` in attribute values, the XML declaration's
+  own version number, reserved namespaces as the default, colons in
+  entity, notation and processing-instruction names, `NDataDecl` syntax,
+  `<!ATTLIST>` default values, conditional section keywords, and the
+  entity constraints `WFC: PEs in Internal Subset`,
+  `WFC: No External Entity References` and `WFC: Parsed Entity`.
+
+### Changed
+
+- **Allocations: 4.13 per node to 1.13.** Child and attribute lists are
+  `(start, len)` ranges into shared vectors, names are interned and
+  borrow the input until interning, and the arena is sized up front.
+- **Conformance: 93.6% to 98.6%** of decided W3C tests (2,520 of 2,557),
+  with 98.9% of the 2,585-test suite reaching a decision and **zero
+  panics**. No document in the suite is wrongly rejected.
+
+### Breaking
+
+- `Attribute::name` is a `NameId` rather than an `ExpandedName`; resolve
+  it with `Document::name`.
+- `NodeKind::Element` carries `NameId` and `(u32, u32)`.
+- A prefixed XPath name test now requires a binding, and an unprefixed
+  one no longer matches namespaced nodes.
+
 ## [0.0.3] - 2026-08-22
 
 ### Fixed

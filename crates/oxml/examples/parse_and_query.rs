@@ -48,7 +48,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The attribute axis yields attribute nodes, so string-value is
     // the attribute's value rather than its element's text.
-    let isbns = XPath::compile("//book/@m:isbn")?;
+    //
+    // The prefix is bound here rather than read from the document: a
+    // prefix in an expression resolves against the expression's own
+    // bindings, so the same query works against a document that spells
+    // the prefix differently. An unbound prefix is a compile error
+    // rather than a match on the local part alone.
+    let isbns = XPath::compile_with_namespaces(
+        "//book/@m:isbn",
+        &[("m", "urn:example:meta")],
+    )?;
     for node in isbns.evaluate(&doc).nodes().unwrap_or(&[]) {
         println!("  ISBN:          {}", doc.text(*node));
     }
