@@ -29,6 +29,11 @@ step() {
   fi
 }
 
+# A local per-project target-dir scheme puts a symlink at `target`, and
+# a `git add -A` will commit it. `.gitignore` does not help once a path
+# is tracked, and CI then cannot create its build directory on top of
+# it -- every build job fails until it is removed.
+step "no tracked build dir" bash -c '! git ls-files | grep -qx target'
 step "fmt"            cargo "+$TOOLCHAIN" fmt --all --check
 step "clippy"         cargo "+$TOOLCHAIN" clippy --workspace --all-targets --all-features -- -D warnings
 step "tests"          cargo "+$TOOLCHAIN" test --workspace --all-features
