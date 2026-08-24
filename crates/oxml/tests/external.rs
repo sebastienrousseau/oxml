@@ -181,3 +181,56 @@ fn parameter_entity_recursion_is_bounded() {
     // Either outcome is acceptable; hanging is not.
     let _ = with(doc, &[("d.dtd", dtd)]);
 }
+
+#[test]
+fn a_conditional_section_must_say_include_or_ignore() {
+    // `includeSect ::= '<![' S? 'INCLUDE' S? '[' extSubsetDecl ']]>'`
+    // and the same shape for `IGNORE`. Skipping the section without
+    // reading it accepted any word at all.
+    let doc = r#"<!DOCTYPE d SYSTEM "d.dtd"><d/>"#;
+    for keyword in ["MAYBE", "include", "Ignore", ""] {
+        let dtd = format!("<![{keyword}[ <!ELEMENT d EMPTY> ]]>");
+        assert!(
+            with(doc, &[("d.dtd", &dtd)]).is_err(),
+            "{keyword:?} is not a conditional section keyword"
+        );
+    }
+    for keyword in ["INCLUDE", "IGNORE"] {
+        let dtd = format!("<![{keyword}[ <!ELEMENT d EMPTY> ]]>");
+        assert!(with(doc, &[("d.dtd", &dtd)]).is_ok(), "{keyword}");
+    }
+}
+
+#[test]
+fn an_include_sections_declarations_are_read() {
+    // Skipping the section meant the declarations inside it were never
+    // seen, so an entity declared there did not exist.
+    let doc = r#"<!DOCTYPE d SYSTEM "d.dtd"><d>&g;</d>"#;
+    let dtd = r#"<![INCLUDE[ <!ENTITY g "included"> ]]>"#;
+    let parsed = with(doc, &[("d.dtd", dtd)]).expect("well-formed");
+    assert_eq!(parsed.text(parsed.root()), "included");
+}
+
+#[test]
+fn an_ignore_sections_declarations_are_not() {
+    let doc = r#"<!DOCTYPE d SYSTEM "d.dtd"><d>text</d>"#;
+    let dtd = r#"<![IGNORE[ <!ENTITY g "ignored"> ]]><!ELEMENT d (#PCDATA)>"#;
+    let parsed = with(doc, &[("d.dtd", dtd)]).expect("well-formed");
+    assert_eq!(parsed.text(parsed.root()), "text");
+}
+
+#[test]
+fn the_keyword_may_come_from_a_parameter_entity() {
+    // `<![%MAYBE;[ … ]]>` is how the suite exercises both branches from
+    // one document, and it is the reason the keyword cannot simply be
+    // read as a literal.
+    let doc = r#"<!DOCTYPE d SYSTEM "d.dtd"><d>&g;</d>"#;
+    let included = r#"<!ENTITY % yes "INCLUDE"><![%yes;[ <!ENTITY g "on"> ]]>"#;
+    let parsed = with(doc, &[("d.dtd", included)]).expect("well-formed");
+    assert_eq!(parsed.text(parsed.root()), "on");
+
+    // And a parameter entity holding a word that is not a keyword is
+    // still an error.
+    let bogus = r#"<!ENTITY % maybe "PERHAPS"><![%maybe;[ <!ENTITY g "x"> ]]>"#;
+    assert!(with(doc, &[("d.dtd", bogus)]).is_err());
+}

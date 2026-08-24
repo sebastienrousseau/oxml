@@ -1,4 +1,4 @@
-#counts	pass=2497	fail=60	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2514	fail=43	panic=0	unsupported=28	blocked=0	total=2585
 sun	cond01	fail	accepted a document that is not well-formed
 sun	cond02	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
@@ -9,7 +9,6 @@ ibm	ibm-1-1-not-wf-P77-ibm77n02.xml	fail	accepted a document that is not well-fo
 ibm	ibm-1-1-not-wf-P77-ibm77n03.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n07.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n08.xml	fail	accepted a document that is not well-formed
-ibm	ibm-1-1-not-wf-P77-ibm77n14.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n16.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n17.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n18.xml	fail	accepted a document that is not well-formed
@@ -20,17 +19,6 @@ ibm	ibm-1-1-valid-P05-ibm05v02.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v03.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v05.xml	unsupported	namespace-processing-off
 ibm	ibm-not-wf-P32-ibm32n09.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P61-ibm61n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P62-ibm62n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P62-ibm62n02.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P62-ibm62n04.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P62-ibm62n05.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P62-ibm62n06.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P63-ibm63n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P63-ibm63n02.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P63-ibm63n04.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P63-ibm63n05.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P63-ibm63n06.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n06.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P75-ibm75n07.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P77-ibm77n02.xml	fail	accepted a document that is not well-formed
@@ -42,7 +30,6 @@ ibm	ibm-not-wf-P79-ibm79n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P79-ibm79n02.xml	fail	accepted a document that is not well-formed
 xmltest	not-wf-ext-sa-001	fail	accepted a document that is not well-formed
 xmltest	not-wf-ext-sa-003	fail	accepted a document that is not well-formed
-xmltest	not-wf-not-sa-006	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-008	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-074	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-090	fail	accepted a document that is not well-formed
@@ -62,10 +49,6 @@ oasis	o-p04pass1	unsupported	namespace-processing-off
 oasis	o-p05pass1	unsupported	namespace-processing-off
 oasis	o-p08pass1	unsupported	namespace-processing-off
 oasis	o-p09fail1	fail	accepted a document that is not well-formed
-oasis	o-p09fail2	fail	accepted a document that is not well-formed
-oasis	o-p61fail1	fail	accepted a document that is not well-formed
-oasis	o-p62fail1	fail	accepted a document that is not well-formed
-oasis	o-p63fail1	fail	accepted a document that is not well-formed
 japanese	pr-xml-euc-jp	unsupported	unsupported-encoding
 japanese	pr-xml-iso-2022-jp	unsupported	unsupported-encoding
 japanese	pr-xml-shift_jis	unsupported	unsupported-encoding

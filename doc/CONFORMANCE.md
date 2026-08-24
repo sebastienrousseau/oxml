@@ -20,8 +20,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2497 pass, 60 fail, 0 panic, 28 unsupported, 0 blocked
-         97.7% of 2557 decided (98.9% coverage of 2585)
+overall  2514 pass, 43 fail, 0 panic, 28 unsupported, 0 blocked
+         98.3% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -59,7 +59,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-60 failures, and **every one of them is the parser being too
+43 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -69,12 +69,12 @@ contains:
 
 | What the failure needs | Section | Count |
 |---|---|---|
-| Conditional section keywords validated | §3.4 | 17 |
 | Text declaration position and ordering | §4.3.2 | 11 |
-| Version agreement between document and entity | §4.3.4 | 10 |
-| `<` reaching an attribute through markup in an entity | §2.3 | 5 |
+| Version agreement between document and entity | §4.3.4 | 9 |
+| `<` reaching an attribute through markup in an entity | §2.3 | 4 |
 | Standalone declarations in external entities | §4.3.1 | 4 |
-| Everything else | | 13 |
+| Entity replacement text parsed as markup | §4.5 | 3 |
+| Everything else | | 12 |
 
 That table has been wrong twice, in the same direction both times: I
 estimated what a group needed instead of counting it. The estimate

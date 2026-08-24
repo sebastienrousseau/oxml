@@ -296,7 +296,8 @@ impl<'a> DtdParser<'a> {
     fn decl_uses_pe(&self) -> bool {
         let mut depth = 0usize;
         let mut quote: Option<u8> = None;
-        for &b in &self.bytes[self.pos..] {
+        for (i, &b) in self.bytes[self.pos..].iter().enumerate() {
+            let rest = &self.bytes[self.pos + i + 1..];
             match (quote, b) {
                 (Some(q), c) if c == q => quote = None,
                 (None, b'"' | b'\'') => quote = Some(b),
@@ -307,7 +308,13 @@ impl<'a> DtdParser<'a> {
                         return false;
                     }
                 }
-                (None, b'%') => return true,
+                // `%Name;` is a *reference*. `<!ENTITY % name …>` is a
+                // parameter entity *declaration*, where `%` is syntax
+                // and the grammar requires whitespace after it. Not
+                // telling them apart meant every parameter entity
+                // declaration was skipped as unresolvable -- so nothing
+                // was ever declared to expand.
+                (None, b'%') => return next_is_name_start(rest),
                 _ => {}
             }
         }
@@ -338,6 +345,61 @@ impl<'a> DtdParser<'a> {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// A conditional section, after its `<![`.
+    ///
+    /// ```text
+    /// includeSect ::= '<![' S? 'INCLUDE' S? '[' extSubsetDecl ']]>'
+    /// ignoreSect  ::= '<![' S? 'IGNORE'  S? '[' ignoreSectContents* ']]>'
+    /// ```
+    ///
+    /// Those are the only two keywords. Skipping the whole section
+    /// without reading it accepted any word at all -- and skipped the
+    /// declarations an `INCLUDE` section contains, so they were never
+    /// seen either.
+    fn parse_conditional_section(
+        &mut self,
+        dtd: &mut Dtd,
+        depth: usize,
+    ) -> Result<(), DtdError> {
+        self.skip_ws();
+        // The keyword may arrive through a parameter entity:
+        // `<![%MAYBE;[ … ]]>` is how the suite tests both branches from
+        // one document.
+        let keyword = if self.peek() == Some(b'%') {
+            self.pos += 1;
+            let name = self.name()?.to_owned();
+            self.expect(b';', "unterminated parameter entity reference")?;
+            // Unknown: the section's fate is undecidable, so treat it
+            // as ignored and record that we did not read it.
+            let Some(text) = dtd.parameters.get(&name) else {
+                dtd.incomplete = true;
+                return self.skip_conditional_section();
+            };
+            text.trim().to_owned()
+        } else {
+            self.name()?.to_owned()
+        };
+
+        self.skip_ws();
+        self.expect(b'[', "expected `[` in a conditional section")?;
+        let body_start = self.pos;
+        self.skip_conditional_section()?;
+        // `skip_conditional_section` consumed the closing `]]>`.
+        let body = &self.input[body_start..self.pos - 3];
+
+        match keyword.as_str() {
+            "IGNORE" => Ok(()),
+            "INCLUDE" => {
+                let mut sub = DtdParser::new(body, 0, self.edition);
+                sub.parse_subset_decls(dtd, None, depth + 1)
+            }
+            _ => Err((
+                body_start,
+                "a conditional section must say INCLUDE or IGNORE",
+            )),
         }
     }
 
@@ -439,14 +501,14 @@ impl<'a> DtdParser<'a> {
                             Some(expanded) => {
                                 let mut sub =
                                     DtdParser::new(&expanded, 0, self.edition);
-                                if sub.parse_markup_decl(dtd).is_err() {
+                                if sub.parse_markup_decl(dtd, depth).is_err() {
                                     dtd.incomplete = true;
                                 }
                             }
                             None => dtd.incomplete = true,
                         }
                     } else {
-                        self.parse_markup_decl(dtd)?;
+                        self.parse_markup_decl(dtd, depth)?;
                     }
                 }
                 _ => return Err((self.pos, "expected a markup declaration")),
@@ -454,7 +516,11 @@ impl<'a> DtdParser<'a> {
         }
     }
 
-    fn parse_markup_decl(&mut self, dtd: &mut Dtd) -> Result<(), DtdError> {
+    fn parse_markup_decl(
+        &mut self,
+        dtd: &mut Dtd,
+        depth: usize,
+    ) -> Result<(), DtdError> {
         if self.starts_with("<!--") {
             self.pos += 4;
             return match self.input[self.pos..].find("-->") {
@@ -508,7 +574,7 @@ impl<'a> DtdParser<'a> {
                 ));
             }
             self.pos += 3;
-            return self.skip_conditional_section();
+            return self.parse_conditional_section(dtd, depth);
         }
         if self.starts_with("<!ELEMENT") {
             self.pos += "<!ELEMENT".len();
@@ -950,6 +1016,15 @@ fn expand_char_refs(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Whether a parameter entity reference's name starts here.
+///
+/// Only the ASCII range is checked, which is enough to tell a reference
+/// from the whitespace that must follow the `%` of a declaration.
+fn next_is_name_start(rest: &[u8]) -> bool {
+    matches!(rest.first(), Some(b) if b.is_ascii_alphabetic()
+        || *b == b'_' || *b == b':' || *b >= 0x80)
 }
 
 /// How deep parameter entity expansion may nest.
