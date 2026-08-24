@@ -30,6 +30,12 @@ pub enum Axis {
     FollowingSibling,
     /// `preceding-sibling::`
     PrecedingSibling,
+    /// `following::` — everything after the context node in document
+    /// order that is not one of its descendants.
+    Following,
+    /// `preceding::` — everything before the context node in document
+    /// order that is not one of its ancestors.
+    Preceding,
 }
 
 /// What a step matches once the axis has produced candidates.

@@ -10,7 +10,8 @@ are, and how the numbers are produced.
 - [Current results](#current-results)
 - [How to read these numbers](#how-to-read-these-numbers)
 - [What the failures are](#what-the-failures-are)
-- [The one document rejected wrongly](#the-one-document-rejected-wrongly)
+- [The document that was rejected wrongly, and is not any
+  more](#the-document-that-was-rejected-wrongly-and-is-not-any-more)
 - [What is unsupported, and why](#what-is-unsupported-and-why)
 - [The baseline ratchet](#the-baseline-ratchet)
 - [Reproducing](#reproducing)
@@ -29,11 +30,11 @@ By submission:
 | Submission | Pass rate | Decided | Unsupported |
 |---|---|---|---|
 | japanese | 100.0% | 6 | 6 |
-| eduni | 96.7% | 552 | 13 |
-| sun | 95.6% | 159 | 0 |
-| oasis | 94.2% | 345 | 3 |
-| ibm | 93.3% | 1,131 | 5 |
-| xmltest | 88.2% | 364 | 1 |
+| oasis | 99.7% | 345 | 3 |
+| eduni | 99.5% | 552 | 13 |
+| ibm | 98.8% | 1,131 | 5 |
+| sun | 97.5% | 159 | 0 |
+| xmltest | 95.9% | 364 | 1 |
 
 **Zero panics.** No document in the suite makes the parser abort. That
 is the number to look at first: a wrong answer is a bug, but a panic on
@@ -44,7 +45,7 @@ input from the network is a denial of service.
 The pass rate and the coverage figure are always reported together, and
 neither means much alone.
 
-- **93.6% of 2,557 decided** — of the tests where the parser gave a
+- **98.6% of 2,557 decided** — of the tests where the parser gave a
   definite answer, this many agreed with the suite.
 - **98.9% coverage of 2,585** — this many of the suite's tests produced
   a definite answer at all.

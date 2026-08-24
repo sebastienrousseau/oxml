@@ -292,7 +292,44 @@ fn axis_nodes(doc: &Document, node: NodeId, axis: Axis) -> Vec<NodeId> {
                 sibs[..idx].to_vec()
             }
         }
+        // Both are defined over the whole document rather than one
+        // parent's children, and both exclude attribute nodes however
+        // they are positioned. Arena indices are assigned in document
+        // order -- an element, then its attributes, then its children
+        // -- so comparing them *is* comparing document position.
+        Axis::Following | Axis::Preceding => {
+            let here = node.index();
+            doc.descendants()
+                .filter(|&cand| cand != node)
+                // Attribute nodes are on neither axis. Namespace nodes
+                // would be excluded here too, once they exist.
+                .filter(|&cand| {
+                    !matches!(doc.kind(cand), Some(NodeKind::Attr(_)))
+                })
+                .filter(|&cand| {
+                    if axis == Axis::Following {
+                        // After the context node, but not beneath it.
+                        cand.index() > here && !is_ancestor(doc, node, cand)
+                    } else {
+                        // Before it, but not above it.
+                        cand.index() < here && !is_ancestor(doc, cand, node)
+                    }
+                })
+                .collect()
+        }
     }
+}
+
+/// Whether `maybe` is an ancestor of `of`.
+fn is_ancestor(doc: &Document, maybe: NodeId, of: NodeId) -> bool {
+    let mut cur = doc.parent(of);
+    while let Some(p) = cur {
+        if p == maybe {
+            return true;
+        }
+        cur = doc.parent(p);
+    }
+    false
 }
 
 fn collect_descendants(doc: &Document, node: NodeId, out: &mut Vec<NodeId>) {

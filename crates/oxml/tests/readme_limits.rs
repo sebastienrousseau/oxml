@@ -166,3 +166,84 @@ fn compiles_at_some_arity(name: &str) -> bool {
         oxml::XPath::compile(&format!("{name}({args})")).is_ok()
     })
 }
+
+/// The README's benchmark table must name benchmarks that exist.
+///
+/// It documented `parse/deep_500` long after the benchmark was renamed
+/// to `deep_max` — the rename happened because 500 levels exceeded
+/// `MAX_DEPTH` and the benchmark panicked on every run, undetected,
+/// since `cargo test` does not build benches. The table also omitted
+/// `xpath/eval_numeric_predicate` entirely.
+#[test]
+fn the_readme_benchmark_table_matches_the_benches() {
+    // Benchmark names as registered, read from the bench sources.
+    let sources: [(&str, &str); 5] = [
+        ("parse", include_str!("../benches/parse.rs")),
+        ("xpath", include_str!("../benches/xpath.rs")),
+        ("encoding", include_str!("../benches/encoding.rs")),
+        ("tree", include_str!("../benches/tree.rs")),
+        ("entities", include_str!("../benches/entities.rs")),
+    ];
+    let mut registered = Vec::new();
+    for (group, src) in sources {
+        for (i, _) in src.match_indices("bench_function(\"") {
+            let rest = &src[i + "bench_function(\"".len()..];
+            let name = &rest[..rest.find('"').expect("closing quote")];
+            registered.push(format!("{group}/{name}"));
+        }
+    }
+    assert!(
+        registered.len() >= 19,
+        "expected at least 19 benchmarks, found {}: {registered:?}",
+        registered.len()
+    );
+
+    // Names the README's benchmark table lists.
+    let readme = include_str!("../README.md");
+    let start = readme
+        .find("| Benchmark | What it isolates |")
+        .expect("the benchmark table is in the README");
+    let mut listed = Vec::new();
+    for line in readme[start..].lines().skip(2) {
+        if !line.starts_with("| `") {
+            break;
+        }
+        let rest = &line[3..];
+        listed.push(rest[..rest.find('`').expect("closing tick")].to_owned());
+    }
+
+    for name in &listed {
+        assert!(
+            registered.contains(name),
+            "README documents `{name}`, which is not a registered benchmark"
+        );
+    }
+    for name in &registered {
+        assert!(
+            listed.contains(name),
+            "benchmark `{name}` exists but the README does not list it"
+        );
+    }
+}
+
+/// The README must not publish an absolute timing.
+///
+/// `doc/BENCHMARKS.md` sets the rule — no figure without its machine,
+/// toolchain, load average and confidence interval — and the README
+/// was breaking it with six bare numbers, measured under conditions
+/// nobody recorded.
+#[test]
+fn the_readme_publishes_no_bare_timings() {
+    let readme = include_str!("../README.md");
+    let start = readme.find("## Benchmarks").expect("a benchmarks section");
+    let end = readme[start..]
+        .find("\n## ")
+        .map_or(readme.len(), |o| start + o);
+    let section = &readme[start..end];
+    for unit in [" µs |", " ms |", " ns |", " s |"] {
+        assert!(
+            !section.contains(unit),
+            "the benchmark section publishes a bare `{unit}` timing"
+        );
+    }
+}

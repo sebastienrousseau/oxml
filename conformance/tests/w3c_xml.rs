@@ -95,3 +95,57 @@ fn no_input_in_the_suite_panics_the_parser() {
         .collect();
     assert!(panics.is_empty(), "these inputs panicked: {panics:?}");
 }
+
+/// The figures published in `doc/` must be the figures the suite
+/// actually produces.
+///
+/// `doc/CONFORMANCE.md` carried a per-submission table from the 93.6%
+/// era long after the real rate was 98.6% — understating `xmltest` by
+/// eight points — and stated 98.6% in one paragraph and 93.6% in
+/// another, in the same file. Prose restating a measured number drifts
+/// from it silently, so the number is checked here rather than
+/// proof-read.
+#[test]
+fn the_published_conformance_figures_are_current() {
+    let root = require_suite!();
+    let cases = catalog::load(&root).expect("catalog loads");
+    let (_, counts) = runner::run_all(&cases);
+
+    // The exact line both documents quote in a fenced block.
+    let headline = format!(
+        "{} pass, {} fail, {} panic, {} unsupported, {} blocked",
+        counts.pass,
+        counts.fail,
+        counts.panic,
+        counts.unsupported,
+        counts.blocked,
+    );
+    let rates = format!(
+        "{:.1}% of {} decided ({:.1}% coverage of {})",
+        counts.pass_rate(),
+        counts.decided(),
+        counts.coverage(),
+        counts.total(),
+    );
+
+    for (name, text) in [
+        (
+            "doc/CONFORMANCE.md",
+            include_str!("../../doc/CONFORMANCE.md"),
+        ),
+        ("doc/TESTING.md", include_str!("../../doc/TESTING.md")),
+    ] {
+        assert!(
+            text.contains(&headline),
+            "{name} does not report `{headline}`"
+        );
+        assert!(text.contains(&rates), "{name} does not report `{rates}`");
+    }
+
+    // The pass rate appears in prose too, where it drifted before.
+    let prose = format!("{:.1}% of 2,557 decided", counts.pass_rate());
+    assert!(
+        include_str!("../../doc/CONFORMANCE.md").contains(&prose),
+        "doc/CONFORMANCE.md does not state `{prose}` in prose"
+    );
+}

@@ -43,13 +43,17 @@
 - [Namespaces resolve by URI](#namespaces-resolve-by-uri) — the element/attribute asymmetry
 - [XPath name tests resolve namespaces](#xpath-name-tests-resolve-namespaces) — and unprefixed names match no namespace
 - [Number formatting](#number-formatting) — why `sum()` prints `17.49`
-- [Entity expansion is not supported](#entity-expansion-is-not-supported) — and that is the point
+- [Entity expansion is bounded, and external entities are never
+  fetched](#entity-expansion-is-bounded-and-external-entities-are-never-fetched)
+  — expansion happens, within a budget
 
 **Practical**
 
 - [Library usage](#library-usage) — the full surface
 - [Configuration](#configuration) — limits, profiles, cargo features
 - [Error reporting](#error-reporting) — offsets, line/column, carets
+- [External entities and subsets](#external-entities-and-subsets) —
+  supplied by the caller, never fetched
 - [Encodings](#encodings) — UTF-8, UTF-16, ISO-8859-1
 - [Examples](#examples) — runnable programs
 - [When not to use oxml](#when-not-to-use-oxml) — honestly
@@ -255,16 +259,20 @@ Two architectural choices motivate the design:
 - Arena-backed, index-addressed nodes; `NodeId` is `Copy` and
   pointer-sized
 - Child and attribute lists as `(start, len)` ranges into shared
-  vectors; element names interned behind a `NameId`
+  vectors; element **and attribute** names interned behind a `NameId`,
+  which also records the prefix each was written with
 - Parent, children, descendants, text (XPath `string-value` semantics)
 - Attributes as first-class nodes
 - `Send + Sync`, so one document serves any number of threads
 
 **XPath 1.0**
 
-- Ten axes: `child`, `descendant`, `descendant-or-self`, `parent`,
-  `ancestor`, `ancestor-or-self`, `self`, `attribute`,
-  `following-sibling`, `preceding-sibling`
+- Twelve of the thirteen axes: `child`, `descendant`,
+  `descendant-or-self`, `parent`, `ancestor`, `ancestor-or-self`,
+  `self`, `attribute`, `following-sibling`, `preceding-sibling`,
+  `following`, `preceding`. The `namespace` axis is **not**
+  implemented — namespace declarations are resolved and discarded
+  rather than retained as nodes
 - Abbreviations: `//`, `.`, `..`, `@`
 - Node tests: name, `*`, `text()`, `comment()`, `node()`
 - Predicates, including positional (`[1]`) and existential comparison
@@ -290,12 +298,15 @@ Two architectural choices motivate the design:
 
 - 2,520 of 2,557 decided W3C conformance tests pass (98.6%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- Over 240 tests and 16 doctests; 97.4% line coverage, gated in CI
+- 358 tests and 22 doctests; 97.3% line coverage, gated in CI
 - Five fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not yet:** serialisation, mutation, XSD validation, XSLT, XPath 2.0+,
-and the external DTD subset — which is what most of the remaining
-conformance failures need.
+and the `namespace` axis. The external DTD subset is supported when the
+caller supplies it — see [External entities and
+subsets](#external-entities-and-subsets) — but is never fetched, and
+most remaining conformance failures need entity replacement text parsed
+as markup rather than substituted as text.
 
 ## Ecosystem comparison
 
@@ -321,18 +332,41 @@ useful as ratios, not absolutes:
 cargo bench
 ```
 
-| Benchmark | Time | What it measures |
-|---|---|---|
-| `parse/wide_1000` | 489 µs | 1,000 sibling elements — sibling handling |
-| `parse/deep_500` | 109 µs | 500 nesting levels — recursion |
-| `parse/attributes_1000` | 823 µs | 4 attributes each, namespaced — resolution |
-| `xpath/compile` | 889 ns | Compiling `//book[@lang='en']/title` |
-| `xpath/eval_descendant` | 245 µs | `//title` over 2,000 books |
-| `xpath/eval_predicate` | 1.19 ms | `//book[@lang='en']/title` over 2,000 books |
+**No absolute figures are published here.** The same binary on the same
+machine on the same day measured 14.7 MB/s and 123.1 MB/s, the
+difference being a load average above 30 on six cores. An 8× spread
+means any number in that range is truthful and none is informative, so
+[`doc/BENCHMARKS.md`](https://github.com/sebastienrousseau/oxml/blob/main/doc/BENCHMARKS.md)
+states the method and the conditions a figure must carry, and this
+table says what each benchmark isolates.
+
+| Benchmark | What it isolates |
+|---|---|
+| `parse/wide_1000` | 1,000 sibling elements — sibling handling |
+| `parse/deep_max` | Nesting to just inside `MAX_DEPTH` — recursion |
+| `parse/attributes_1000` | 4 attributes each, namespaced — resolution |
+| `xpath/compile` | Compiling `//book[@lang='en']/title` |
+| `xpath/eval_descendant` | `//title` over 2,000 books |
+| `xpath/eval_predicate` | `//book[@lang='en']/title` over 2,000 books |
+| `xpath/eval_numeric_predicate` | A positional predicate over the same |
+| `encoding/decode_utf8_borrowed` | The zero-copy path — nothing is transcoded |
+| `encoding/decode_utf16_be` | UTF-16 big-endian, which must allocate |
+| `encoding/decode_utf16_le` | UTF-16 little-endian |
+| `encoding/decode_latin1` | ISO-8859-1 |
+| `encoding/parse_bytes_utf16_be` | Decode and parse together, as a caller pays it |
+| `tree/descendants_2000` | A full arena walk |
+| `tree/text_of_root` | Gathering a subtree's character data |
+| `tree/children_of_each` | Child lists through the shared arena |
+| `tree/attribute_by_name` | Lookup by expanded name |
+| `entities/expand_1000_references` | 1,000 references to one declared entity |
+| `entities/literal_equivalent` | The same output written out — the control |
+| `entities/nested_four_levels` | Nested expansion, inside the budget |
 
 Compilation and evaluation are timed separately on purpose: a caller
 that compiles once and evaluates many times pays only the second, and
-reporting a combined figure would hide that.
+reporting a combined figure would hide that. `entities` carries its own
+control for the same reason — expansion cost is only meaningful against
+the cost of the characters it produces.
 
 **The benchmarks have already earned their place.** The first
 implementation deduplicated each step's results with a linear
@@ -556,13 +590,15 @@ cargo run --example parse_and_query
 
 | Example | What it shows |
 |---|---|
-| [`parse_and_query`](examples/parse_and_query.rs) | XPath queries and direct tree traversal side by side |
-| [`walk_the_tree`](examples/walk_the_tree.rs) | Node kinds, parents, children, descendants, and comparing expanded names |
-| [`read_attributes`](examples/read_attributes.rs) | Attributes by local name and by namespace, and attributes as nodes |
-| [`xpath_values`](examples/xpath_values.rs) | The four XPath value types, conversions between them, and evaluating from a context node |
-| [`handle_errors`](examples/handle_errors.rs) | Matching on `ErrorKind`, and drawing a caret under the offending line |
-| [`apply_limits`](examples/apply_limits.rs) | Billion laughs, XXE, depth bounds, and the cost of each profile |
-| [`decode_bytes`](examples/decode_bytes.rs) | The same document in five encodings, and the two kinds of encoding failure |
+| [`parse_and_query`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/parse_and_query.rs) | XPath queries and direct tree traversal side by side |
+| [`walk_the_tree`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/walk_the_tree.rs) | Node kinds, parents, children, descendants, and comparing expanded names |
+| [`read_attributes`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/read_attributes.rs) | Attributes by local name and by namespace, and attributes as nodes |
+| [`xpath_values`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/xpath_values.rs) | The four XPath value types, conversions between them, and evaluating from a context node |
+| [`handle_errors`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/handle_errors.rs) | Matching on `ErrorKind`, and drawing a caret under the offending line |
+| [`apply_limits`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/apply_limits.rs) | Billion laughs, XXE, depth bounds, and the cost of each profile |
+| [`external_entities`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/external_entities.rs) | Supplying external entities and subsets, an allow-list source, and why XXE cannot happen |
+| [`names_and_ids`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/names_and_ids.rs) | Qualified names, DTD-declared IDs, inherited `xml:lang`, and the functions that read them |
+| [`decode_bytes`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/decode_bytes.rs) | The same document in five encodings, and the two kinds of encoding failure |
 
 ## Configuration
 
@@ -805,13 +841,14 @@ why a number without its conditions is not a measurement.
 
 ### How conformant is it?
 
-93.6% of decided tests in the W3C XML Conformance Test Suite, release
+98.6% of decided tests in the W3C XML Conformance Test Suite, release
 `xmlts20130923`, with 98.9% coverage of the 2,585 tests and zero panics.
 Both numbers are published because either alone misleads: a pass rate
 can be raised by skipping the hard tests.
 
-Of the failures, most require the **external** DTD subset, which `oxml`
-never fetches — see below.
+Most of the 37 remaining failures need entity replacement text to be
+**parsed as markup** rather than substituted as text — a structural
+change to how expansion works, not a missing feature.
 
 ### Why does it not fetch external entities?
 
@@ -976,13 +1013,13 @@ because of it. That trade is stated rather than hidden.
 
 ### How do I report a security issue?
 
-See [SECURITY.md](SECURITY.md). Please do not open a public issue for a
+See [SECURITY.md](https://github.com/sebastienrousseau/oxml/blob/main/SECURITY.md). Please do not open a public issue for a
 vulnerability.
 
 ## Development
 
 ```bash
-cargo test                  # 244 tests, plus 16 doctests
+cargo test                  # 360 tests, plus 22 doctests
 cargo test --no-default-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check
@@ -995,7 +1032,7 @@ build and a check that `#![forbid(unsafe_code)]` is still present.
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for reporting and the full threat model.
+See [SECURITY.md](https://github.com/sebastienrousseau/oxml/blob/main/SECURITY.md) for reporting and the full threat model.
 
 In summary:
 
@@ -1019,10 +1056,10 @@ In summary:
 ## Documentation
 
 - [API documentation](https://docs.rs/oxml)
-- [CHANGELOG.md](CHANGELOG.md)
-- [CONTRIBUTING.md](CONTRIBUTING.md)
-- [GOVERNANCE.md](GOVERNANCE.md)
-- [SECURITY.md](SECURITY.md)
+- [CHANGELOG.md](https://github.com/sebastienrousseau/oxml/blob/main/CHANGELOG.md)
+- [CONTRIBUTING.md](https://github.com/sebastienrousseau/oxml/blob/main/CONTRIBUTING.md)
+- [GOVERNANCE.md](https://github.com/sebastienrousseau/oxml/blob/main/GOVERNANCE.md)
+- [SECURITY.md](https://github.com/sebastienrousseau/oxml/blob/main/SECURITY.md)
 
 ## Acknowledgements
 

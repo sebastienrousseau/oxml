@@ -3,10 +3,12 @@
 
 //! `XPath` 1.0.
 //!
-//! The only `XPath` implementation on crates.io, `sxd-xpath`, has not
-//! been released since 2018. This module exists to close that gap:
-//! compile an expression once with [`XPath::compile`], then evaluate
-//! it against as many documents as you like.
+//! The only other pure-Rust `XPath` implementation on crates.io,
+//! `sxd-xpath`, has not been released since 2018; the `libxml`
+//! bindings offer one, at the cost of linking C. This module exists to
+//! close that gap: compile an expression once with
+//! [`XPath::compile`], then evaluate it against as many documents as
+//! you like.
 
 mod ast;
 mod eval;
@@ -35,7 +37,12 @@ impl XPath {
     ///
     /// # Errors
     ///
-    /// Returns [`XPathError`] if the expression is malformed.
+    /// Returns [`XPathError`] if the expression is malformed, names a
+    /// function outside `XPath` 1.0's library, or passes a function
+    /// the wrong number of arguments. The last two are compile errors
+    /// rather than empty results on purpose: an unknown name that
+    /// evaluated to nothing was indistinguishable from a document with
+    /// no match.
     ///
     /// # Examples
     ///
@@ -64,8 +71,9 @@ impl XPath {
     ///
     /// # Errors
     ///
-    /// Returns [`XPathError`] if the expression is malformed or uses an
-    /// unbound prefix.
+    /// Returns [`XPathError`] as [`XPath::compile`] does, and
+    /// additionally if the expression uses a prefix these bindings do
+    /// not cover.
     ///
     /// # Examples
     ///

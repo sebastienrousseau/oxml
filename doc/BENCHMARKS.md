@@ -45,6 +45,9 @@ benches.
 |---|---|
 | `parse` | Document construction, across document shapes and sizes |
 | `xpath` | Expression compilation, and evaluation separately from it |
+| `encoding` | Decoding, which runs before parsing on every `parse_bytes` |
+| `tree` | Reading a parsed document, which an XPath-free caller still pays |
+| `entities` | Expansion, against a control with the same output and no entities |
 
 The two are separate because they have different characteristics and
 different consumers. Compilation is a one-off; evaluation is the thing

@@ -57,8 +57,8 @@ The XML Conformance Test Suite (`xmlts20130923`, 2,585 tests) is
 downloaded, verified against a pinned SHA-256, and run on every push.
 
 ```
-overall  2393 pass, 164 fail, 0 panic, 28 unsupported, 0 blocked
-         93.6% of 2557 decided (98.9% coverage of 2585)
+overall  2520 pass, 37 fail, 0 panic, 28 unsupported, 0 blocked
+         98.6% of 2557 decided (98.9% coverage of 2585)
 ```
 
 Both numbers are reported together, always. A pass rate on a thin
@@ -137,7 +137,7 @@ Miri, libm and the host disagreed by 2 ULP on `17.49`.
 ## Coverage
 
 ≥95% of lines, gated in CI, measured with `cargo-llvm-cov`. Currently
-**97.4%**.
+**97.3%**.
 
 Two exclusions, both narrow and deliberate: `conformance/src/bin/`,
 whose two `main()` functions shell out to the network and to `tar`.
@@ -177,7 +177,7 @@ powerset were the ones that did it — a `Vec` that resolves through the
 The individual commands:
 
 ```bash
-cargo test --workspace --all-features        # 244 tests + 16 doctests
+cargo test --workspace --all-features        # 377 tests + 22 doctests
 cargo test --no-default-features             # the no_std surface
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check

@@ -26,11 +26,11 @@ one is listed as not done, however close it feels.
 | Panics on hostile input | Zero | 0 across 2,585 conformance documents, 5 fuzz targets, Miri | ✅ |
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
-| Line coverage | ≥95% | **97.4%**, gated | ✅ |
+| Line coverage | ≥95% | **97.3%**, gated | ✅ |
 | Conformance | Published with denominator | **98.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **1.13** | ✅ |
 | Throughput | <100 ms at load | **Not measured** — see below | ❌ |
-| XPath 1.0 | Complete | 10 axes, **all 27 functions**, namespaces resolved | ✅ |
+| XPath 1.0 | Complete | **All 27 functions**; 12 of 13 axes — only `namespace` absent | 🟡 |
 | Documentation | House style, all 6 crates | READMEs, `doc/`, examples, FAQs across all six | ✅ |
 | Streaming | An entry point | Not started | ❌ |
 
@@ -46,7 +46,7 @@ defects.
 
 **Verification.** W3C suite with a ratcheted baseline; five seeded fuzz
 targets; Miri; property tests; feature powerset; `no_std` on three
-targets; 97.4% coverage with the conformance harness inside the floor.
+targets; 97.3% coverage with the conformance harness inside the floor.
 
 **Performance.** 4.13 → **1.13 allocations per node**, held to a
 ceiling by a test.
@@ -91,10 +91,10 @@ Breaking: `Document::text` would return `&str` rather than `String`.
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
 
-**55 failures have been fixed since counting began** — 163 to 108,
-taking the pass rate from 93.6% to **95.8%**. Not one needed a feature;
-every one was a rule the parser already had the information to enforce
-and was not enforcing.
+**126 failures have been fixed since counting began** — 163 to 37,
+taking the pass rate from 93.6% to **98.6%**. Almost none needed a
+feature; nearly every one was a rule the parser already had the
+information to enforce and was not enforcing.
 
 What is left is two pieces of work, not more missing checks:
 

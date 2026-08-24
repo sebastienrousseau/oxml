@@ -58,6 +58,18 @@ harness = false
 name = "xpath"
 harness = false
 
+[[bench]]
+name = "encoding"
+harness = false
+
+[[bench]]
+name = "tree"
+harness = false
+
+[[bench]]
+name = "entities"
+harness = false
+
 [[example]]
 name = "parse_and_query"
 path = "examples/parse_and_query.rs"
@@ -100,6 +112,11 @@ required-features = ["std"]
 name = "names_and_ids"
 path = "examples/names_and_ids.rs"
 required-features = ["std", "xpath"]
+
+[[example]]
+name = "external_entities"
+path = "examples/external_entities.rs"
+required-features = ["std"]
 
 [[test]]
 name = "doc_examples"
