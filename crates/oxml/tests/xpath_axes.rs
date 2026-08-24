@@ -385,3 +385,174 @@ fn following_and_preceding_have_no_abbreviation() {
     // `//` is `descendant-or-self`, not `following`.
     assert_eq!(count("//book"), 3);
 }
+
+/// A document whose namespace declarations nest and shadow.
+const NS_DOC: &str = "\
+<r xmlns=\"urn:d\" xmlns:a=\"urn:a\">\
+<m xmlns:b=\"urn:b\"><n/></m>\
+<s xmlns:a=\"urn:shadow\"><t/></s>\
+</r>";
+
+/// Evaluate against [`NS_DOC`], selecting by local name because the
+/// elements are in a default namespace and an unprefixed name test
+/// matches no namespace.
+fn ns_val(expr: &str) -> String {
+    let doc = parse(NS_DOC).expect("well-formed");
+    XPath::compile(expr)
+        .unwrap_or_else(|e| panic!("`{expr}` failed to compile: {e}"))
+        .evaluate(&doc)
+        .to_str(&doc)
+}
+
+/// `func(//*[local-name()='local']/step)` — the function has to wrap
+/// the path, since a function call is not a location step.
+fn at(func: &str, local: &str, step: &str) -> String {
+    format!("{func}(//*[local-name()='{local}']/{step})")
+}
+
+/// `namespace::` reports every namespace in scope, not only the
+/// declarations written on the element.
+#[test]
+fn the_namespace_axis_includes_inherited_declarations() {
+    // `r` declares the default namespace and `a`; `xml` is bound by
+    // specification without being declared. Three.
+    assert_eq!(ns_val(&at("count", "r", "namespace::*")), "3");
+    // `m` adds `b` and inherits the other three.
+    assert_eq!(ns_val(&at("count", "m", "namespace::*")), "4");
+    // `n` declares nothing and inherits all four.
+    assert_eq!(ns_val(&at("count", "n", "namespace::*")), "4");
+}
+
+/// A prefix declared nearer shadows the same prefix declared further
+/// up, rather than appearing twice.
+#[test]
+fn a_nearer_declaration_shadows_a_further_one() {
+    // `s` redeclares `a`, so it still sees three namespaces, not four.
+    assert_eq!(ns_val(&at("count", "s", "namespace::*")), "3");
+    assert_eq!(ns_val(&at("string", "t", "namespace::a")), "urn:shadow");
+    // Elsewhere the outer declaration is still the one in scope.
+    assert_eq!(ns_val(&at("string", "n", "namespace::a")), "urn:a");
+    assert_eq!(ns_val(&at("string", "r", "namespace::a")), "urn:a");
+}
+
+/// The `xml` prefix is bound for every element without being declared,
+/// so it is on the axis everywhere.
+#[test]
+fn the_xml_prefix_is_always_on_the_namespace_axis() {
+    const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+    for element in ["r", "m", "n", "s", "t"] {
+        assert_eq!(
+            ns_val(&at("string", element, "namespace::xml")),
+            XML_NS,
+            "`xml` must be in scope for `{element}`"
+        );
+    }
+    // A document that declares nothing still has it, and nothing else.
+    let doc = parse("<a><b/></a>").expect("well-formed");
+    let count = XPath::compile("count(//b/namespace::*)")
+        .expect("compiles")
+        .evaluate(&doc)
+        .to_str(&doc);
+    assert_eq!(count, "1", "only the implicit `xml` binding");
+}
+
+/// A namespace node's *name* is the prefix and its *string-value* is
+/// the URI — not the other way round, and the node is itself in no
+/// namespace.
+#[test]
+fn a_namespace_node_is_named_by_its_prefix() {
+    assert_eq!(ns_val(&at("string", "n", "namespace::b")), "urn:b");
+    assert_eq!(ns_val(&at("local-name", "n", "namespace::b")), "b");
+    assert_eq!(ns_val(&at("name", "n", "namespace::b")), "b");
+    // The URI is the value, so it is not also the node's namespace.
+    assert_eq!(ns_val(&at("namespace-uri", "n", "namespace::b")), "");
+    // The default declaration's node has an empty name.
+    assert_eq!(ns_val(&at("count", "r", "namespace::*[name()='']")), "1");
+    assert_eq!(
+        ns_val(&at("string", "r", "namespace::*[name()='']")),
+        "urn:d"
+    );
+}
+
+/// Namespace nodes are reachable from the namespace axis and from
+/// nowhere else.
+#[test]
+fn namespace_nodes_are_on_no_other_axis() {
+    // Two element children, and four descendants counting `node()`.
+    assert_eq!(ns_val(&at("count", "r", "child::*")), "2");
+    assert_eq!(ns_val(&at("count", "r", "child::node()")), "2");
+    assert_eq!(ns_val(&at("count", "r", "descendant::node()")), "4");
+    // Not attributes, however similar the storage.
+    assert_eq!(ns_val(&at("count", "r", "attribute::*")), "0");
+    assert_eq!(ns_val(&at("count", "m", "attribute::*")), "0");
+    // Not on following or preceding, which are defined over document
+    // order and would otherwise sweep them in.
+    assert_eq!(ns_val(&at("count", "t", "preceding::*")), "2");
+    assert_eq!(ns_val(&at("count", "t", "preceding::node()")), "2");
+    assert_eq!(ns_val(&at("count", "m", "following::node()")), "2");
+    // The document node has no namespace nodes of its own.
+    let doc = parse(NS_DOC).expect("well-formed");
+    let n = XPath::compile("count(/namespace::*)")
+        .expect("compiles")
+        .evaluate(&doc)
+        .to_str(&doc);
+    assert_eq!(n, "0", "the root node has no namespaces");
+}
+
+/// An undeclaration binds nothing, so it contributes no namespace node.
+#[test]
+fn undeclaring_a_prefix_removes_it_from_the_axis() {
+    // Undeclaring the default namespace is XML 1.1 only.
+    let src = "<?xml version=\"1.1\"?><r xmlns=\"urn:d\"><m xmlns=\"\"/></r>";
+    let doc = parse(src).expect("well-formed");
+    let count = |expr: &str| {
+        XPath::compile(expr)
+            .expect("compiles")
+            .evaluate(&doc)
+            .to_str(&doc)
+    };
+    // `r` has the default declaration and `xml`.
+    assert_eq!(count("count(//*[local-name()='r']/namespace::*)"), "2");
+    // `m` undeclares it, so only `xml` remains in scope.
+    assert_eq!(count("count(//*[local-name()='m']/namespace::*)"), "1");
+    assert_eq!(count("count(//*[local-name()='m']/namespace::xml)"), "1");
+    assert_eq!(
+        count("string(//*[local-name()='m']/namespace::xml)"),
+        "http://www.w3.org/XML/1998/namespace"
+    );
+    // The undeclared default namespace is gone, not bound to "".
+    assert_eq!(
+        count("count(//*[local-name()='m']/namespace::*[name()=''])"),
+        "0"
+    );
+}
+
+/// All thirteen axes `XPath` 1.0 defines are reachable by name.
+#[test]
+fn every_axis_is_implemented() {
+    let axes = [
+        "child",
+        "descendant",
+        "descendant-or-self",
+        "parent",
+        "ancestor",
+        "ancestor-or-self",
+        "self",
+        "attribute",
+        "namespace",
+        "following",
+        "following-sibling",
+        "preceding",
+        "preceding-sibling",
+    ];
+    assert_eq!(axes.len(), 13, "XPath 1.0 defines thirteen axes");
+    for axis in axes {
+        let expr = format!("//book/{axis}::node()");
+        assert!(
+            XPath::compile(&expr).is_ok(),
+            "`{axis}::` must compile: {expr}"
+        );
+    }
+    // A name that is not an axis is not silently treated as one.
+    assert!(XPath::compile("//book/nonsuch::node()").is_err());
+}

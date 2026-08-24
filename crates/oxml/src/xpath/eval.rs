@@ -292,6 +292,36 @@ fn axis_nodes(doc: &Document, node: NodeId, axis: Axis) -> Vec<NodeId> {
                 sibs[..idx].to_vec()
             }
         }
+        // Every namespace in scope, which is the element's own
+        // declarations plus its ancestors'. A prefix declared nearer
+        // shadows the same prefix declared further up, so the walk
+        // keeps the first node it sees for each prefix.
+        Axis::Namespace => {
+            let mut out: Vec<NodeId> = Vec::new();
+            let mut seen: Vec<&str> = Vec::new();
+            let mut at = Some(node);
+            while let Some(current) = at {
+                for &ns in doc.namespace_nodes(current) {
+                    let Some(NodeKind::Namespace { prefix, uri }) =
+                        doc.kind(ns)
+                    else {
+                        continue;
+                    };
+                    if seen.contains(&prefix.as_str()) {
+                        continue;
+                    }
+                    seen.push(prefix.as_str());
+                    // An undeclaration shadows the ancestor binding
+                    // and then contributes nothing itself: the prefix
+                    // is out of scope, not bound to the empty string.
+                    if !uri.is_empty() {
+                        out.push(ns);
+                    }
+                }
+                at = doc.parent(current);
+            }
+            out
+        }
         // Both are defined over the whole document rather than one
         // parent's children, and both exclude attribute nodes however
         // they are positioned. Arena indices are assigned in document
@@ -304,7 +334,10 @@ fn axis_nodes(doc: &Document, node: NodeId, axis: Axis) -> Vec<NodeId> {
                 // Attribute nodes are on neither axis. Namespace nodes
                 // would be excluded here too, once they exist.
                 .filter(|&cand| {
-                    !matches!(doc.kind(cand), Some(NodeKind::Attr(_)))
+                    !matches!(
+                        doc.kind(cand),
+                        Some(NodeKind::Attr(_) | NodeKind::Namespace { .. })
+                    )
                 })
                 .filter(|&cand| {
                     if axis == Axis::Following {
@@ -359,6 +392,24 @@ fn test_matches(
                         && name.namespace.as_deref() == namespace.as_deref()
                 })
             }
+            _ => false,
+        };
+    }
+    // On the namespace axis the candidates are namespace nodes, whose
+    // name is the declared prefix. A name test matches that prefix, so
+    // `namespace::m` selects the node declaring `m`. The test's own
+    // namespace part is never consulted: a namespace node is in no
+    // namespace, and a prefixed test could not match one.
+    if axis == Axis::Namespace {
+        return match (test, doc.kind(node)) {
+            (
+                NodeTest::Wildcard | NodeTest::Any,
+                Some(NodeKind::Namespace { .. }),
+            ) => true,
+            (
+                NodeTest::Name { namespace, local },
+                Some(NodeKind::Namespace { prefix, .. }),
+            ) => namespace.is_none() && local == prefix,
             _ => false,
         };
     }
@@ -709,6 +760,10 @@ fn name_parts(doc: &Document, id: NodeId) -> Option<(&str, Option<&str>)> {
         NodeKind::ProcessingInstruction { target, .. } => {
             Some((target.as_str(), None))
         }
+        // The node's *name* is the prefix; the URI is its
+        // string-value, not its namespace. A namespace node is itself
+        // in no namespace.
+        NodeKind::Namespace { prefix, .. } => Some((prefix.as_str(), None)),
         NodeKind::Root | NodeKind::Text(_) | NodeKind::Comment(_) => None,
     }
 }
@@ -789,6 +844,7 @@ fn qualified_name(doc: &Document, id: NodeId) -> Option<String> {
         NodeKind::ProcessingInstruction { target, .. } => {
             return Some(target.clone());
         }
+        NodeKind::Namespace { prefix, .. } => return Some(prefix.clone()),
         NodeKind::Root | NodeKind::Text(_) | NodeKind::Comment(_) => {
             return None;
         }

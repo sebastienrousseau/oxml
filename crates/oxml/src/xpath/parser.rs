@@ -640,6 +640,7 @@ fn axis_from_name(n: &str) -> Option<Axis> {
         "preceding-sibling" => Axis::PrecedingSibling,
         "following" => Axis::Following,
         "preceding" => Axis::Preceding,
+        "namespace" => Axis::Namespace,
         _ => return None,
     })
 }

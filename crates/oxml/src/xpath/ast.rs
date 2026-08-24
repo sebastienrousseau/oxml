@@ -36,6 +36,9 @@ pub enum Axis {
     /// `preceding::` — everything before the context node in document
     /// order that is not one of its ancestors.
     Preceding,
+    /// `namespace::` — every namespace in scope for an element, its
+    /// own declarations and those inherited from its ancestors.
+    Namespace,
 }
 
 /// What a step matches once the axis has produced candidates.

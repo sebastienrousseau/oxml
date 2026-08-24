@@ -81,6 +81,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Namespace declarations are nodes too, reachable from the
+    // `namespace::` axis. `namespace_nodes` gives the ones written on
+    // an element; the axis adds everything inherited from ancestors.
+    println!("\n== namespace declarations ==");
+    let catalogue = doc.root_element().expect("a root element");
+    for &ns in doc.namespace_nodes(catalogue) {
+        if let Some(NodeKind::Namespace { prefix, uri }) = doc.kind(ns) {
+            let shown = if prefix.is_empty() {
+                "(default)"
+            } else {
+                prefix
+            };
+            println!("  declared on <catalogue>: {shown} -> {uri}");
+        }
+    }
+    // `xml` is bound by specification, so it is in scope without being
+    // written anywhere -- including on elements that declare nothing.
+    let in_scope = XPath::compile("count(//item[1]/namespace::*)")?
+        .evaluate(&doc)
+        .to_str(&doc);
+    println!("  in scope for <item>: {in_scope} (a, b and the implicit xml)");
+    let xml_uri = XPath::compile("string(//item[1]/namespace::xml)")?
+        .evaluate(&doc)
+        .to_str(&doc);
+    println!("  namespace::xml     : {xml_uri}");
+
     // `sku` is declared ID, so `id()` finds it. `id` is not declared
     // anything, so it is an ordinary attribute however it is spelled.
     println!("\n== declared IDs ==");

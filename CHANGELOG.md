@@ -20,9 +20,16 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 - **`Document::prefix`**, the prefix an interned name was written with,
   and **`Document::element_by_id`**, the element carrying an `ID`-typed
   attribute with a given value.
-- **The `following` and `preceding` axes**, taking `XPath` from 10 of
-  the 13 axes to 12. Only `namespace` remains, which needs namespace
-  declarations retained as nodes rather than resolved and discarded.
+- **All thirteen `XPath` axes.** `following`, `preceding` and
+  `namespace` were absent; the roadmap called `XPath` complete on the
+  strength of the function library alone.
+- **`NodeKind::Namespace` and `Document::namespace_nodes`.** Namespace
+  declarations were resolved and discarded, so there was nothing for
+  `namespace::` to return. One node exists per declaration, not per
+  element it is in scope for -- the axis walks ancestors and applies
+  shadowing. `xml` is bound by specification, so the root element
+  carries a node for it, which is one extra node per document: a
+  document's `len()` is one higher than before.
 - **Three benchmark groups**: `encoding` (the zero-copy UTF-8 path
   against the three that must allocate), `tree` (traversal, subtree
   text, attribute lookup) and `entities` (expansion against a control

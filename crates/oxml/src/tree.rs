@@ -111,6 +111,14 @@ pub enum NodeKind {
         /// so they are already contiguous — no scratch stack needed,
         /// unlike children.
         attributes: (u32, u32),
+        /// Where this element's namespace nodes live in the document's
+        /// flat namespace arena, as `(start, len)`. Resolve it with
+        /// [`Document::namespace_nodes`].
+        ///
+        /// Only the declarations written on *this* element. Everything
+        /// else in scope belongs to an ancestor and is reached by
+        /// walking up.
+        namespaces: (u32, u32),
     },
     /// An attribute.
     ///
@@ -124,6 +132,29 @@ pub enum NodeKind {
     Text(String),
     /// A comment's content, without the `<!--` and `-->`.
     Comment(String),
+    /// A namespace declaration in scope for an element.
+    ///
+    /// Like attributes, these are real nodes so `XPath`'s `namespace::`
+    /// axis can yield them, and like attributes they are deliberately
+    /// **not** in their element's `children`. One node exists per
+    /// `xmlns` declaration in the source, not per element the
+    /// declaration is in scope for -- the axis walks ancestors and
+    /// applies shadowing, so a document does not pay for inheritance.
+    Namespace {
+        /// The prefix declared, or empty for the default namespace.
+        ///
+        /// This is the namespace node's name in `XPath`'s data model:
+        /// `local-name()` returns it, and it is empty rather than
+        /// absent for `xmlns="..."`.
+        prefix: String,
+        /// The URI bound to it, which is the node's string-value.
+        ///
+        /// Empty for an *undeclaration* (`xmlns=""`, XML 1.1 only).
+        /// Such a node exists so it can shadow the same prefix on an
+        /// ancestor, but `namespace::` does not report it: the prefix
+        /// is out of scope, not bound to the empty string.
+        uri: String,
+    },
     /// A processing instruction.
     ProcessingInstruction {
         /// The PI target, e.g. `xml-stylesheet`.
@@ -199,6 +230,8 @@ pub struct Document {
     /// kept past parsing. Empty for the overwhelming majority of
     /// documents, which declare no `ID` attribute at all.
     pub(crate) ids: BTreeMap<String, NodeId>,
+    /// All namespace-node lists, concatenated.
+    pub(crate) ns_ids: Vec<NodeId>,
 }
 
 impl Document {
@@ -224,6 +257,7 @@ impl Document {
             child_ids: Vec::with_capacity(nodes),
             scratch: Vec::new(),
             ids: BTreeMap::new(),
+            ns_ids: Vec::new(),
         }
     }
 
@@ -395,6 +429,26 @@ impl Document {
         }
     }
 
+    /// The namespace nodes an element *declares*.
+    ///
+    /// Not everything in scope: a prefix declared on an ancestor is in
+    /// scope here but its node belongs to that ancestor. `XPath`'s
+    /// `namespace::` axis walks up and applies shadowing; this is the
+    /// raw declaration list.
+    #[must_use]
+    pub fn namespace_nodes(&self, id: NodeId) -> &[NodeId] {
+        match self.kind(id) {
+            Some(NodeKind::Element { namespaces, .. }) => {
+                let (start, len) =
+                    (namespaces.0 as usize, namespaces.1 as usize);
+                self.ns_ids
+                    .get(start..start.saturating_add(len))
+                    .unwrap_or(&[])
+            }
+            _ => &[],
+        }
+    }
+
     /// An element's attributes, in document order.
     #[must_use]
     pub fn attributes(&self, id: NodeId) -> Vec<&Attribute> {
@@ -435,6 +489,9 @@ impl Document {
     fn collect_text(&self, id: NodeId, out: &mut String) {
         match self.kind(id) {
             Some(NodeKind::Attr(a)) => out.push_str(&a.value),
+            // A namespace node's string-value is the URI, not the
+            // prefix -- the prefix is its *name*.
+            Some(NodeKind::Namespace { uri, .. }) => out.push_str(uri),
             Some(NodeKind::Text(t)) => out.push_str(t),
             Some(NodeKind::Root | NodeKind::Element { .. }) => {
                 for child in self.children(id) {
