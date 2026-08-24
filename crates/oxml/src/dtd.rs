@@ -35,9 +35,19 @@ pub(crate) enum EntityValue {
     /// "declared but not retrievable".
     ///
     /// Referencing one in an attribute value is forbidden
-    /// (`WFC: No External Entity References`); in content it is
-    /// permitted and expands to nothing here.
-    External,
+    /// (`WFC: No External Entity References`); in content it expands to
+    /// nothing unless the caller supplied its text.
+    ///
+    /// The identifiers are kept so that a caller-supplied
+    /// [`ExternalSource`] can be asked for the content.
+    ///
+    /// [`ExternalSource`]: crate::external::ExternalSource
+    External {
+        /// The `SystemLiteral`.
+        system: String,
+        /// The `PubidLiteral`, when the declaration used `PUBLIC`.
+        public: Option<String>,
+    },
     /// An unparsed entity: an `ExternalID` with an `NDataDecl`.
     ///
     /// Referencing one **anywhere** is forbidden
@@ -621,8 +631,8 @@ impl<'a> DtdParser<'a> {
             validate_entity_value(text, start, dtd.external_seen)?;
             EntityValue::Internal(text.to_owned())
         } else {
-            let public = self.starts_with("PUBLIC");
-            if !public && !self.starts_with("SYSTEM") {
+            let is_public = self.starts_with("PUBLIC");
+            if !is_public && !self.starts_with("SYSTEM") {
                 return Err((
                     self.pos,
                     "expected an entity value or ExternalID",
@@ -630,13 +640,13 @@ impl<'a> DtdParser<'a> {
             }
             self.pos += 6;
             self.require_ws()?;
-            if public {
-                let _ = self.pubid_literal()?;
+            let (system, public) = if is_public {
+                let pubid = self.pubid_literal()?.to_owned();
                 self.require_ws()?;
-                let _ = self.quoted()?;
+                (self.quoted()?.to_owned(), Some(pubid))
             } else {
-                let _ = self.quoted()?;
-            }
+                (self.quoted()?.to_owned(), None)
+            };
             // NDataDecl, for an unparsed entity. Kept apart from an
             // external *parsed* entity because the two are forbidden in
             // different places: an unparsed entity may not be
@@ -671,7 +681,7 @@ impl<'a> DtdParser<'a> {
                 let _ = self.name()?;
                 EntityValue::Unparsed
             } else {
-                EntityValue::External
+                EntityValue::External { system, public }
             }
         };
 
@@ -797,7 +807,7 @@ fn check_att_value<'n>(
                 }
             }
             // `WFC: No External Entity References`.
-            Some(EntityValue::External) => {
+            Some(EntityValue::External { .. }) => {
                 return Err((
                     offset,
                     "a default value may not reference an external entity",

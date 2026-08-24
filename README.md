@@ -285,7 +285,7 @@ Two architectural choices motivate the design:
 
 **Verification**
 
-- 2,449 of 2,557 decided W3C conformance tests pass (95.8%), with
+- 2,464 of 2,557 decided W3C conformance tests pass (96.4%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
 - Over 240 tests and 16 doctests; 97.4% line coverage, gated in CI
 - Five fuzz targets, Miri, property tests, and a feature powerset build
@@ -683,6 +683,49 @@ the offset lands inside a multi-byte character or when it is given a
 different document from the one that produced the error — a wrong
 column is a nuisance, but a panic in the error path takes down the
 process.
+
+## External entities and subsets
+
+oxml performs no I/O. A document that references an external entity or
+an external DTD subset names a *location*, and resolving it is the
+caller's decision — they have the permission model, the user, and the
+context to make it.
+
+[`parse`](https://docs.rs/oxml/latest/oxml/fn.parse.html) supplies
+nothing, so an external reference expands to nothing. That is the
+default and it is why XXE is structurally impossible rather than
+switched off.
+
+When you *do* have the content, hand it over:
+
+```rust
+use oxml::{Limits, parse_with_external};
+
+let parts: &[(&str, &str)] = &[("greeting.ent", "hello")];
+let doc = parse_with_external(
+    r#"<!DOCTYPE d [<!ENTITY g SYSTEM "greeting.ent">]><d>&g;</d>"#,
+    Limits::default(),
+    &parts,
+)?;
+assert_eq!(doc.text(doc.root()), "hello");
+# Ok::<(), oxml::Error>(())
+```
+
+Anything implementing `ExternalSource` works; a slice of
+`(system identifier, content)` pairs is the simplest one. **The parser
+still never opens a file** — the lookup happens in your code, where you
+can see it and decide.
+
+With content available, the rules only that content can settle are
+checked: a text declaration must be well formed, must name an encoding,
+must not claim `standalone`, and must not declare a version later than
+the document's. Each external entity is line-ending–normalised
+independently, by its own declared version.
+
+An entity that is **declared and never referenced is never read**. A
+processor need not fetch what a document does not use, and validating
+eagerly rejected a valid document whose unused entity happened to omit
+its encoding.
 
 ## Encodings
 

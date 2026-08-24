@@ -42,6 +42,34 @@ fn unsupported_reason(case: &TestCase) -> Option<&'static str> {
     None
 }
 
+/// Every file beside `path`, keyed by the name a document would use.
+///
+/// The suite's documents reference entities by relative path, and the
+/// entity files sit next to the document. Reading them here rather than
+/// in the parser is the point: the parser never opens a file, so
+/// supplying content is a decision made out here where it can be seen.
+fn sibling_files(path: &std::path::Path) -> Vec<(String, String)> {
+    let Some(dir) = path.parent() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // Only the kinds a document references. Reading every `.xml` in
+        // the directory would pull in unrelated test documents.
+        if !name.ends_with(".ent") && !name.ends_with(".dtd") {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(entry.path()) {
+            out.push((name, text));
+        }
+    }
+    out
+}
+
 /// Score one test case.
 #[must_use]
 pub fn run_one(case: &TestCase) -> Scored {
@@ -83,8 +111,27 @@ pub fn run_one(case: &TestCase) -> Scored {
     {
         limits.edition = oxml::Edition::Fourth;
     }
-    let parsed =
-        std::panic::catch_unwind(|| oxml::parse_bytes_with(&bytes, limits));
+    // Files the document may reference, read from the directory it
+    // lives in. oxml performs no I/O of its own -- this is the *caller*
+    // supplying content, which is the whole shape of the feature. The
+    // suite references entities by relative path, so the directory is
+    // the natural source.
+    let siblings = sibling_files(&case.path);
+    let pairs: Vec<(&str, &str)> = siblings
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect();
+    let source: &[(&str, &str)] = &pairs;
+
+    let parsed = std::panic::catch_unwind(|| {
+        let text = match oxml::encoding::decode(&bytes) {
+            Ok(text) => text,
+            // The byte entry point owns decoding; fall back to it so an
+            // encoding failure is reported exactly as before.
+            Err(e) => return Err(e),
+        };
+        oxml::parse_with_external(&text, limits, &source)
+    });
     let Ok(parsed) = parsed else {
         return scored(Outcome::Panic, "panicked".to_owned());
     };

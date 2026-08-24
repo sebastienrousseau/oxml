@@ -78,6 +78,11 @@ struct Parser<'a> {
     /// scan of the table; the few sharing a local part are compared on
     /// their namespace.
     name_index: alloc::collections::BTreeMap<String, Vec<u32>>,
+    /// Where external content comes from, if anywhere.
+    ///
+    /// Never a file or a socket: the caller supplies it, so the parser
+    /// performs no I/O whatever this is.
+    external: &'a dyn crate::external::ExternalSource,
     /// Characters of entity expansion still permitted **for the whole
     /// document**.
     ///
@@ -140,6 +145,26 @@ pub fn parse_bytes_with(input: &[u8], limits: Limits) -> Result<Document> {
 /// production forbids, or exceeds one of `limits`. Each bound has its
 /// own [`ErrorKind`], so a caller can tell which one was hit.
 pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
+    parse_with_external(input, limits, &crate::external::NoExternal)
+}
+
+/// Parse with external content the caller supplies.
+///
+/// oxml never performs I/O, so a document that names an external entity
+/// or subset gets nothing unless the caller provides it. With a source,
+/// the same parse can also check the rules only the external content
+/// can settle -- chiefly that a text declaration is well formed, names
+/// an encoding, and does not claim a version later than the document's.
+///
+/// # Errors
+///
+/// Returns [`Error`] if the input is not well-formed, or if content the
+/// source supplies is not.
+pub fn parse_with_external(
+    input: &str,
+    limits: Limits,
+    external: &dyn crate::external::ExternalSource,
+) -> Result<Document> {
     // End-of-line normalisation happens before anything else, because
     // the specification defines it as something the processor behaves
     // as though it had done "on input, before parsing". Doing it later
@@ -147,8 +172,10 @@ pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
     // and the thirteenth such rule is the one that forgets.
     let version = declared_version(input)?;
     match normalize_line_endings(input, version) {
-        Cow::Borrowed(text) => parse_normalized(text, limits, version),
-        Cow::Owned(text) => parse_normalized(&text, limits, version),
+        Cow::Borrowed(text) => {
+            parse_normalized(text, limits, version, external)
+        }
+        Cow::Owned(text) => parse_normalized(&text, limits, version, external),
     }
 }
 
@@ -254,6 +281,7 @@ fn parse_normalized(
     input: &str,
     limits: Limits,
     version: Version,
+    external: &dyn crate::external::ExternalSource,
 ) -> Result<Document> {
     // `document ::= prolog element Misc*` with
     // `prolog ::= XMLDecl? Misc*` -- the declaration comes first or not
@@ -294,6 +322,7 @@ fn parse_normalized(
             input.bytes().filter(|b| *b == b'<').count() * 2,
         ),
         name_index: alloc::collections::BTreeMap::new(),
+        external,
         ns: Namespaces::default(),
         depth: 0,
         limits,
@@ -390,7 +419,7 @@ impl<'a> Parser<'a> {
                 Error::new(ErrorKind::Unterminated("XML declaration"), self.pos)
             })?;
             let decl = &self.input[self.pos + 5..self.pos + end];
-            validate_xml_declaration(decl, self.pos)?;
+            validate_xml_declaration(decl, self.pos, true)?;
             self.pos += end + 2;
         }
         loop {
@@ -420,6 +449,12 @@ impl<'a> Parser<'a> {
         match p.parse_doctype() {
             Ok(dtd) => {
                 self.pos = p.pos;
+                // An external entity is checked when it is
+                // *referenced*, not when it is declared. A processor
+                // need not read an entity nothing uses, so validating
+                // eagerly rejected a valid document whose unreferenced
+                // entity had no `encoding` -- a rule that only applies
+                // to content you actually read.
                 self.dtd = Some(dtd);
                 Ok(())
             }
@@ -1163,14 +1198,61 @@ impl<'a> Parser<'a> {
             // external parsed entity expands to nothing, because
             // nothing is ever fetched; in an attribute value the
             // reference itself is forbidden.
-            Some(crate::dtd::EntityValue::External) => {
+            Some(crate::dtd::EntityValue::External { system, public }) => {
                 if in_attribute {
-                    Err(Error::new(
+                    return Err(Error::new(
                         ErrorKind::ForbiddenEntityReference(ent.to_owned()),
                         offset,
-                    ))
-                } else {
-                    Ok(String::new())
+                    ));
+                }
+                // Whatever the caller made available, minus its text
+                // declaration, which is markup about the entity rather
+                // than part of it. Without a source this is `None` and
+                // the reference expands to nothing, as before.
+                let (system, public) = (system.clone(), public.clone());
+                match self.external.fetch(&system, public.as_deref()) {
+                    Some(content) => {
+                        // Each external parsed entity has its own
+                        // version and is normalised independently. An
+                        // entity declaring 1.1 may use U+2028 as
+                        // whitespace -- including inside its own text
+                        // declaration, which is where this first showed
+                        // up: the declaration was reported malformed
+                        // because the separator had not been
+                        // normalised yet.
+                        let entity_version =
+                            entity_version(content, self.version);
+                        let normalized =
+                            normalize_line_endings(content, entity_version);
+                        let content: &str = &normalized;
+                        check_text_decl(content, self.version, offset)?;
+                        let body = strip_text_decl(content);
+                        // The content is parsed for illegal characters
+                        // the same way the document was; it arrived
+                        // from outside and is no more trusted.
+                        if let Some((at, c)) =
+                            body.char_indices().find(|(_, c)| {
+                                !is_literal_char_for(*c, self.version)
+                            })
+                        {
+                            let _ = at;
+                            return Err(Error::new(
+                                ErrorKind::IllegalCharacter(c),
+                                offset,
+                            ));
+                        }
+                        let mut budget = self.entity_budget;
+                        let out = self.expand_text(
+                            body,
+                            offset,
+                            1,
+                            &mut budget,
+                            false,
+                        );
+                        self.entity_budget = budget;
+                        out
+                    }
+                    None => Ok(String::new()),
                 }
             }
             // `WFC: Parsed Entity`. An unparsed entity may not be
@@ -1287,7 +1369,9 @@ impl<'a> Parser<'a> {
                 // internal entity whose text names an external one is
                 // forbidden in an attribute value just as a direct
                 // reference is.
-                Some(crate::dtd::EntityValue::External) if in_attribute => {
+                Some(crate::dtd::EntityValue::External { .. })
+                    if in_attribute =>
+                {
                     return Err(Error::new(
                         ErrorKind::ForbiddenEntityReference(name.to_owned()),
                         offset,
@@ -1399,7 +1483,109 @@ fn is_legal_version(value: &str) -> bool {
     })
 }
 
-fn validate_xml_declaration(decl: &str, offset: usize) -> Result<()> {
+/// An external entity's content without its text declaration.
+///
+/// The declaration describes the entity; it is not part of it, and
+/// leaving it in would put `<?xml …?>` into the document as text.
+/// The version an external entity declares, or the document's.
+///
+/// An entity with no text declaration inherits the document's version;
+/// one that declares its own uses that. The distinction matters before
+/// normalisation, because which characters are line terminators
+/// depends on it.
+fn entity_version(content: &str, document: Version) -> Version {
+    let Some(rest) = content.strip_prefix("<?xml") else {
+        return document;
+    };
+    if !rest.starts_with([' ', '\t', '\r', '\n']) {
+        return document;
+    }
+    match declared_version(content) {
+        // No `version` pseudo-attribute: `declared_version` answers
+        // 1.0 by default, but an entity without one inherits.
+        Ok(Version::V10) if !rest.contains("version") => document,
+        Ok(version) => version,
+        Err(_) => document,
+    }
+}
+
+fn strip_text_decl(content: &str) -> &str {
+    let Some(rest) = content.strip_prefix("<?xml") else {
+        return content;
+    };
+    if !rest.starts_with([' ', '\t', '\r', '\n']) {
+        return content;
+    }
+    match rest.find("?>") {
+        Some(end) => &rest[end + 2..],
+        None => content,
+    }
+}
+
+/// Check the text declaration at the head of an external entity.
+///
+/// `TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'`, and it
+/// differs from a document's XML declaration in three ways that the
+/// conformance suite tests heavily:
+///
+/// * `encoding` is **mandatory** here and optional there;
+/// * `standalone` is **forbidden** here -- only a document may say it;
+/// * the version, if given, may not be later than the document's. A
+///   1.1 document may include a 1.0 entity; a 1.0 document may not
+///   include a 1.1 one.
+fn check_text_decl(
+    content: &str,
+    document_version: Version,
+    offset: usize,
+) -> Result<()> {
+    let Some(rest) = content.strip_prefix("<?xml") else {
+        // A text declaration is optional; its absence says nothing.
+        return Ok(());
+    };
+    // `<?xmlfoo?>` is a processing instruction, not a declaration --
+    // and a reserved target, which the parser proper reports.
+    if !rest.starts_with([' ', '\t', '\r', '\n']) {
+        return Ok(());
+    }
+    let Some(end) = rest.find("?>") else {
+        return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+    };
+    let decl = &rest[..end];
+
+    // The same grammar as a document's declaration, so the same
+    // checker: order, duplicates, quoting, legal values.
+    validate_xml_declaration(decl, offset, false)?;
+
+    let field = |name: &str| -> Option<&str> {
+        let at = decl.find(name)?;
+        let after = decl[at + name.len()..].trim_start();
+        let after = after.strip_prefix('=')?.trim_start();
+        let quote = after.chars().next()?;
+        let body = after.get(1..)?;
+        let close = body.find(quote)?;
+        body.get(..close)
+    };
+
+    if field("encoding").is_none() {
+        return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+    }
+    if field("standalone").is_some() {
+        return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
+    }
+    if let Some(version) = field("version") {
+        let entity_is_11 = version == "1.1";
+        if entity_is_11 && document_version == Version::V10 {
+            return Err(Error::new(ErrorKind::UnsupportedVersion, offset));
+        }
+    }
+    Ok(())
+}
+
+fn validate_xml_declaration(
+    decl: &str,
+    offset: usize,
+    require_version: bool,
+) -> Result<()> {
     let mut rest = decl;
     let mut seen: Vec<&str> = Vec::new();
 
@@ -1479,8 +1665,13 @@ fn validate_xml_declaration(decl: &str, offset: usize) -> Result<()> {
         rest = &body[close + 1..];
     }
 
-    // `VersionInfo` is required, not optional.
-    if seen.first() != Some(&"version") {
+    // `VersionInfo` is required in a document's XML declaration and
+    // **optional** in an external entity's text declaration --
+    // `TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'`. Reusing
+    // this checker without the distinction rejected
+    // `<?xml encoding="UTF-8"?>`, which is a perfectly ordinary way to
+    // begin an entity.
+    if require_version && seen.first() != Some(&"version") {
         return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
     }
     Ok(())

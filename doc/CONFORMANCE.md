@@ -20,8 +20,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2449 pass, 108 fail, 0 panic, 28 unsupported, 0 blocked
-         95.8% of 2557 decided (98.9% coverage of 2585)
+overall  2464 pass, 93 fail, 0 panic, 28 unsupported, 0 blocked
+         96.4% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -59,7 +59,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-108 failures, and **every one of them is the parser being too
+93 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -69,9 +69,12 @@ contains:
 
 | What the failure needs | Count |
 |---|---|
-| External entity or subset **content** | ~93 |
+| The **external subset's declarations** parsed | ~60 |
 | Entity replacement text parsed as markup | ~11 |
-| Other | ~4 |
+| Other | ~22 |
+
+External entity *content* is no longer on that list. A caller can now
+supply it — see below — which settled 15 failures on its own.
 
 Counted by what the failure *needs* rather than by where the `DOCTYPE`
 points, which is what the earlier table did and why it read as more
