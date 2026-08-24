@@ -285,7 +285,7 @@ Two architectural choices motivate the design:
 
 **Verification**
 
-- 2,464 of 2,557 decided W3C conformance tests pass (96.4%), with
+- 2,496 of 2,557 decided W3C conformance tests pass (97.6%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
 - Over 240 tests and 16 doctests; 97.4% line coverage, gated in CI
 - Five fuzz targets, Miri, property tests, and a feature powerset build
@@ -721,6 +721,18 @@ checked: a text declaration must be well formed, must name an encoding,
 must not claim `standalone`, and must not declare a version later than
 the document's. Each external entity is line-ending–normalised
 independently, by its own declared version.
+
+The **external subset** works the same way. Given its content, its
+declarations are parsed and merged behind the internal subset's — "the
+first declaration binds", so anything declared in both takes the
+internal one.
+
+A declaration whose text contains a parameter entity reference is
+**skipped as unknown** rather than reported as malformed.
+`<!ELEMENT x (a,%choice;,c)>` is legal in an external subset and oxml
+does not expand parameter entities, so treating it as an error would
+reject valid documents. The constraints such a declaration states go
+unchecked.
 
 An entity that is **declared and never referenced is never read**. A
 processor need not fetch what a document does not use, and validating

@@ -80,6 +80,15 @@ pub(crate) struct Dtd {
     /// applies afterwards -- conflating the two switched that check off
     /// for every declaration following the first `<!ENTITY % … >`.
     pub(crate) external_seen: bool,
+    /// The external subset's identifiers, when the `DOCTYPE` names one.
+    ///
+    /// Kept so a caller-supplied [`ExternalSource`] can be asked for
+    /// its declarations. Without a source it stays unread and
+    /// `incomplete` remains true, which is the behaviour that has
+    /// always applied.
+    ///
+    /// [`ExternalSource`]: crate::external::ExternalSource
+    pub(crate) external_subset: Option<(String, Option<String>)>,
 }
 
 impl Dtd {
@@ -210,6 +219,19 @@ impl<'a> DtdParser<'a> {
         Err((start, "unterminated quoted value"))
     }
 
+    /// Parse an external subset: declarations, with no `<!DOCTYPE`
+    /// around them.
+    ///
+    /// `extSubsetDecl` is the same production the internal subset uses,
+    /// so this is the same loop -- it stops at end of input rather than
+    /// at `]`.
+    pub(crate) fn parse_external_subset(
+        &mut self,
+        dtd: &mut Dtd,
+    ) -> Result<(), DtdError> {
+        self.parse_subset_decls(dtd, None)
+    }
+
     /// Parse the whole declaration, starting at `<!DOCTYPE`.
     pub(crate) fn parse_doctype(&mut self) -> Result<Dtd, DtdError> {
         let start = self.pos;
@@ -222,18 +244,24 @@ impl<'a> DtdParser<'a> {
 
         // ExternalID, if present.
         if self.starts_with("SYSTEM") || self.starts_with("PUBLIC") {
-            let public = self.starts_with("PUBLIC");
+            let is_public = self.starts_with("PUBLIC");
             self.pos += 6;
             self.require_ws()?;
-            if public {
-                let _ = self.pubid_literal()?;
+            let ids = if is_public {
+                let pubid = self.pubid_literal()?.to_owned();
                 self.skip_ws();
                 if matches!(self.peek(), Some(b'"' | b'\'')) {
-                    let _ = self.quoted()?;
+                    Some((self.quoted()?.to_owned(), Some(pubid)))
+                } else {
+                    // `PUBLIC` with no system literal is legal in a
+                    // `NotationDecl` and not here, but the grammar is
+                    // shared; nothing to fetch either way.
+                    None
                 }
             } else {
-                let _ = self.quoted()?;
-            }
+                Some((self.quoted()?.to_owned(), None))
+            };
+            dtd.external_subset = ids;
             dtd.incomplete = true;
             dtd.external_seen = true;
             self.skip_ws();
@@ -254,12 +282,105 @@ impl<'a> DtdParser<'a> {
         }
     }
 
+    /// Whether the declaration starting here references a parameter
+    /// entity outside a quoted literal.
+    ///
+    /// A `%` inside a literal is data -- `<!ENTITY x "50%">` declares an
+    /// entity and references nothing.
+    fn decl_uses_pe(&self) -> bool {
+        let mut depth = 0usize;
+        let mut quote: Option<u8> = None;
+        for &b in &self.bytes[self.pos..] {
+            match (quote, b) {
+                (Some(q), c) if c == q => quote = None,
+                (None, b'"' | b'\'') => quote = Some(b),
+                (None, b'<') => depth += 1,
+                (None, b'>') => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                (None, b'%') => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Skip past a declaration without interpreting it.
+    ///
+    /// Running out of input is expected rather than malformed: the
+    /// declaration's own `>` may be supplied by the parameter entity we
+    /// declined to expand -- `<!ENTITY % e ">">` followed by
+    /// `<!ELEMENT doc (#PCDATA) %e;` is a real pattern in the suite.
+    /// The subset is already known to be only partly understood.
+    fn skip_decl(&mut self) {
+        let mut depth = 0usize;
+        let mut quote: Option<u8> = None;
+        while let Some(b) = self.peek() {
+            self.pos += 1;
+            match (quote, b) {
+                (Some(q), c) if c == q => quote = None,
+                (None, b'"' | b'\'') => quote = Some(b),
+                (None, b'<') => depth += 1,
+                (None, b'>') => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Skip a conditional section, counting nested `<![` and `]]>`.
+    ///
+    /// `ignoreSectContents` says the delimiters must be **balanced**
+    /// inside an ignored section, so stopping at the first `]]>` is
+    /// wrong whenever the ignored text contains one -- which the suite
+    /// tests with a section whose prose quotes the delimiters it is
+    /// explaining. Everything after that point was then misaligned.
+    fn skip_conditional_section(&mut self) -> Result<(), DtdError> {
+        let start = self.pos;
+        let mut depth = 1usize;
+        while self.pos < self.bytes.len() {
+            if self.starts_with("<![") {
+                depth += 1;
+                self.pos += 3;
+            } else if self.starts_with("]]>") {
+                depth -= 1;
+                self.pos += 3;
+                if depth == 0 {
+                    return Ok(());
+                }
+            } else {
+                self.pos += 1;
+            }
+        }
+        Err((start, "unterminated conditional section"))
+    }
+
     fn parse_internal_subset(&mut self, dtd: &mut Dtd) -> Result<(), DtdError> {
+        self.parse_subset_decls(dtd, Some(b']'))
+    }
+
+    /// The shared `extSubsetDecl` loop.
+    ///
+    /// `terminator` is `Some(b']')` for an internal subset, which must
+    /// be closed, and `None` for an external one, which simply ends.
+    fn parse_subset_decls(
+        &mut self,
+        dtd: &mut Dtd,
+        terminator: Option<u8>,
+    ) -> Result<(), DtdError> {
         loop {
             self.skip_ws();
             match self.peek() {
+                None if terminator.is_none() => return Ok(()),
                 None => return Err((self.pos, "unterminated internal subset")),
-                Some(b']') => return Ok(()),
+                Some(b) if Some(b) == terminator => return Ok(()),
                 // A parameter-entity reference can expand to anything,
                 // including further declarations, so once one appears
                 // the subset is no longer fully known to us.
@@ -273,7 +394,22 @@ impl<'a> DtdParser<'a> {
                     dtd.incomplete = true;
                     dtd.external_seen = true;
                 }
-                Some(b'<') => self.parse_markup_decl(dtd)?,
+                Some(b'<') => {
+                    // A declaration whose text contains a parameter
+                    // entity reference cannot be parsed without
+                    // expanding it, and expansion is not implemented.
+                    // In the external subset that is legal and common
+                    // -- `<!ELEMENT x (a,%choice;,c)>` -- so the
+                    // declaration is skipped as *unknown* rather than
+                    // reported as malformed. Failing here rejected
+                    // valid documents outright.
+                    if terminator.is_none() && self.decl_uses_pe() {
+                        self.skip_decl();
+                        dtd.incomplete = true;
+                    } else {
+                        self.parse_markup_decl(dtd)?;
+                    }
+                }
                 _ => return Err((self.pos, "expected a markup declaration")),
             }
         }
@@ -333,13 +469,7 @@ impl<'a> DtdParser<'a> {
                 ));
             }
             self.pos += 3;
-            return match self.input[self.pos..].find("]]>") {
-                Some(i) => {
-                    self.pos += i + 3;
-                    Ok(())
-                }
-                None => Err((self.pos, "unterminated conditional section")),
-            };
+            return self.skip_conditional_section();
         }
         if self.starts_with("<!ELEMENT") {
             self.pos += "<!ELEMENT".len();

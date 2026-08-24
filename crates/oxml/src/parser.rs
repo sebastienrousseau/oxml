@@ -447,8 +447,41 @@ impl<'a> Parser<'a> {
             self.limits.edition,
         );
         match p.parse_doctype() {
-            Ok(dtd) => {
+            Ok(mut dtd) => {
                 self.pos = p.pos;
+                // The external subset, if the caller can supply it.
+                // Parsed *after* the internal one, because the internal
+                // subset takes precedence: "the first declaration
+                // binds", and `or_insert` in the entity map already
+                // implements that.
+                if let Some((system, public)) = dtd.external_subset.clone() {
+                    if let Some(content) =
+                        self.external.fetch(&system, public.as_deref())
+                    {
+                        let version = entity_version(content, self.version);
+                        let normalized =
+                            normalize_line_endings(content, version);
+                        check_text_decl(&normalized, self.version, self.pos)?;
+                        let body = strip_text_decl(&normalized);
+                        let mut sub = crate::dtd::DtdParser::new(
+                            body,
+                            0,
+                            self.limits.edition,
+                        );
+                        if let Err((offset, reason)) =
+                            sub.parse_external_subset(&mut dtd)
+                        {
+                            let _ = offset;
+                            return Err(Error::new(
+                                ErrorKind::MalformedDtd(reason),
+                                self.pos,
+                            ));
+                        }
+                        // The declarations are now known, so an entity
+                        // that is still missing really is undeclared.
+                        dtd.incomplete = false;
+                    }
+                }
                 // An external entity is checked when it is
                 // *referenced*, not when it is declared. A processor
                 // need not read an entity nothing uses, so validating
