@@ -178,6 +178,30 @@ pub fn parse_with(input: &str, limits: Limits) -> Result<Document> {
 /// containing the newline and the indentation of the next line -- so
 /// `title="a\n    b"` rather than `title="a     b"`, and two documents
 /// that differ only in line wrapping produced different values.
+/// The offset of the next `&` that is a reference rather than text.
+///
+/// Skips over CDATA sections, inside which `&` introduces nothing.
+fn next_reference(text: &str) -> Option<usize> {
+    let mut at = 0;
+    while at < text.len() {
+        let rest = &text[at..];
+        let amp = rest.find('&');
+        let cdata = rest.find("<![CDATA[");
+        match (amp, cdata) {
+            (Some(a), Some(c)) if c < a => {
+                // Skip the whole section; an unterminated one is left
+                // for the parser proper to report.
+                let after = at + c + "<![CDATA[".len();
+                let end = text[after..].find("]]>")?;
+                at = after + end + "]]>".len();
+            }
+            (Some(a), _) => return Some(at + a),
+            (None, _) => return None,
+        }
+    }
+    None
+}
+
 fn push_attribute_normalized(out: &mut String, text: &str) {
     // The overwhelmingly common case is a value with no whitespace to
     // replace, which copies in one go.
@@ -231,6 +255,20 @@ fn parse_normalized(
     limits: Limits,
     version: Version,
 ) -> Result<Document> {
+    // `document ::= prolog element Misc*` with
+    // `prolog ::= XMLDecl? Misc*` -- the declaration comes first or not
+    // at all. Whitespace before it is not `Misc` appearing early, it is
+    // a malformed document, and skipping leading whitespace before
+    // looking for `<?xml` accepted it.
+    let trimmed = input.trim_start();
+    if trimmed.len() != input.len() && trimmed.starts_with("<?xml") {
+        let after = &trimmed["<?xml".len()..];
+        // `<?xmlfoo?>` is a processing instruction with a reserved
+        // target, reported elsewhere; only a real declaration counts.
+        if after.starts_with([' ', '\t', '\r', '\n']) {
+            return Err(Error::new(ErrorKind::MalformedDeclaration, 0));
+        }
+    }
     // Checked once over the whole input rather than at each construct.
     // The `Char` production applies everywhere — content, attribute
     // values, comments, even the DTD — so a per-construct check would
@@ -403,17 +441,17 @@ impl<'a> Parser<'a> {
         result
     }
 
-    fn parse_element_inner(&mut self, parent: NodeId) -> Result<()> {
-        let tag_start = self.pos;
-        self.pos += 1; // '<'
-        let qname = self.parse_name()?;
-
-        // Attributes are collected before the element node is created:
-        // namespace declarations among them must be in scope for the
-        // element's *own* name to resolve.
-        self.ns.push_scope();
-        let raw_attrs = self.parse_attributes()?;
-        for (name, value) in &raw_attrs {
+    /// Apply the `xmlns` declarations on a start tag.
+    ///
+    /// Split out of `parse_element_inner` because it is where the
+    /// Namespaces specification's rules live, and it had grown twice --
+    /// once for prefixed reserved URIs, once for the default
+    /// declaration, which had been missed.
+    fn bind_namespaces(
+        &mut self,
+        raw_attrs: &[(&'a str, String)],
+    ) -> Result<()> {
+        for (name, value) in raw_attrs {
             if let Some(prefix) = name.strip_prefix("xmlns:") {
                 // Namespaces in XML, section 3: `xml` may be bound only
                 // to the XML namespace and nothing else may be bound to
@@ -451,10 +489,36 @@ impl<'a> Parser<'a> {
                 }
                 self.ns.bind(prefix.to_owned(), value.clone());
             } else if *name == "xmlns" {
+                // The reserved URIs were checked for *prefixed*
+                // declarations and not for the default one, so
+                // `xmlns="http://www.w3.org/XML/1998/namespace"` --
+                // which the Namespaces specification forbids outright
+                // -- went through.
+                const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+                const XMLNS_NS: &str = "http://www.w3.org/2000/xmlns/";
+                if value == XML_NS || value == XMLNS_NS {
+                    return Err(Error::new(
+                        ErrorKind::ReservedNamespace,
+                        self.pos,
+                    ));
+                }
                 self.ns.bind(String::new(), value.clone());
             }
         }
+        Ok(())
+    }
 
+    fn parse_element_inner(&mut self, parent: NodeId) -> Result<()> {
+        let tag_start = self.pos;
+        self.pos += 1; // '<'
+        let qname = self.parse_name()?;
+
+        // Attributes are collected before the element node is created:
+        // namespace declarations among them must be in scope for the
+        // element's *own* name to resolve.
+        self.ns.push_scope();
+        let raw_attrs = self.parse_attributes()?;
+        self.bind_namespaces(&raw_attrs)?;
         let self_closing = if self.starts_with("/>") {
             self.pos += 2;
             true
@@ -1193,7 +1257,12 @@ impl<'a> Parser<'a> {
         }
         let mut out = String::new();
         let mut rest = text;
-        while let Some(amp) = rest.find('&') {
+        // A `&` inside a CDATA section is text, not a reference.
+        // Scanning for `&` without knowing that reported
+        // `<![CDATA[&foo;]]>` as a reference to an undeclared entity --
+        // which is how enforcing `Entity Declared` here first broke a
+        // document that was correct.
+        while let Some(amp) = next_reference(rest) {
             let (before, tail) = rest.split_at(amp);
             Self::push_run(&mut out, before, offset, budget, in_attribute)?;
             let Some(semi) = tail.find(';') else {
@@ -1227,6 +1296,16 @@ impl<'a> Parser<'a> {
                 Some(crate::dtd::EntityValue::Unparsed) => {
                     return Err(Error::new(
                         ErrorKind::ForbiddenEntityReference(name.to_owned()),
+                        offset,
+                    ));
+                }
+                // An entity named inside another entity's replacement
+                // text must itself be declared. Skipping the reference
+                // silently produced a document missing the content it
+                // asked for, with nothing to say so.
+                None if !self.dtd.as_ref().is_some_and(|d| d.incomplete) => {
+                    return Err(Error::new(
+                        ErrorKind::UnknownEntity(name.to_owned()),
                         offset,
                     ));
                 }

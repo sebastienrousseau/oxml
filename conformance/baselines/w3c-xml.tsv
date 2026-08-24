@@ -1,11 +1,9 @@
-#counts	pass=2438	fail=119	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2449	fail=108	panic=0	unsupported=28	blocked=0	total=2585
 sun	cond01	fail	accepted a document that is not well-formed
 sun	cond02	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
 sun	dtd07	fail	accepted a document that is not well-formed
 sun	encoding07	fail	accepted a document that is not well-formed
-eduni	hst-lhs-007	fail	accepted a document that is not well-formed
-eduni	hst-lhs-008	fail	accepted a document that is not well-formed
 eduni	ht-bh-ns11-007	unsupported	namespaces-1.1
 eduni	ht-bh-ns11-008	unsupported	namespaces-1.1
 ibm	ibm-1-1-not-wf-P02-ibm02n64.xml	fail	accepted a document that is not well-formed
@@ -84,7 +82,6 @@ xmltest	not-wf-not-sa-007	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-008	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-009	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-074	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-077	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-090	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-092	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-103	fail	accepted a document that is not well-formed
@@ -95,18 +92,15 @@ xmltest	not-wf-sa-119	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-120	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-140	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-141	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-147	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-153	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-182	fail	accepted a document that is not well-formed
 xmltest	not-wf-sa-185	fail	accepted a document that is not well-formed
 sun	not-wf-sa03	fail	accepted a document that is not well-formed
-oasis	o-p01fail1	fail	accepted a document that is not well-formed
 oasis	o-p04pass1	unsupported	namespace-processing-off
 oasis	o-p05pass1	unsupported	namespace-processing-off
 oasis	o-p08pass1	unsupported	namespace-processing-off
 oasis	o-p09fail1	fail	accepted a document that is not well-formed
 oasis	o-p09fail2	fail	accepted a document that is not well-formed
-oasis	o-p22fail1	fail	accepted a document that is not well-formed
 oasis	o-p30fail1	fail	accepted a document that is not well-formed
 oasis	o-p31fail1	fail	accepted a document that is not well-formed
 oasis	o-p61fail1	fail	accepted a document that is not well-formed
@@ -125,18 +119,13 @@ eduni	rmt-003	fail	accepted a document that is not well-formed
 eduni	rmt-004	fail	accepted a document that is not well-formed
 eduni	rmt-005	fail	accepted a document that is not well-formed
 eduni	rmt-e2e-38	fail	accepted a document that is not well-formed
-eduni	rmt-ns-e1.0-13a	fail	accepted a document that is not well-formed
-eduni	rmt-ns-e1.0-13b	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-012	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-043	fail	accepted a document that is not well-formed
-eduni	rmt-ns10-044	fail	accepted a document that is not well-formed
 eduni	rmt-ns11-001	unsupported	namespaces-1.1
 eduni	rmt-ns11-002	unsupported	namespaces-1.1
 eduni	rmt-ns11-003	unsupported	namespaces-1.1
 eduni	rmt-ns11-004	unsupported	namespaces-1.1
 eduni	rmt-ns11-005	unsupported	namespaces-1.1
 eduni	rmt-ns11-006	unsupported	namespaces-1.1
-sun	sgml02	fail	accepted a document that is not well-formed
 xmltest	valid-sa-012	unsupported	namespace-processing-off
 japanese	weekly-euc-jp	unsupported	unsupported-encoding
 japanese	weekly-iso-2022-jp	unsupported	unsupported-encoding

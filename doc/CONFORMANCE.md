@@ -20,8 +20,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2438 pass, 119 fail, 0 panic, 28 unsupported, 0 blocked
-         95.3% of 2557 decided (98.9% coverage of 2585)
+overall  2449 pass, 108 fail, 0 panic, 28 unsupported, 0 blocked
+         95.8% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -59,7 +59,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-119 failures, and **every one of them is the parser being too
+108 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -67,11 +67,16 @@ They are not all waiting on one feature, which is what this document
 previously implied. Categorised by what the failing document actually
 contains:
 
-| The document has | Count |
+| What the failure needs | Count |
 |---|---|
-| An external subset (`SYSTEM`/`PUBLIC`) | 63 |
-| An internal subset only | 51 |
-| No `DOCTYPE` at all | 5 |
+| External entity or subset **content** | ~93 |
+| Entity replacement text parsed as markup | ~11 |
+| Other | ~4 |
+
+Counted by what the failure *needs* rather than by where the `DOCTYPE`
+points, which is what the earlier table did and why it read as more
+tractable than it was. A document can have a purely internal subset and
+still turn on the content of a separate file.
 
 That table is coarser than it looks, and worth qualifying now that the
 easy group is gone. A document can have a purely internal subset and

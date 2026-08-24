@@ -601,7 +601,14 @@ impl<'a> DtdParser<'a> {
         } else {
             false
         };
+        let name_at = self.pos;
         let name = self.name()?;
+        // Namespaces in XML narrows these from `Name` to `NCName`, so
+        // `<!ENTITY a:b …>` is not legal. XML's own grammar allows the
+        // colon, which is why it needs saying.
+        if name.contains(':') {
+            return Err((name_at, "a colon is not allowed in an entity name"));
+        }
         self.require_ws()?;
 
         let value = if matches!(self.peek(), Some(b'"' | b'\'')) {
@@ -689,7 +696,11 @@ impl<'a> DtdParser<'a> {
 
     fn parse_notation_decl(&mut self) -> Result<(), DtdError> {
         self.require_ws()?;
-        let _ = self.name()?;
+        let name_at = self.pos;
+        let name = self.name()?;
+        if name.contains(':') {
+            return Err((name_at, "a colon is not allowed in a notation name"));
+        }
         self.require_ws()?;
         let public = self.starts_with("PUBLIC");
         if !public && !self.starts_with("SYSTEM") {

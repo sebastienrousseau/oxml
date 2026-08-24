@@ -100,14 +100,27 @@ pub fn is_legal_encoding_name(name: &str) -> bool {
 /// `EncName`, if it names an encoding this crate cannot decode, or if
 /// the bytes are not valid in the encoding they claim.
 pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
-    // A BOM is authoritative and overrides any declaration.
+    // A BOM and a declaration that disagree make the document
+    // malformed. Letting the BOM win silently produced a tree from a
+    // document no conforming parser accepts -- and the disagreement is
+    // usually a sign that something upstream re-encoded the bytes
+    // without rewriting the declaration, which is worth surfacing.
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        return Ok(Cow::Owned(utf16(rest, true)?));
+        let text = utf16(rest, true)?;
+        check_bom_agrees(&text, Encoding::Utf16Be)?;
+        return Ok(Cow::Owned(text));
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        return Ok(Cow::Owned(utf16(rest, false)?));
+        let text = utf16(rest, false)?;
+        check_bom_agrees(&text, Encoding::Utf16Le)?;
+        return Ok(Cow::Owned(text));
     }
     // A UTF-8 BOM is permitted and is not part of the document.
+    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        if let Ok(text) = core::str::from_utf8(rest) {
+            check_bom_agrees(text, Encoding::Utf8)?;
+        }
+    }
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
 
     // UTF-16 without a BOM is still detectable: an XML document must
@@ -130,6 +143,30 @@ pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
                 Error::new(ErrorKind::MalformedEncoding, e.valid_up_to())
             })
         }
+    }
+}
+
+/// Reject a declaration that contradicts the byte-order mark.
+///
+/// A UTF-16 BOM with `encoding="utf-8"`, or a UTF-8 BOM with
+/// `encoding="iso-8859-1"`, cannot both be true. The family has to
+/// match: `UTF-16` and `UTF-16LE` agree with a little-endian mark,
+/// because the mark settles a byte order the name leaves open.
+fn check_bom_agrees(text: &str, from_bom: Encoding) -> Result<()> {
+    let Ok(Some(declared)) = declared_encoding(text.as_bytes()) else {
+        return Ok(());
+    };
+    let compatible = match (from_bom, declared) {
+        (Encoding::Utf8, Encoding::Utf8) => true,
+        (Encoding::Utf16Be | Encoding::Utf16Le, d) => {
+            matches!(d, Encoding::Utf16Be | Encoding::Utf16Le)
+        }
+        _ => false,
+    };
+    if compatible {
+        Ok(())
+    } else {
+        Err(Error::new(ErrorKind::MalformedEncoding, 0))
     }
 }
 
@@ -380,16 +417,53 @@ mod tests {
     }
 
     #[test]
-    fn a_bom_overrides_a_conflicting_declaration() {
-        // The specification makes the mark authoritative, and a
-        // document that disagrees with itself is common in the wild.
+    fn a_bom_that_contradicts_the_declaration_is_an_error() {
+        // The two cannot both be true, and letting the mark win
+        // silently produced a tree from a document no conforming
+        // parser accepts. In practice the disagreement means something
+        // upstream re-encoded the bytes without rewriting the
+        // declaration, which is worth surfacing rather than papering
+        // over.
         let mut bytes = alloc::vec![0xFF, 0xFE];
         for unit in "<?xml version='1.0' encoding='UTF-8'?><a/>".encode_utf16()
         {
             bytes.extend_from_slice(&unit.to_le_bytes());
         }
-        let text = decode(&bytes).expect("BOM wins");
-        assert!(text.ends_with("<a/>"), "{text}");
+        assert_eq!(
+            decode(&bytes)
+                .expect_err("UTF-16 mark, UTF-8 declared")
+                .kind,
+            ErrorKind::MalformedEncoding
+        );
+
+        let mut utf8_bom = alloc::vec![0xEF, 0xBB, 0xBF];
+        utf8_bom.extend_from_slice(
+            b"<?xml version='1.0' encoding='iso-8859-1'?><a/>",
+        );
+        assert_eq!(
+            decode(&utf8_bom)
+                .expect_err("UTF-8 mark, Latin-1 declared")
+                .kind,
+            ErrorKind::MalformedEncoding
+        );
+    }
+
+    #[test]
+    fn a_bom_that_agrees_with_the_declaration_is_fine() {
+        // The families have to match, not the exact name: a
+        // little-endian mark agrees with `UTF-16`, because the mark
+        // settles a byte order the name leaves open.
+        let mut bytes = alloc::vec![0xFF, 0xFE];
+        for unit in "<?xml version='1.0' encoding='UTF-16'?><a/>".encode_utf16()
+        {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert!(decode(&bytes).is_ok(), "UTF-16 mark, UTF-16 declared");
+
+        let mut utf8_bom = alloc::vec![0xEF, 0xBB, 0xBF];
+        utf8_bom
+            .extend_from_slice(b"<?xml version='1.0' encoding='UTF-8'?><a/>");
+        assert!(decode(&utf8_bom).is_ok(), "UTF-8 mark, UTF-8 declared");
     }
 
     #[test]

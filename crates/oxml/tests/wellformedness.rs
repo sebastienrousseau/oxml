@@ -444,3 +444,65 @@ mod less_than_via_entity {
         assert_eq!(doc.text(doc.root()), "plain");
     }
 }
+
+/// Rules that live outside the DTD: the prolog, reserved namespaces,
+/// and names the Namespaces specification narrows.
+mod prolog_and_names {
+    use super::parse;
+
+    #[test]
+    fn nothing_may_precede_the_xml_declaration() {
+        // `prolog ::= XMLDecl? Misc*` -- the declaration comes first or
+        // not at all. Skipping leading whitespace before looking for
+        // `<?xml` accepted a document that begins with a blank line.
+        assert!(parse("\r\n<?xml version=\"1.0\"?>\r\n<doc/>").is_err());
+        assert!(parse(" <?xml version=\"1.0\"?><doc/>").is_err());
+        // Without a declaration, leading whitespace is ordinary `Misc`.
+        assert!(parse("\r\n<doc/>").is_ok());
+        assert!(parse("<?xml version=\"1.0\"?><doc/>").is_ok());
+    }
+
+    #[test]
+    fn the_reserved_namespaces_may_not_be_the_default() {
+        // These were checked for *prefixed* declarations and not for
+        // the default one, so the rule applied to `xmlns:a=` and not to
+        // `xmlns=`.
+        for uri in [
+            "http://www.w3.org/XML/1998/namespace",
+            "http://www.w3.org/2000/xmlns/",
+        ] {
+            let source = format!("<foo xmlns=\"{uri}\"/>");
+            assert!(parse(&source).is_err(), "{uri}");
+        }
+        assert!(parse(r#"<foo xmlns="urn:ordinary"/>"#).is_ok());
+    }
+
+    #[test]
+    fn entity_and_notation_names_have_no_colon() {
+        // Namespaces narrows both from `Name` to `NCName`. XML's own
+        // grammar allows the colon, which is why it needs saying.
+        assert!(parse(r#"<!DOCTYPE f [<!ENTITY a:b "x">]><f/>"#).is_err());
+        assert!(
+            parse(r#"<!DOCTYPE f [<!NOTATION a:b SYSTEM "n">]><f/>"#).is_err()
+        );
+        assert!(parse(r#"<!DOCTYPE f [<!ENTITY ab "x">]><f/>"#).is_ok());
+    }
+
+    #[test]
+    fn an_entity_named_inside_another_must_be_declared() {
+        // Skipping the reference silently produced a document missing
+        // the content it asked for, with nothing to say so.
+        let source = r#"<!DOCTYPE d [<!ENTITY foo "&bar;">]><d a="&foo;"></d>"#;
+        assert!(parse(source).is_err());
+    }
+
+    #[test]
+    fn an_ampersand_inside_cdata_is_not_a_reference() {
+        // This is how enforcing the rule above first broke a document
+        // that was correct: the scan looked for `&` textually, and
+        // `<![CDATA[&foo;]]>` inside an entity's replacement text is
+        // text, not a reference to an undeclared entity.
+        let source = r#"<!DOCTYPE d [<!ELEMENT d (#PCDATA)><!ENTITY e "<![CDATA[&foo;]]>">]><d>&e;</d>"#;
+        assert!(parse(source).is_ok(), "CDATA in replacement text");
+    }
+}
