@@ -1,61 +1,87 @@
 <!-- SPDX-License-Identifier: Apache-2.0 OR MIT -->
 
-# Releasing 0.0.4
+# Releasing
 
-The suite ships one version across six crates. This release contains a
-change that makes the **order** load-bearing, so the sequence below is
-not a formality.
+The suite ships one version across six crates. The order is
+load-bearing, and this document was **wrong about it** the first time —
+the correction is below, because the mistake is easy to repeat.
 
-## The hazard
+## The dependency order
 
-oxml 0.0.4 resolves namespace prefixes in XPath name tests, and an
-unbound prefix is now a compile error rather than a silent match on the
-local part. Three satellites accept expressions and pass them straight
-through, and **none can supply bindings**:
+`oxml-cli` and `oxml-mcp` depend on **`xmlschema`**, which itself
+depends on `oxml`. Publishing `xmlschema` late leaves those two
+resolving *two incompatible `oxml` versions in one tree*, which fails
+with `expected oxml::tree::Document, found Document` — a message that
+takes a moment to recognise for what it is.
 
-| Crate | Needs, before its dependency is bumped |
+```
+oxml
+ └── xmlschema
+      ├── oxml-cli
+      └── oxml-mcp
+oxml-wasm, oxml-lsp   (depend on oxml only)
+```
+
+**Publish in that order.** This file previously called `xmlschema` "a
+plain bump" and listed it last.
+
+## The API constraint
+
+Any release that changes what an XPath expression *means* has to reach
+the crates that pass expressions through. 0.0.4 resolved namespace
+prefixes and made an unbound prefix an error, so three crates needed a
+binding mechanism **in the same commit as the dependency bump**:
+
+| Crate | Added in 0.0.4 |
 |---|---|
-| `oxml-cli` | `-n, --ns PREFIX=URI` — specified in [oxml-cli `doc/NAMESPACES.md`](https://github.com/sebastienrousseau/oxml-cli/blob/main/doc/NAMESPACES.md) |
-| `oxml-wasm` | a second argument on `queryText` / `queryValue` / `queryCount` |
-| `oxml-mcp` | an optional `namespaces` argument on `xml_query`, and namespaces reported by `xml_inspect` |
+| `oxml-cli` | `-n, --ns PREFIX=URI` |
+| `oxml-wasm` | optional `["PREFIX=URI"]` on the query methods |
+| `oxml-mcp` | `namespaces` on `xml_query`, and namespaces reported by `xml_inspect` |
 
-Bump a satellite's dependency without adding its binding mechanism and
-namespaced queries become **impossible** in that tool: a
-previously-wrong answer turns into an error with no remedy, which is
-worse than either.
-
-So for each satellite, **the dependency bump and the binding API are
-one change**, not two commits.
+Bump without the mechanism and a previously-wrong answer becomes an
+error with no remedy, which is worse than either.
 
 ## Sequence
 
-1. **Merge and publish `oxml` 0.0.4.** Its own version is already
-   bumped; nothing depends on anything unpublished.
-2. **Per satellite, in one commit each:** bump `oxml = "0.0.4"`, bump
-   the crate's own version to `0.0.4`, and add its binding API.
-3. **Publish the satellites.**
-4. `xmlschema` has no expression surface, so step 2 is a plain bump for
-   it.
+1. Merge and publish `oxml`.
+2. Merge and publish `xmlschema`.
+3. Per remaining satellite, in **one** commit: bump its version, bump
+   its dependencies, add whatever API the release requires. Then
+   publish.
+4. Confirm: `curl -s https://crates.io/api/v1/crates/<name>` for each.
 
-Until step 1 lands, every satellite keeps `oxml = "0.0.3"` and its own
-version at `0.0.3`. A satellite at 0.0.4 depending on oxml 0.0.3 would
-break the one-version contract in a way no compiler catches.
+`main` is protected on every repository, so every step is a pull
+request. That is the point — a release is not a reason to push to a
+protected branch.
 
-## What `oxml-cli`'s example already knows
-
-`examples/query-basics.sh` skips one assertion behind
-`OXML_NAMESPACE_FIX`, with a printed reason rather than a comment,
-because selecting an attribute by namespace needs 0.0.4. When the
-dependency is bumped, that guard comes out and the assertion runs.
-
-## Before publishing
+## Before each publish
 
 ```bash
-./scripts/gate.sh          # 14 steps, matches CI
-cargo publish --dry-run -p oxml
+./scripts/gate.sh          # oxml; the satellites have narrower gates
+cargo publish --dry-run
 ```
 
-The gate covers `no_std` across nine build configurations, the W3C
-conformance ratchet, Miri, MSRV 1.86.0, and the checks that keep the
-documentation honest — README parity, generated doc tests, and every
-public function being reachable from an example.
+## What went wrong in 0.0.4, so it does not go wrong again
+
+- **A `target` symlink was committed.** A local per-project target-dir
+  scheme puts a symlink at `target`, and a `git add -A` swept it into
+  `xmlschema`. `.gitignore` does not save you: a path already tracked
+  is not ignored. CI could not create its build directory on top of it
+  — `failed to create directory .../target — Not a directory` — and
+  **every build job on that repository failed** until it was removed.
+  Check `git ls-files | grep '^target$'` before committing.
+- **Coverage measured through a subprocess does not count.**
+  `oxml-cli`'s example scripts drive the compiled binary through
+  `Command`, which `llvm-cov` cannot instrument, so new code was
+  covered in practice and uncovered on paper. Test the logic directly
+  as well.
+- **`cargo test` does not type-check `#[wasm_bindgen_test]`.** Those
+  compile to nothing on a native target. `wasm-pack test --node` is
+  the only thing that checks them, and it is what CI runs.
+- **A test can pass on macOS and fail on Linux.** `oxml frobnicate`
+  exits without reading stdin, so a harness writing to its stdin races
+  the exit: Linux reports EPIPE, macOS absorbs it.
+- **A behavioural change can turn an existing test into an assertion
+  of a defect.** `oxml-mcp` asserted that a document containing U+0001
+  is *accepted*; 0.0.4 correctly rejects it. Read what a newly-failing
+  test was actually claiming before fixing it.
