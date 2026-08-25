@@ -30,7 +30,7 @@ one is listed as not done, however close it feels.
 | Conformance | Published with denominator | **98.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **1.13** | ✅ |
 | Throughput | <100 ms at load | **Not measured** — see below | ❌ |
-| XPath 1.0 | Complete | **All 27 functions**; 12 of 13 axes — only `namespace` absent | 🟡 |
+| XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
 | Documentation | House style, all 6 crates | READMEs, `doc/`, examples, FAQs across all six | ✅ |
 | Streaming | An entry point | Not started | ❌ |
 

@@ -32,7 +32,7 @@
 
 - [One-minute migration](#one-minute-migration) — name-for-name mapping from `sxd-xpath`, `roxmltree`, `quick-xml`, `libxml`
 - [Why this approach?](#why-this-approach) — design rationale
-- [Capabilities in 0.0.4](#capabilities-in-004) — release inventory
+- [Capabilities in 0.0.5](#capabilities-in-005) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — what each crate does and does not do
 - [Benchmarks](#benchmarks) — measured, with the method stated
 - [Features](#features) — cargo feature flags
@@ -70,14 +70,14 @@
 
 ```toml
 [dependencies]
-oxml = "0.0.4"
+oxml = "0.0.5"
 ```
 
 Parsing only, without the XPath engine:
 
 ```toml
 [dependencies]
-oxml = { version = "0.0.4", default-features = false, features = ["std"] }
+oxml = { version = "0.0.5", default-features = false, features = ["std"] }
 ```
 
 From source:
@@ -236,7 +236,7 @@ Two architectural choices motivate the design:
    are usually well-vetted, but their existence makes a
    security-conscious downstream audit meaningfully harder.
 
-## Capabilities in 0.0.4
+## Capabilities in 0.0.5
 
 **Parsing**
 
@@ -262,17 +262,15 @@ Two architectural choices motivate the design:
   vectors; element **and attribute** names interned behind a `NameId`,
   which also records the prefix each was written with
 - Parent, children, descendants, text (XPath `string-value` semantics)
-- Attributes as first-class nodes
+- Attributes and namespace declarations as first-class nodes
 - `Send + Sync`, so one document serves any number of threads
 
 **XPath 1.0**
 
-- Twelve of the thirteen axes: `child`, `descendant`,
-  `descendant-or-self`, `parent`, `ancestor`, `ancestor-or-self`,
-  `self`, `attribute`, `following-sibling`, `preceding-sibling`,
-  `following`, `preceding`. The `namespace` axis is **not**
-  implemented — namespace declarations are resolved and discarded
-  rather than retained as nodes
+- All thirteen axes: `child`, `descendant`, `descendant-or-self`,
+  `parent`, `ancestor`, `ancestor-or-self`, `self`, `attribute`,
+  `namespace`, `following`, `following-sibling`, `preceding`,
+  `preceding-sibling`
 - Abbreviations: `//`, `.`, `..`, `@`
 - Node tests: name, `*`, `text()`, `comment()`, `node()`
 - Predicates, including positional (`[1]`) and existential comparison
@@ -298,11 +296,11 @@ Two architectural choices motivate the design:
 
 - 2,520 of 2,557 decided W3C conformance tests pass (98.6%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 358 tests and 22 doctests; 97.3% line coverage, gated in CI
+- 367 tests and 22 doctests; 97.3% line coverage, gated in CI
 - Five fuzz targets, Miri, property tests, and a feature powerset build
 
-**Not yet:** serialisation, mutation, XSD validation, XSLT, XPath 2.0+,
-and the `namespace` axis. The external DTD subset is supported when the
+**Not yet:** serialisation, mutation, XSD validation and XSLT. The
+external DTD subset is supported when the
 caller supplies it — see [External entities and
 subsets](#external-entities-and-subsets) — but is never fetched, and
 most remaining conformance failures need entity replacement text parsed
@@ -1019,7 +1017,7 @@ vulnerability.
 ## Development
 
 ```bash
-cargo test                  # 360 tests, plus 22 doctests
+cargo test                  # 367 tests, plus 22 doctests
 cargo test --no-default-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check

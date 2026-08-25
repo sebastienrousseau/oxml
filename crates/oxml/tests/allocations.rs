@@ -128,7 +128,16 @@ fn parsing_does_not_allocate_per_byte_of_text() {
         measure(|| oxml::parse(&source).expect("well-formed"));
 
     println!("{allocations} allocations for a 1 MB text node");
-    assert_eq!(doc.len(), 3, "root, element, text");
+    // Root, element, text -- and one namespace node. `xml` is bound by
+    // specification for every element, so the root element carries a
+    // node for it and every descendant inherits it through the
+    // `namespace::` ancestor walk. That is one node per document, not
+    // one per element.
+    assert_eq!(
+        doc.len(),
+        4,
+        "root, element, text, the implicit xml binding"
+    );
     assert!(
         allocations < 100,
         "{allocations} allocations for one text node suggests per-chunk growth"

@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n== children of the document node ==");
     for &child in doc.children(root) {
-        // `kind` is how you tell the five node types apart.
+        // `kind` is how you tell the six node types apart.
         let what = match doc.kind(child) {
             Some(NodeKind::Element { .. }) => "element",
             Some(NodeKind::Comment(text)) => {
@@ -56,6 +56,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Some(NodeKind::Text(_)) => "text",
             Some(NodeKind::Attr(_)) => "attribute",
+            // Neither attributes nor namespace declarations are
+            // children, so neither can actually appear here — the arms
+            // exist because `kind` can return them from elsewhere.
+            Some(NodeKind::Namespace { .. }) => "namespace",
             Some(NodeKind::Root) => "root",
             None => "out of range",
         };

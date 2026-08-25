@@ -531,10 +531,19 @@ impl<'a> Parser<'a> {
     /// Namespaces specification's rules live, and it had grown twice --
     /// once for prefixed reserved URIs, once for the default
     /// declaration, which had been missed.
+    /// Bind the `xmlns` declarations on a start tag, and report them
+    /// as `(prefix, uri)` pairs in source order.
+    ///
+    /// The pairs become namespace nodes. An *undeclaration* -- an
+    /// empty URI, which is XML 1.1 only -- is reported too, even
+    /// though it names no namespace: it has to shadow the same prefix
+    /// declared on an ancestor, and a prefix that is simply absent
+    /// here would leave the ancestor's binding in scope.
     fn bind_namespaces(
         &mut self,
         raw_attrs: &[(&'a str, String)],
-    ) -> Result<()> {
+    ) -> Result<Vec<(String, String)>> {
+        let mut declared = Vec::new();
         for (name, value) in raw_attrs {
             if let Some(prefix) = name.strip_prefix("xmlns:") {
                 // Namespaces in XML, section 3: `xml` may be bound only
@@ -572,6 +581,7 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 self.ns.bind(prefix.to_owned(), value.clone());
+                declared.push((prefix.to_owned(), value.clone()));
             } else if *name == "xmlns" {
                 // The reserved URIs were checked for *prefixed*
                 // declarations and not for the default one, so
@@ -587,9 +597,10 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 self.ns.bind(String::new(), value.clone());
+                declared.push((String::new(), value.clone()));
             }
         }
-        Ok(())
+        Ok(declared)
     }
 
     fn parse_element_inner(&mut self, parent: NodeId) -> Result<()> {
@@ -602,7 +613,7 @@ impl<'a> Parser<'a> {
         // element's *own* name to resolve.
         self.ns.push_scope();
         let raw_attrs = self.parse_attributes()?;
-        self.bind_namespaces(&raw_attrs)?;
+        let declared = self.bind_namespaces(&raw_attrs)?;
         let self_closing = if self.starts_with("/>") {
             self.pos += 2;
             true
@@ -662,6 +673,7 @@ impl<'a> Parser<'a> {
             NodeKind::Element {
                 name: name_id,
                 attributes: (0, 0),
+                namespaces: (0, 0),
             },
             parent,
         );
@@ -684,12 +696,27 @@ impl<'a> Parser<'a> {
         }
 
         let len = self.doc.attr_ids.len() - start;
-        if let Some(NodeKind::Element { attributes, .. }) =
-            self.doc.kind_mut(node)
+
+        // Namespace nodes, like attribute nodes: parented to the
+        // element, kept out of `children`, contiguous in their own
+        // arena. `xml` is bound by specification and never declared,
+        // so the root element carries a node for it and every element
+        // inherits it by the same ancestor walk as any other prefix.
+        let (ns_start, ns_len) = self.push_namespace_nodes(node, declared);
+
+        if let Some(NodeKind::Element {
+            attributes,
+            namespaces,
+            ..
+        }) = self.doc.kind_mut(node)
         {
             *attributes = (
                 u32::try_from(start).unwrap_or(u32::MAX),
                 u32::try_from(len).unwrap_or(u32::MAX),
+            );
+            *namespaces = (
+                u32::try_from(ns_start).unwrap_or(u32::MAX),
+                u32::try_from(ns_len).unwrap_or(u32::MAX),
             );
         }
 
@@ -701,6 +728,38 @@ impl<'a> Parser<'a> {
         self.parse_children(node, qname)?;
         self.ns.pop_scope();
         Ok(())
+    }
+
+    /// Attach an element's namespace nodes, returning their
+    /// `(start, len)` range in the shared arena.
+    ///
+    /// `xml` is bound by specification and never declared, so the root
+    /// element carries a node for it and every element inherits it
+    /// through the same ancestor walk as any other prefix -- one node
+    /// per document rather than one per element.
+    fn push_namespace_nodes(
+        &mut self,
+        node: NodeId,
+        declared: Vec<(String, String)>,
+    ) -> (usize, usize) {
+        let start = self.doc.ns_ids.len();
+        if self.doc.nodes[node.0].parent == Some(self.doc.root()) {
+            let id = self.doc.push_detached(
+                NodeKind::Namespace {
+                    prefix: "xml".to_owned(),
+                    uri: "http://www.w3.org/XML/1998/namespace".to_owned(),
+                },
+                node,
+            );
+            self.doc.ns_ids.push(id);
+        }
+        for (prefix, uri) in declared {
+            let id = self
+                .doc
+                .push_detached(NodeKind::Namespace { prefix, uri }, node);
+            self.doc.ns_ids.push(id);
+        }
+        (start, self.doc.ns_ids.len() - start)
     }
 
     fn parse_children(&mut self, node: NodeId, open_qname: &str) -> Result<()> {
