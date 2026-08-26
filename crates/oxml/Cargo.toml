@@ -70,6 +70,10 @@ harness = false
 name = "entities"
 harness = false
 
+[[bench]]
+name = "throughput"
+harness = false
+
 [[example]]
 name = "parse_and_query"
 path = "examples/parse_and_query.rs"
