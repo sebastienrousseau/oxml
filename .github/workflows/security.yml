@@ -12,6 +12,7 @@ on:
   # `push` stays pinned to `main` so a branch does not build twice, once
   # for the push and once for its pull request.
   pull_request:
+    branches: ['**']
   schedule:
     - cron: "0 3 * * *"
 

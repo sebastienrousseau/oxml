@@ -12,6 +12,12 @@ on:
   # `push` stays pinned to `main` so a branch does not build twice, once
   # for the push and once for its pull request.
   pull_request:
+    # `'**'` matches every branch, so a PR based on another
+    # branch is checked too. A bare `pull_request:` with no value
+    # ought to mean the same and did not: it stopped triggering
+    # anything at all, silently, including on PRs that had been
+    # working. Be explicit.
+    branches: ['**']
 
 permissions:
   contents: read
