@@ -15,10 +15,46 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-static COUNTING: AtomicUsize = AtomicUsize::new(0);
+
+// Counting is per-thread. A global flag also caught allocations and
+// frees from whatever else the harness was running, and a foreign
+// `dealloc` of memory allocated before counting began drove the live
+// total negative -- which reported a tree as holding zero bytes.
+// Measuring on its own thread means every free seen is a free of
+// something this measurement allocated.
+//
+// `Cell<bool>` has no destructor, so `const` initialisation makes this
+// access allocation-free and safe to reach from inside the allocator.
+thread_local! {
+    static COUNTING: core::cell::Cell<bool> =
+        const { core::cell::Cell::new(false) };
+}
+
+/// Whether the calling thread is being measured.
+fn counting() -> bool {
+    COUNTING.try_with(core::cell::Cell::get).unwrap_or(false)
+}
+/// Bytes currently held, and the high-water mark of that figure.
+///
+/// Counting allocations answers "how often"; this answers "how much at
+/// once", which is the question a streaming reader exists to change.
+static LIVE: AtomicIsize = AtomicIsize::new(0);
+static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+/// Records a change in live bytes and keeps the high-water mark.
+fn note(delta: isize) {
+    if !counting() {
+        return;
+    }
+    let live = LIVE.fetch_add(delta, Ordering::Relaxed) + delta;
+    if live > 0 {
+        let live = live as usize;
+        let _ = PEAK.fetch_max(live, Ordering::Relaxed);
+    }
+}
 
 struct Counter;
 
@@ -28,13 +64,15 @@ struct Counter;
 // cannot be written without it.
 unsafe impl GlobalAlloc for Counter {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) == 1 {
+        if counting() {
             let _ = ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
+        note(layout.size() as isize);
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        note(-(layout.size() as isize));
         unsafe { System.dealloc(ptr, layout) };
     }
 
@@ -44,9 +82,10 @@ unsafe impl GlobalAlloc for Counter {
         layout: Layout,
         new_size: usize,
     ) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) == 1 {
+        if counting() {
             let _ = ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
         }
+        note(new_size as isize - layout.size() as isize);
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
@@ -62,16 +101,47 @@ static ALLOCATOR: Counter = Counter;
 /// regression.
 static MEASURING: Mutex<()> = Mutex::new(());
 
+/// Runs `f` on a thread that counts its own allocations.
+///
+/// The value is dropped on that thread before counting stops, so what
+/// `f` returns does not escape into the next measurement.
+fn on_a_measured_thread<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                COUNTING.with(|c| c.set(true));
+                let value = f();
+                COUNTING.with(|c| c.set(false));
+                value
+            })
+            .join()
+            .expect("the measured thread must not panic")
+    })
+}
+
 /// Allocations performed while `f` runs.
-fn measure<T>(f: impl FnOnce() -> T) -> (T, usize) {
+fn measure<T: Send>(f: impl FnOnce() -> T + Send) -> (T, usize) {
     let _guard = MEASURING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     ALLOCATIONS.store(0, Ordering::SeqCst);
-    COUNTING.store(1, Ordering::SeqCst);
-    let value = f();
-    COUNTING.store(0, Ordering::SeqCst);
+    let value = on_a_measured_thread(f);
     (value, ALLOCATIONS.load(Ordering::SeqCst))
+}
+
+/// The high-water mark of bytes held while `f` runs.
+///
+/// The source document is allocated by the caller before measuring, so
+/// it is not counted: what this reports is what the parser or reader
+/// holds *on top of* the input it was handed.
+fn measure_peak<T: Send>(f: impl FnOnce() -> T + Send) -> (T, usize) {
+    let _guard = MEASURING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    LIVE.store(0, Ordering::SeqCst);
+    PEAK.store(0, Ordering::SeqCst);
+    let value = on_a_measured_thread(f);
+    (value, PEAK.load(Ordering::SeqCst))
 }
 
 /// A document with a realistic mix of elements, attributes and text.
@@ -141,5 +211,61 @@ fn parsing_does_not_allocate_per_byte_of_text() {
     assert!(
         allocations < 100,
         "{allocations} allocations for one text node suggests per-chunk growth"
+    );
+}
+
+/// What streaming actually saves, measured rather than asserted.
+///
+/// It does **not** let a caller read a document larger than memory:
+/// [`oxml::stream::Reader`] is handed a `&str`, and normalising line
+/// endings copies it once more. What it removes is the tree — the
+/// arena, the interned names, and every node that outlives the event
+/// that produced it. This holds that saving to a ratio so that a
+/// change which quietly reintroduces retention fails the build.
+#[test]
+fn reading_events_holds_less_than_building_a_tree() {
+    use oxml::stream::{Event, Reader};
+
+    let source = corpus(2_000);
+
+    let (tree, tree_peak) =
+        measure_peak(|| oxml::parse(&source).expect("well-formed"));
+    let nodes = tree.len();
+    drop(tree);
+
+    let (events, stream_peak) = measure_peak(|| {
+        let mut reader = Reader::new(&source).expect("well-formed");
+        let mut seen = 0usize;
+        while let Some(event) = reader.next_event().expect("well-formed") {
+            // Counted and dropped: nothing accumulates, which is the
+            // whole point of the entry point.
+            if matches!(event, Event::StartElement { .. }) {
+                seen += 1;
+            }
+        }
+        seen
+    });
+
+    println!(
+        "{nodes} nodes: tree holds {tree_peak} bytes at peak, \
+         reading holds {stream_peak} ({:.0}% less)",
+        100.0 - (stream_peak as f64 / tree_peak as f64) * 100.0
+    );
+    // `item`, `name` and `price` for each, and the `catalogue`
+    // wrapping them.
+    assert_eq!(events, 2_000 * 3 + 1, "every element was seen");
+
+    // The reader still holds a normalised copy of the input, so the
+    // floor is the document size, not zero.
+    assert!(
+        stream_peak >= source.len(),
+        "a normalised copy of the input is held: {stream_peak} bytes \
+         for a {} byte document",
+        source.len()
+    );
+    assert!(
+        stream_peak * 2 < tree_peak,
+        "reading events must hold less than half what a tree holds, \
+         but held {stream_peak} against {tree_peak}"
     );
 }

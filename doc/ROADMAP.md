@@ -26,13 +26,13 @@ one is listed as not done, however close it feels.
 | Panics on hostile input | Zero | 0 across 2,585 conformance documents, 5 fuzz targets, Miri | ✅ |
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
-| Line coverage | ≥95% | **97.3%**, gated | ✅ |
+| Line coverage | ≥95% | **97.4%**, gated | ✅ |
 | Conformance | Published with denominator | **98.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **1.13** | ✅ |
 | Throughput | <100 ms at load | **Measurable, not yet measured** — `benches/throughput.rs` reports MB/s; `scripts/record-throughput.sh` refuses above 0.20 load per core | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
 | Documentation | House style, all 6 crates | READMEs, `doc/`, examples, FAQs across all six | ✅ |
-| Streaming | An entry point | Not started | ❌ |
+| Streaming | An entry point | **`stream::Reader`**, same scanner as the tree parser; holds 92% less at peak. Not yet from a reader | 🟡 |
 
 ## Done
 
@@ -46,7 +46,7 @@ defects.
 
 **Verification.** W3C suite with a ratcheted baseline; five seeded fuzz
 targets; Miri; property tests; feature powerset; `no_std` on three
-targets; 97.3% coverage with the conformance harness inside the floor.
+targets; 97.4% coverage with the conformance harness inside the floor.
 
 **Performance.** 4.13 → **1.13 allocations per node**, held to a
 ceiling by a test.
@@ -129,11 +129,19 @@ shape is a caller-supplied map from identifier to content, so the
 caller decides what may be read. See
 [adr/0003-no-external-entities.md](adr/0003-no-external-entities.md).
 
-### 4. Streaming
+### 4. Streaming from a reader
 
-The one thing `quick-xml` does that oxml cannot, and the reason
-"documents larger than memory" is in *When not to use*. A pull or
-event entry point over the same scanner, with no tree built.
+`stream::Reader` now yields events over the same scanner with no tree
+built, which is most of this item: measured against parsing the same
+16,004-node document, it holds 191,957 bytes at peak against
+2,277,184 — 92% less, and nearly all of what remains is the
+normalised copy of the input.
+
+That copy is what is left to remove. The reader takes a `&str`, so
+"documents larger than memory" is still in *When not to use*, and
+`quick-xml` is still the answer for a socket or a gigabyte file. The
+work is an input abstraction that refills a buffer, plus deciding what
+happens to a token that straddles a refill.
 
 ## After that
 

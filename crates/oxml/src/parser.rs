@@ -22,7 +22,7 @@ use crate::tree::{Attribute, Document, ExpandedName, NodeId, NodeKind};
 /// practice (a handful of bindings), and this keeps push/pop free of
 /// allocation and hashing on the hot path.
 #[derive(Debug, Default)]
-struct Namespaces {
+pub(crate) struct Namespaces {
     bindings: Vec<(String, String)>,
     marks: Vec<usize>,
 }
@@ -32,7 +32,7 @@ impl Namespaces {
         self.marks.push(self.bindings.len());
     }
 
-    fn pop_scope(&mut self) {
+    pub(crate) fn pop_scope(&mut self) {
         if let Some(mark) = self.marks.pop() {
             self.bindings.truncate(mark);
         }
@@ -51,38 +51,38 @@ impl Namespaces {
     }
 }
 
-struct Parser<'a> {
-    input: &'a str,
-    bytes: &'a [u8],
-    pos: usize,
-    doc: Document,
-    ns: Namespaces,
+pub(crate) struct Parser<'a> {
+    pub(crate) input: &'a str,
+    pub(crate) bytes: &'a [u8],
+    pub(crate) pos: usize,
+    pub(crate) doc: Document,
+    pub(crate) ns: Namespaces,
     /// How many elements are currently open. Bounded by
     /// [`Limits::max_depth`] so the recursion cannot exhaust the stack.
-    depth: usize,
+    pub(crate) depth: usize,
     /// Resource bounds for this parse.
-    limits: Limits,
+    pub(crate) limits: Limits,
     /// Declarations from the document type declaration, once seen.
-    dtd: Option<crate::dtd::Dtd>,
+    pub(crate) dtd: Option<crate::dtd::Dtd>,
     /// The version the XML declaration names.
     ///
     /// 1.1 differs from 1.0 in three ways that matter here: NEL and
     /// LINE SEPARATOR normalise to LF, C1 controls must be escaped
     /// rather than appearing literally, and the `Char` production
     /// admits C0 controls when written as character references.
-    version: Version,
+    pub(crate) version: Version,
     /// Element names seen so far, keyed on the local part.
     ///
     /// Keyed on the local part rather than the whole name so that a
     /// document with many distinct names does not degrade to a linear
     /// scan of the table; the few sharing a local part are compared on
     /// their namespace.
-    name_index: alloc::collections::BTreeMap<String, Vec<u32>>,
+    pub(crate) name_index: alloc::collections::BTreeMap<String, Vec<u32>>,
     /// Where external content comes from, if anywhere.
     ///
     /// Never a file or a socket: the caller supplies it, so the parser
     /// performs no I/O whatever this is.
-    external: &'a dyn crate::external::ExternalSource,
+    pub(crate) external: &'a dyn crate::external::ExternalSource,
     /// Characters of entity expansion still permitted **for the whole
     /// document**.
     ///
@@ -91,7 +91,7 @@ struct Parser<'a> {
     /// quadratic one: referencing a single 100 KB entity a thousand
     /// times at depth one produced 100 MB from 100 KB of input while
     /// every individual expansion stayed within its allowance.
-    entity_budget: usize,
+    pub(crate) entity_budget: usize,
 }
 
 /// Parse an XML document.
@@ -179,6 +179,53 @@ pub fn parse_with_external(
     }
 }
 
+/// Everything that happens to a document before any of it is scanned.
+///
+/// The version it declares, its line endings normalised, and the
+/// `Char` production checked over the whole input. Shared with
+/// [`crate::stream::Reader`] so a streaming caller cannot be given a
+/// document the tree parser would have refused.
+///
+/// Returns owned text because normalisation may rewrite it, and a
+/// reader that borrowed the caller's string could not hold the
+/// rewritten form.
+///
+/// # Errors
+///
+/// Returns [`Error`] if the declaration is malformed or a character is
+/// one XML forbids.
+pub(crate) fn prepare(
+    input: &str,
+    limits: Limits,
+) -> Result<(String, Version)> {
+    let version = declared_version(input)?;
+    let _ = limits;
+    let text = normalize_line_endings(input, version).into_owned();
+    check_prolog_shape(&text)?;
+    if let Some((offset, c)) = text
+        .char_indices()
+        .find(|(_, c)| !is_literal_char_for(*c, version))
+    {
+        return Err(Error::new(ErrorKind::IllegalCharacter(c), offset));
+    }
+    Ok((text, version))
+}
+
+/// Whitespace before an XML declaration is a malformed document, not
+/// `Misc` appearing early.
+fn check_prolog_shape(input: &str) -> Result<()> {
+    let trimmed = input.trim_start();
+    if trimmed.len() != input.len() && trimmed.starts_with("<?xml") {
+        let after = &trimmed["<?xml".len()..];
+        // `<?xmlfoo?>` is a processing instruction with a reserved
+        // target, reported elsewhere; only a real declaration counts.
+        if after.starts_with([' ', '\t', '\r', '\n']) {
+            return Err(Error::new(ErrorKind::MalformedDeclaration, 0));
+        }
+    }
+    Ok(())
+}
+
 /// Translate line endings to `\n`, per XML 1.0 and 1.1 section 2.11.
 ///
 /// XML 1.0 collapses `\r\n` and a lone `\r`. XML 1.1 adds NEL
@@ -208,6 +255,20 @@ pub fn parse_with_external(
 /// The offset of the next `&` that is a reference rather than text.
 ///
 /// Skips over CDATA sections, inside which `&` introduces nothing.
+/// What a start tag yields, before anything is done with it.
+pub(crate) struct StartTag<'a> {
+    /// The element's name, as written.
+    pub(crate) qname: &'a str,
+    /// Attributes, as written, with entities resolved in the values.
+    pub(crate) raw_attrs: Vec<(&'a str, String)>,
+    /// Namespaces this tag declares, as `(prefix, uri)`.
+    pub(crate) declared: Vec<(String, String)>,
+    /// Whether the tag closed itself.
+    pub(crate) self_closing: bool,
+    /// Where the tag began, for an error offset.
+    pub(crate) tag_start: usize,
+}
+
 fn next_reference(text: &str) -> Option<usize> {
     let mut at = 0;
     while at < text.len() {
@@ -407,7 +468,7 @@ impl<'a> Parser<'a> {
     /// The declaration is consumed rather than modelled: nothing in the
     /// tree depends on it, and preserving it would mean a node kind
     /// that `XPath` has no concept of.
-    fn skip_prolog(&mut self) -> Result<()> {
+    pub(crate) fn skip_prolog(&mut self) -> Result<()> {
         self.skip_whitespace();
         if self.starts_with("<?xml")
             && !matches!(
@@ -435,7 +496,7 @@ impl<'a> Parser<'a> {
 
     /// Skip a doctype, tracking bracket depth so an internal subset
     /// containing `>` does not end it early.
-    fn skip_doctype(&mut self) -> Result<()> {
+    pub(crate) fn skip_doctype(&mut self) -> Result<()> {
         // Parsed rather than skipped. Well-formedness constraints live
         // inside the DTD — a malformed `<!ATTLIST>` makes a document not
         // well-formed for *every* parser, validating or not — and the
@@ -539,7 +600,7 @@ impl<'a> Parser<'a> {
     /// though it names no namespace: it has to shadow the same prefix
     /// declared on an ancestor, and a prefix that is simply absent
     /// here would leave the ancestor's binding in scope.
-    fn bind_namespaces(
+    pub(crate) fn bind_namespaces(
         &mut self,
         raw_attrs: &[(&'a str, String)],
     ) -> Result<Vec<(String, String)>> {
@@ -603,7 +664,17 @@ impl<'a> Parser<'a> {
         Ok(declared)
     }
 
-    fn parse_element_inner(&mut self, parent: NodeId) -> Result<()> {
+    /// Read a start tag: its name, its attributes, the namespaces it
+    /// declares, and whether it closed itself.
+    ///
+    /// Extracted so the streaming reader runs the *same* scanner. Two
+    /// implementations of XML start-tag scanning would diverge, and
+    /// the one with fewer users would be the one that was wrong.
+    ///
+    /// A namespace scope is pushed on success and left for the caller
+    /// to pop when the element ends. On failure it is popped here, so
+    /// a rejected tag leaves no scope behind.
+    pub(crate) fn scan_start_tag(&mut self) -> Result<StartTag<'a>> {
         let tag_start = self.pos;
         self.pos += 1; // '<'
         let qname = self.parse_name()?;
@@ -627,6 +698,23 @@ impl<'a> Parser<'a> {
                 tag_start,
             ));
         };
+        Ok(StartTag {
+            qname,
+            raw_attrs,
+            declared,
+            self_closing,
+            tag_start,
+        })
+    }
+
+    fn parse_element_inner(&mut self, parent: NodeId) -> Result<()> {
+        let StartTag {
+            qname,
+            raw_attrs,
+            declared,
+            self_closing,
+            tag_start,
+        } = self.scan_start_tag()?;
 
         // Resolve attribute names first so duplicates are detected
         // before any node is created — otherwise a rejected element
@@ -810,19 +898,7 @@ impl<'a> Parser<'a> {
                     let c = self.parse_comment()?;
                     let _ = self.doc.push(NodeKind::Comment(c), node);
                 } else if self.starts_with("<![CDATA[") {
-                    // CDATA is character data, so it joins the run
-                    // rather than becoming its own node.
-                    self.pos += "<![CDATA[".len();
-                    let end = self.input[self.pos..].find("]]>").ok_or_else(
-                        || {
-                            Error::new(
-                                ErrorKind::Unterminated("CDATA"),
-                                self.pos,
-                            )
-                        },
-                    )?;
-                    text.push_str(&self.input[self.pos..self.pos + end]);
-                    self.pos += end + 3;
+                    self.parse_cdata(&mut text)?;
                 } else if self.starts_with("<?") {
                     self.flush_text(&mut text, node)?;
                     let (t, d) = self.parse_pi()?;
@@ -851,7 +927,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_text_run(&mut self, out: &mut String) -> Result<()> {
+    pub(crate) fn parse_text_run(&mut self, out: &mut String) -> Result<()> {
         while self.pos < self.bytes.len() {
             // `CharData ::= [^<&]* - ([^<&]* ']]>' [^<&]*)`. The
             // sequence is forbidden literally so that a reader can
@@ -903,7 +979,24 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_comment(&mut self) -> Result<String> {
+    /// Consumes a `CDATA` section into a character-data run.
+    ///
+    /// CDATA is character data, so it joins the run rather than
+    /// becoming a node of its own -- `a<![CDATA[b]]>c` is the single
+    /// text `abc`. Extracted so the streaming reader consumes CDATA
+    /// exactly as the tree parser does; when it had its own copy, the
+    /// copy did not advance and read the section forever.
+    pub(crate) fn parse_cdata(&mut self, out: &mut String) -> Result<()> {
+        self.pos += "<![CDATA[".len();
+        let end = self.input[self.pos..].find("]]>").ok_or_else(|| {
+            Error::new(ErrorKind::Unterminated("CDATA"), self.pos)
+        })?;
+        out.push_str(&self.input[self.pos..self.pos + end]);
+        self.pos += end + 3;
+        Ok(())
+    }
+
+    pub(crate) fn parse_comment(&mut self) -> Result<String> {
         let start = self.pos;
         self.pos += "<!--".len();
         let end = self.input[self.pos..].find("-->").ok_or_else(|| {
@@ -921,7 +1014,7 @@ impl<'a> Parser<'a> {
         Ok(body)
     }
 
-    fn parse_pi(&mut self) -> Result<(String, String)> {
+    pub(crate) fn parse_pi(&mut self) -> Result<(String, String)> {
         let start = self.pos;
         self.pos += 2; // '<?'
         let target = self.parse_name()?;
@@ -1073,7 +1166,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_name(&mut self) -> Result<&'a str> {
+    pub(crate) fn parse_name(&mut self) -> Result<&'a str> {
         let name = self.parse_name_unchecked()?;
         if name.len() > self.limits.max_name_length {
             return Err(Error::new(ErrorKind::NameTooLong, self.pos));
@@ -1167,7 +1260,7 @@ impl<'a> Parser<'a> {
     /// the figure did not move at all. Looking up by borrowed parts
     /// means a repeated name costs a map probe and nothing else, and
     /// only a genuinely new name allocates.
-    fn intern_qname(
+    pub(crate) fn intern_qname(
         &mut self,
         qname: &str,
         is_element: bool,
@@ -1239,7 +1332,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn peek_end_tag_name(&self) -> String {
+    pub(crate) fn peek_end_tag_name(&self) -> String {
         self.input[self.pos + 2..]
             .split(['>', ' ', '\t', '\n', '\r'])
             .next()
@@ -1247,15 +1340,15 @@ impl<'a> Parser<'a> {
             .to_owned()
     }
 
-    fn starts_with(&self, s: &str) -> bool {
+    pub(crate) fn starts_with(&self, s: &str) -> bool {
         self.input[self.pos..].starts_with(s)
     }
 
-    fn peek_is(&self, b: u8) -> bool {
+    pub(crate) fn peek_is(&self, b: u8) -> bool {
         self.bytes.get(self.pos) == Some(&b)
     }
 
-    fn skip_whitespace(&mut self) {
+    pub(crate) fn skip_whitespace(&mut self) {
         while self.pos < self.bytes.len()
             && matches!(self.bytes[self.pos], b' ' | b'\t' | b'\r' | b'\n')
         {

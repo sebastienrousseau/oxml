@@ -122,6 +122,11 @@ name = "external_entities"
 path = "examples/external_entities.rs"
 required-features = ["std"]
 
+[[example]]
+name = "stream_events"
+path = "examples/stream_events.rs"
+required-features = ["std"]
+
 [[test]]
 name = "doc_examples"
 path = "tests/doc_examples.rs"

@@ -12,6 +12,7 @@ to be capable of failing.
 - [W3C conformance](#w3c-conformance)
 - [Fuzzing](#fuzzing)
 - [Property tests](#property-tests)
+- [Two entry points, one scanner](#two-entry-points-one-scanner)
 - [Miri](#miri)
 - [Coverage](#coverage)
 - [Documentation is tested too](#documentation-is-tested-too)
@@ -125,6 +126,33 @@ Among them:
   one that produced the error.
 - Whatever XPath prints, parses back to the same number.
 
+## Two entry points, one scanner
+
+`parse` builds a tree; `stream::Reader` yields events. They run the
+same scanner, and `tests/streaming.rs` exists to keep that true rather
+than to assume it.
+
+The tests do not check that the reader *works* — they check that it
+**agrees**. Over a corpus of well-formed and malformed documents:
+
+- the same documents are accepted and the same refused;
+- a refusal carries the same `ErrorKind` at the same byte offset —
+  not merely "both failed", which a reader that rejected everything
+  would also satisfy;
+- the same element sequence and the same text come out;
+- `Limits` mean the same thing, checked across every combination of
+  `max_depth` from 1 to 7 and nesting from 1 to 9.
+
+Three defects were found by writing them, all of the same kind: state
+the tree parser keeps for a document, the reader rebuilt for every
+event. The internal subset was discarded between events, so every
+DTD-declared entity was unknown to the reader and known to `parse`.
+The entity-expansion budget was reset per event, so a bomb split
+across fifty text nodes was handed the budget fifty times. And a
+`CDATA` section consumed nothing and looped forever, because the
+reader had its own copy of a decision the parser made elsewhere —
+which is why the scanner is shared and not merely similar.
+
 ## Miri
 
 Run over the test suite in CI. The crate forbids `unsafe`, so this is
@@ -137,7 +165,7 @@ Miri, libm and the host disagreed by 2 ULP on `17.49`.
 ## Coverage
 
 ≥95% of lines, gated in CI, measured with `cargo-llvm-cov`. Currently
-**97.3%**.
+**97.4%**.
 
 Two exclusions, both narrow and deliberate: `conformance/src/bin/`,
 whose two `main()` functions shell out to the network and to `tar`.
