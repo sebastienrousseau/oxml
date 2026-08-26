@@ -106,23 +106,41 @@ taking the pass rate from 93.6% to **98.6%**. Almost none needed a
 feature; nearly every one was a rule the parser already had the
 information to enforce and was not enforcing.
 
-What is left is two pieces of work, not more missing checks:
+What is left is two pieces of work, not more missing checks. The split
+below was derived by reading all 37, not carried over:
 
-- **Most need external entity or subset content** — a text
-  declaration, a version number, a standalone declaration, in a file
-  oxml never reads. The shape is a caller-supplied map from identifier
-  to content; the parser still performs no I/O. See
-  [adr/0003](adr/0003-no-external-entities.md). The per-group split
-  was last counted when there were 163 failures and has not been
-  re-derived against the current 37; run
-  `cargo run --release -p oxml-conformance --bin report` for the list
-  rather than trusting a number here.
-- **Some need entity replacement text parsed as markup.**
-  `<!ENTITY e "<foo/>">` referenced from content should produce an
-  *element*; oxml substitutes it as text. A semantic gap rather than a
-  missing rule, and the harder of the two: the replacement text has to
-  be parsed as content, with offsets that still point somewhere useful
-  and a check that markup opened inside it is closed inside it.
+**13 need entity replacement text parsed as markup.** `<!ENTITY e
+"<foo/>">` referenced from content should produce an *element*; oxml
+substitutes the replacement text as characters. Every one of these is
+a document oxml accepts and should not:
+
+| Test | Replacement text | Why it is not well-formed |
+|---|---|---|
+| `not-wf-sa-074` | `</foo><foo>` | closes an element it did not open |
+| `not-wf-sa-090` | `<foo a='&#60;'>…` | `<` in an attribute value |
+| `not-wf-sa-092` | `<foo a='&#38;'>…` | `&` not starting a reference |
+| `not-wf-sa-103` | `&#60;foo>` | opens an element it does not close |
+| `not-wf-sa-115` | `&#38;` in an attribute | `&` not starting a reference |
+| `not-wf-sa-116/117/119/120` | `&#38;` | a reference assembled across the entity boundary |
+| `not-wf-sa-140/141` | `<&#x309a;>` | not a name start character |
+| `not-wf-sa-153` | `<?xml …?>` | a reserved processing-instruction target |
+| `not-wf-sa-182` | `&#60;!--` | an unterminated comment |
+
+They share one cause, so they are one change: include the replacement
+text as *markup*, with offsets that still point somewhere useful and a
+check that anything opened inside it is closed inside it.
+
+**24 need external entity or subset content** — a text declaration, a
+version number, a standalone declaration, in a file oxml never reads.
+Mostly `ibm` P77 (text declarations in external entities), the `sun`
+conditional-section tests, and `oasis/o-p09fail1`, whose DTD is a
+separate file. The shape is a caller-supplied map from identifier to
+content; the parser still performs no I/O. See
+[adr/0003](adr/0003-no-external-entities.md).
+
+Regenerate the list with
+`cargo run --release -p oxml-conformance --bin report` rather than
+trusting these counts once the code has moved.
 
 The design constraint is fixed: the parser must never perform I/O. The
 shape is a caller-supplied map from identifier to content, so the
