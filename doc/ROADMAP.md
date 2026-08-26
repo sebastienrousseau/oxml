@@ -36,6 +36,14 @@ one is listed as not done, however close it feels.
 
 ## Done
 
+**Owned input.** `Document` owns its text and character data is
+`(start, len)` ranges into it, so **0.50 allocations per node** —
+down from 4.13 when counting began, via 1.13. Fewer than one per node
+means most nodes cost none. No lifetime parameter on `Document`: see
+[adr/0007](adr/0007-owned-strings-for-now.md) for why that mattered
+more than it looks, and [design/owned-input.md](design/owned-input.md)
+for what the design note got wrong.
+
 **Correctness.** Ten defects fixed, each with a test that fails without
 the fix: XML 1.0 and 1.1 line-ending normalisation, attribute-value
 normalisation, XPath namespace resolution in name tests,
@@ -88,19 +96,7 @@ claim rests entirely on the allocation count, which is a proxy.
 `doc/BENCHMARKS.md` states the method and the conditions a figure must
 carry.
 
-### 2. Owned input — the last of the allocations
-
-Text nodes and attribute values are the only owned `String`s left. Have
-`Document` own its input and store `(start, len)` ranges into it, as
-child and attribute lists already do.
-
-Design written up in [design/owned-input.md](design/owned-input.md),
-including the entity-expansion complication: a value containing
-`&amp;` does not appear verbatim in the input and needs a side table.
-
-Breaking: `Document::text` would return `&str` rather than `String`.
-
-### 3. Conformance — 37 failures, in two groups
+### 2. Conformance — 37 failures, in two groups
 
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
@@ -133,7 +129,7 @@ shape is a caller-supplied map from identifier to content, so the
 caller decides what may be read. See
 [adr/0003-no-external-entities.md](adr/0003-no-external-entities.md).
 
-### 4. Streaming from a reader
+### 3. Streaming from a reader
 
 `stream::Reader` now yields events over the same scanner with no tree
 built, which is most of this item: measured against parsing the same
