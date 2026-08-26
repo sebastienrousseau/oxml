@@ -96,8 +96,14 @@ const TOLERANCE: f64 = 0.15;
 const BASELINE: &[(&str, &str, &str, f64)] = &[
     ("aarch64", "events", "oxml::stream", 0.089),
     ("aarch64", "tree", "oxml::parse", 0.319),
-    // x86_64 has no entry yet: it reports and does not gate until a
-    // run on that hardware provides one.
+    // From two CI runs on a GitHub ubuntu-latest runner, taking the
+    // lower of each. Worth noting why this table is keyed at all: the
+    // *tree* ratio is near-identical across the two architectures
+    // (0.319 against 0.321), while the *events* ratio is 27% better on
+    // x86_64 (0.089 against 0.113). One shared baseline would have
+    // been vacuous on one machine or spurious on the other.
+    ("x86_64", "events", "oxml::stream", 0.113),
+    ("x86_64", "tree", "oxml::parse", 0.321),
 ];
 
 /// A catalogue: the shape most XML in the wild actually has.

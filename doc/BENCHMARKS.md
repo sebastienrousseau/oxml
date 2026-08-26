@@ -202,10 +202,22 @@ roughly a fifth or worse, not of a twentieth. A quiet machine would
 support a tighter band.
 
 Baselines are keyed by architecture, because instruction mix, cache
-sizes and memory bandwidth move two parsers differently: a figure from
-Apple Silicon is not evidence about an x86 runner. An architecture
-with no recorded baseline reports its numbers and does not gate, so
-adding a platform cannot produce a spurious red build.
+sizes and memory bandwidth move two parsers differently. That is not a
+hypothetical: measured on a GitHub `ubuntu-latest` runner against the
+6-core Mac,
+
+| Group | aarch64 | x86_64 |
+|---|---|---|
+| `oxml::parse` vs `roxmltree` | 0.319× | 0.321× |
+| `oxml::stream` vs `quick-xml` | 0.089× | **0.113×** |
+
+the tree ratio is near-identical while the events ratio is 27% better
+on x86_64. A single shared baseline would have been vacuous on one
+machine or spurious on the other.
+
+An architecture with no recorded baseline reports its numbers and does
+not gate, so adding a platform cannot produce a red build before
+anyone has measured it there.
 
 ### Still missing
 
