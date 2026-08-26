@@ -29,7 +29,7 @@ one is listed as not done, however close it feels.
 | Line coverage | ≥95% | **97.3%**, gated | ✅ |
 | Conformance | Published with denominator | **98.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **1.13** | ✅ |
-| Throughput | <100 ms at load | **Not measured** — see below | ❌ |
+| Throughput | <100 ms at load | **Measurable, not yet measured** — `benches/throughput.rs` reports MB/s; `scripts/record-throughput.sh` refuses above 0.20 load per core | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
 | Documentation | House style, all 6 crates | READMEs, `doc/`, examples, FAQs across all six | ✅ |
 | Streaming | An entry point | Not started | ❌ |
@@ -61,12 +61,26 @@ and every code block under `doc/` compiled as a test.
 
 In the order that buys the most.
 
-### 1. Throughput measurement — the only ❌ with no excuse
+### 1. Throughput — measurable now, still unmeasured
 
-The plan says <100 ms at load and **nothing measures it**. The
-benchmarks compile and run in CI, but no figure is published, because
-the same binary measured 14.7 and 123.1 MB/s on this machine at a load
-average above 30.
+The plan states its target in throughput, and until 0.0.6 **nothing
+measured throughput at all**: the benchmarks reported time per
+document, which cannot be checked against a figure in MB/s without
+each document's size.
+
+`benches/throughput.rs` now tells criterion the byte count, so it
+reports a rate. Three shapes: markup-dominated, text-dominated, and
+attribute-dominated.
+
+There is still no published figure, and that is deliberate. The same
+binary measured 14.7 and 123.1 MB/s on this machine on one day; the
+difference was load. `scripts/record-throughput.sh` checks the
+fifteen-minute load average against a fifth of a core before it
+measures, and exits without a number when the machine is busy — it has
+refused on every attempt so far, at between 0.7 and 1.5 per core.
+
+A figure obtained by overriding that check would not be a
+measurement.
 
 This needs a quiet machine, not more code. Until then the performance
 claim rests entirely on the allocation count, which is a proxy.

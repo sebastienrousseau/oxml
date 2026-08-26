@@ -45,6 +45,7 @@ benches.
 |---|---|
 | `parse` | Document construction, across document shapes and sizes |
 | `xpath` | Expression compilation, and evaluation separately from it |
+| `throughput` | Bytes per second, across markup-, text- and attribute-dominated documents |
 | `encoding` | Decoding, which runs before parsing on every `parse_bytes` |
 | `tree` | Reading a parsed document, which an XPath-free caller still pays |
 | `entities` | Expansion, against a control with the same output and no entities |
@@ -94,7 +95,12 @@ Criterion writes an HTML report to `target/criterion/report/index.html`.
 
 ## Recording a figure
 
-Before publishing anything from a run:
+Use `scripts/record-throughput.sh`. It checks the conditions below
+before it measures and **exits without a number when they are not
+met**, so a figure cannot be recorded from a busy machine by
+forgetting to look.
+
+Manually, before publishing anything from a run:
 
 ```bash
 uptime                          # load average must be near zero
