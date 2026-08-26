@@ -28,7 +28,7 @@ one is listed as not done, however close it feels.
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
 | Line coverage | ≥95% | **97.4%**, gated | ✅ |
 | Conformance | Published with denominator | **98.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
-| Allocations per node | ≤2 | **1.13** | ✅ |
+| Allocations per node | ≤2 | **0.50** | ✅ |
 | Throughput | <100 ms at load | **Ratios measured, absolute still not** — `benches/comparison.rs` reports 0.089× `quick-xml` (events) and 0.319× `roxmltree` (tree), stable to 3–5% under 10 CPU hogs and gated at 15%. MB/s still needs a quiet machine; `scripts/record-throughput.sh` refuses above 0.20 load per core and has never yet been able to record | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
 | Documentation | House style, all 6 crates | READMEs, `doc/`, examples, FAQs across all six | ✅ |

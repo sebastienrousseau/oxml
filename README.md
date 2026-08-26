@@ -884,9 +884,9 @@ the job it actually does, on the same 855 KB document:
 
 So `quick-xml` reads events about eleven times faster, and
 `roxmltree` builds a tree about three times faster. The gap is
-allocation: `oxml` performs about 1.13 per node where a borrowed
-design performs almost none, and text and attribute values are owned
-`String`s rather than slices of the input.
+allocation and copying: `oxml` performs about 0.50 allocations per
+node where a borrowed design performs almost none, and it copies the
+input once so the document can own it.
 
 Reproduce it with `cargo bench --bench comparison`. Both crates are
 dev-dependencies, so this is a measurement you can rerun rather than a
@@ -1021,8 +1021,8 @@ XML, build the string, or use `quick-xml`'s writer.
 
 ### How much memory does a document take?
 
-Measured at **1.13 allocations per node** — 18,065 allocations for a
-16,002-node document, counted with a wrapping global allocator over the
+Measured at **0.50 allocations per node** — 8,076 allocations for a
+16,004-node document, counted with a wrapping global allocator over the
 whole of `parse` and divided by `Document::len()`. A test holds that
 figure to a ceiling, so it cannot drift upward unnoticed.
 
@@ -1032,14 +1032,22 @@ names are interned, so traversal is index arithmetic rather than
 pointer chasing and the document is `Send + Sync` for free. That work
 took the figure from 4.13 to 1.13.
 
-What remains is the owned `String`s: every text node and attribute
-value. Element and attribute *names* no longer allocate at all — they
-are slices of the input until interning, and a repeated name costs a
-map probe. Removing the last two means having the document own its
-input so both become ranges into it, which is not done — so 1.13 is
-the number.
+The step from 1.13 to 0.50 is the document **owning its input**. Text
+nodes, comments and attribute values are ranges into that string
+rather than strings of their own, so a document that expands no
+entities allocates nothing at all for its character data. Names had
+already stopped allocating — they are slices of the input until
+interning, and a repeated name costs a map probe.
 
-That said: the whole document is in memory. See "When not to use oxml".
+Fewer than one allocation per node means most nodes cost none: what
+remains is the arenas themselves, which grow by doubling and so cost a
+handful of allocations for the whole document.
+
+The trade is one copy of the input, because the document owns the
+decoded and line-ending-normalised text rather than borrowing yours.
+That is what lets `Document` have no lifetime parameter and
+`parse_bytes` decode UTF-16, where there is no caller string to borrow
+from. See "When not to use oxml" — the whole document is in memory.
 
 ### Why `NodeId` rather than references?
 

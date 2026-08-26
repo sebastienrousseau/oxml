@@ -2,12 +2,14 @@
 
 # Design note — owned input
 
-**Status:** Planned. The remaining half of the allocation work.
+**Status:** Done. Measured at **0.50 allocations per node**, down
+from 1.13.
 
 ## Where the allocations are
 
-Measured with a counting global allocator over a 16,002-node document:
-**18,065 allocations, 1.13 per node.**
+Measured with a counting global allocator over a 16,004-node document:
+**8,076 allocations, 0.50 per node** — from 18,073 and 1.13 before
+this landed.
 
 There are two pieces.
 
@@ -21,7 +23,8 @@ The name was resolved into a freshly allocated `ExpandedName` and only
 then looked up, so the allocation had already happened. Resolving to
 borrowed parts and looking up by those is what actually removed it.
 
-**Two — own the input**, which is the rest of this note.
+**Two — own the input.** Done, and the rest of this note describes
+how it went.
 
 The owned `String`s that remain:
 
@@ -63,18 +66,42 @@ Owning the input handles both entry points identically and keeps
 
 ## What it breaks
 
-`Document::text` currently returns `String`. Returning `&str` is a
-breaking change for callers who move the result — mechanical to fix,
-but it is a change and belongs in a version that says so.
+`Document::text` was expected to return `&str`. It does not, and
+cannot: it is `XPath`'s string-value, which *concatenates* a node's
+descendants, and a concatenation of several text nodes is not a slice
+of anything. It still returns `String`.
 
-Entity expansion complicates it: an attribute value containing
-`&amp;` does not appear verbatim in the input, so it cannot be a range
-into it. Those need a side table of expanded values, with the range
-form used for the common case where no expansion occurred.
+What changed instead is `Document::kind`, which now returns a
+**borrowed view** — `NodeKind<'_>` whose `Text` and `Comment` carry
+`&str` and whose `Attr` carries `Attribute<'_>` — resolved from the
+stored ranges on access. Storage and view are separate types
+(`NodeData` and `NodeKind`) because the stored form must not borrow:
+the document owns both the nodes and the text they point into, and a
+node holding a `&str` into its own document would be
+self-referential.
+
+That turned out to be the *less* disruptive change. Callers written as
+`Some(NodeKind::Text(t)) => t.trim()` still compile, because `&str`
+and `&String` both have `trim`. What breaks is code that `clone()`s
+the payload expecting a `String`, which now needs `to_owned()`.
+
+Entity expansion complicated it as predicted: an attribute value
+containing `&amp;` does not appear verbatim in the input, so it cannot
+be a range into it. Those go in a side table, with the range form used
+for the common case. The accumulator that decides between them is
+`parser::Run`, which stays a range until something — an expansion, or
+a `CDATA` delimiter splitting a run into non-contiguous pieces —
+forces it to materialise.
 
 ## How progress is measured
 
 `crates/oxml/tests/allocations.rs` counts and holds the figure to a
-ceiling. When this lands, the ceiling comes down and the README number
-changes with it — the README publishes 4.1 today, and it publishes
-whatever is true after.
+ceiling, which came down from 1.3 to 0.6 when this landed. The README
+publishes 0.50.
+
+The throughput effect is smaller than the allocation effect and, on
+this machine, not separable from noise: the `tree` ratio against
+`roxmltree` moved from a median of 0.323 to 0.351 across six runs
+either side, which is inside the ±8% spread the ratio itself shows
+run to run. The allocation count is deterministic and is the honest
+headline; the speed claim is not made.

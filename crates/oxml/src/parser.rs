@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, ErrorKind, Result};
 use crate::limits::Limits;
-use crate::tree::{Attribute, Document, ExpandedName, NodeId, NodeKind};
+use crate::tree::{Chars, Document, ExpandedName, NameId, NodeData, NodeId};
 
 /// Namespace bindings in scope, as a stack of (prefix, uri) frames.
 ///
@@ -171,12 +171,19 @@ pub fn parse_with_external(
     // means every rule that inspects whitespace has to know about it,
     // and the thirteenth such rule is the one that forgets.
     let version = declared_version(input)?;
-    match normalize_line_endings(input, version) {
-        Cow::Borrowed(text) => {
-            parse_normalized(text, limits, version, external)
-        }
-        Cow::Owned(text) => parse_normalized(&text, limits, version, external),
-    }
+    // The document owns its text, because text nodes, comments and
+    // attribute values are ranges into it rather than strings of their
+    // own. That costs one copy of the input for a document whose line
+    // endings needed no rewriting -- against one allocation per text
+    // node and per attribute value, which is what it replaces.
+    //
+    // The ranges are recorded against exactly this buffer, and moving
+    // a `String` does not move the bytes it points at, so handing it
+    // to the document afterwards leaves every range valid.
+    let text = normalize_line_endings(input, version).into_owned();
+    let mut doc = parse_normalized(&text, limits, version, external)?;
+    doc.input = text;
+    Ok(doc)
 }
 
 /// Everything that happens to a document before any of it is scanned.
@@ -209,6 +216,86 @@ pub(crate) fn prepare(
         return Err(Error::new(ErrorKind::IllegalCharacter(c), offset));
     }
     Ok((text, version))
+}
+
+/// A character-data run being accumulated.
+///
+/// Almost every text node in almost every document is exactly a slice
+/// of the input: no references, no `CDATA`, nothing merged. That case
+/// must not allocate, so a run remembers where it started and only
+/// materialises a `String` when something forces it to -- an entity
+/// expanded, or a second piece that is not contiguous with the first.
+#[derive(Debug, Default)]
+pub(crate) struct Run {
+    /// Where the verbatim part starts in the input.
+    start: usize,
+    /// How much of the input it covers.
+    len: usize,
+    /// Set once the run stopped being expressible as a slice.
+    owned: Option<String>,
+}
+
+impl Run {
+    /// Add a piece that *is* a slice of the input, at `at`.
+    pub(crate) fn push_slice(&mut self, at: usize, text: &str, input: &str) {
+        if let Some(owned) = &mut self.owned {
+            owned.push_str(text);
+        } else if self.len == 0 {
+            self.start = at;
+            self.len = text.len();
+        } else if self.start + self.len == at {
+            // Contiguous with what is already here, so the two are one
+            // slice and the run is still free.
+            self.len += text.len();
+        } else {
+            // A gap -- a `CDATA` delimiter, most likely. From here the
+            // run is no longer a range into anything.
+            self.push_owned(text, input);
+        }
+    }
+
+    /// Add a piece the input does not contain, such as an expansion.
+    pub(crate) fn push_owned(&mut self, text: &str, input: &str) {
+        if let Some(owned) = &mut self.owned {
+            owned.push_str(text);
+            return;
+        }
+        let mut buffer = String::with_capacity(self.len + text.len());
+        buffer.push_str(
+            input
+                .get(self.start..self.start + self.len)
+                .unwrap_or_default(),
+        );
+        buffer.push_str(text);
+        self.owned = Some(buffer);
+    }
+
+    /// The run's text, borrowed from wherever it lives.
+    pub(crate) fn as_str<'a>(&'a self, input: &'a str) -> &'a str {
+        self.owned.as_deref().unwrap_or_else(|| {
+            input
+                .get(self.start..self.start + self.len)
+                .unwrap_or_default()
+        })
+    }
+
+    /// How many bytes the run holds, for the length limit.
+    pub(crate) fn len(&self) -> usize {
+        self.owned.as_ref().map_or(self.len, String::len)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Where the run sits in the input, if it is still a slice.
+    pub(crate) fn as_span(&self) -> Option<(usize, usize)> {
+        if self.owned.is_some() {
+            None
+        } else {
+            Some((self.start, self.len))
+        }
+    }
 }
 
 /// Whitespace before an XML declaration is a malformed document, not
@@ -260,7 +347,7 @@ pub(crate) struct StartTag<'a> {
     /// The element's name, as written.
     pub(crate) qname: &'a str,
     /// Attributes, as written, with entities resolved in the values.
-    pub(crate) raw_attrs: Vec<(&'a str, String)>,
+    pub(crate) raw_attrs: Vec<(&'a str, Run)>,
     /// Namespaces this tag declares, as `(prefix, uri)`.
     pub(crate) declared: Vec<(String, String)>,
     /// Whether the tag closed itself.
@@ -410,11 +497,11 @@ impl<'a> Parser<'a> {
             if self.peek_is(b'<') {
                 if self.starts_with("<!--") {
                     let c = self.parse_comment()?;
-                    let _ = self.doc.push(NodeKind::Comment(c), root);
+                    let _ = self.doc.push(NodeData::Comment(c), root);
                 } else if self.starts_with("<?") {
                     let (t, d) = self.parse_pi()?;
                     let _ = self.doc.push(
-                        NodeKind::ProcessingInstruction { target: t, data: d },
+                        NodeData::ProcessingInstruction { target: t, data: d },
                         root,
                     );
                 } else if self.starts_with("<!DOCTYPE") {
@@ -602,10 +689,14 @@ impl<'a> Parser<'a> {
     /// here would leave the ancestor's binding in scope.
     pub(crate) fn bind_namespaces(
         &mut self,
-        raw_attrs: &[(&'a str, String)],
+        raw_attrs: &[(&'a str, Run)],
     ) -> Result<Vec<(String, String)>> {
         let mut declared = Vec::new();
-        for (name, value) in raw_attrs {
+        // Copied out so resolving a run does not borrow `self` while
+        // the loop binds into `self.ns`.
+        let input = self.input;
+        for (name, run) in raw_attrs {
+            let value = run.as_str(input);
             if let Some(prefix) = name.strip_prefix("xmlns:") {
                 // Namespaces in XML, section 3: `xml` may be bound only
                 // to the XML namespace and nothing else may be bound to
@@ -641,8 +732,8 @@ impl<'a> Parser<'a> {
                         self.pos,
                     ));
                 }
-                self.ns.bind(prefix.to_owned(), value.clone());
-                declared.push((prefix.to_owned(), value.clone()));
+                self.ns.bind(prefix.to_owned(), value.to_owned());
+                declared.push((prefix.to_owned(), value.to_owned()));
             } else if *name == "xmlns" {
                 // The reserved URIs were checked for *prefixed*
                 // declarations and not for the default one, so
@@ -657,8 +748,8 @@ impl<'a> Parser<'a> {
                         self.pos,
                     ));
                 }
-                self.ns.bind(String::new(), value.clone());
-                declared.push((String::new(), value.clone()));
+                self.ns.bind(String::new(), value.to_owned());
+                declared.push((String::new(), value.to_owned()));
             }
         }
         Ok(declared)
@@ -719,11 +810,13 @@ impl<'a> Parser<'a> {
         // Resolve attribute names first so duplicates are detected
         // before any node is created — otherwise a rejected element
         // would already be in the arena.
-        let mut resolved: Vec<Attribute> = Vec::with_capacity(raw_attrs.len());
+        let mut resolved: Vec<(NameId, Chars)> =
+            Vec::with_capacity(raw_attrs.len());
+        let input = self.input;
         // Values of this element's `ID`-typed attributes, held until
         // the element node exists to point them at.
         let mut id_values: Vec<String> = Vec::new();
-        for (raw, value) in raw_attrs {
+        for (raw, run) in raw_attrs {
             if raw == "xmlns" || raw.starts_with("xmlns:") {
                 continue;
             }
@@ -738,7 +831,7 @@ impl<'a> Parser<'a> {
             let expanded = &self.doc.names[an.0 as usize];
             if resolved
                 .iter()
-                .any(|a| self.doc.names[a.name.0 as usize] == *expanded)
+                .any(|(n, _)| self.doc.names[n.0 as usize] == *expanded)
             {
                 self.ns.pop_scope();
                 return Err(Error::new(
@@ -751,14 +844,21 @@ impl<'a> Parser<'a> {
                 .as_ref()
                 .is_some_and(|d| d.is_id_attribute(qname, raw))
             {
-                id_values.push(value.clone());
+                id_values.push(run.as_str(input).to_owned());
             }
-            resolved.push(Attribute { name: an, value });
+            // A value that survived scanning as a slice becomes a
+            // range into the document's own input; one that entity
+            // expansion or normalisation rewrote joins the side table.
+            let value = match run.as_span() {
+                Some((start, len)) => self.verbatim(start, len),
+                None => self.doc.push_expanded(run.as_str(input)),
+            };
+            resolved.push((an, value));
         }
 
         let name_id = self.intern_qname(qname, true, tag_start)?;
         let node = self.doc.push(
-            NodeKind::Element {
+            NodeData::Element {
                 name: name_id,
                 attributes: (0, 0),
                 namespaces: (0, 0),
@@ -771,8 +871,9 @@ impl<'a> Parser<'a> {
         // consecutively, so they are already contiguous in `attr_ids`
         // and need no scratch buffer.
         let start = self.doc.attr_ids.len();
-        for at in resolved {
-            let id = self.doc.push_detached(NodeKind::Attr(at), node);
+        for (name, value) in resolved {
+            let id =
+                self.doc.push_detached(NodeData::Attr { name, value }, node);
             self.doc.attr_ids.push(id);
         }
         for value in id_values {
@@ -792,11 +893,11 @@ impl<'a> Parser<'a> {
         // inherits it by the same ancestor walk as any other prefix.
         let (ns_start, ns_len) = self.push_namespace_nodes(node, declared);
 
-        if let Some(NodeKind::Element {
+        if let Some(NodeData::Element {
             attributes,
             namespaces,
             ..
-        }) = self.doc.kind_mut(node)
+        }) = self.doc.data_mut(node)
         {
             *attributes = (
                 u32::try_from(start).unwrap_or(u32::MAX),
@@ -832,19 +933,26 @@ impl<'a> Parser<'a> {
     ) -> (usize, usize) {
         let start = self.doc.ns_ids.len();
         if self.doc.nodes[node.0].parent == Some(self.doc.root()) {
-            let id = self.doc.push_detached(
-                NodeKind::Namespace {
-                    prefix: "xml".to_owned(),
-                    uri: "http://www.w3.org/XML/1998/namespace".to_owned(),
-                },
-                node,
-            );
+            // Namespace nodes go in the side table rather than
+            // being ranges. There is one per *declaration*, not per
+            // element -- a document usually has a handful, all on the
+            // root -- so the plumbing to span them would cost more
+            // than it saves.
+            let prefix = self.doc.push_expanded("xml");
+            let uri = self
+                .doc
+                .push_expanded("http://www.w3.org/XML/1998/namespace");
+            let id = self
+                .doc
+                .push_detached(NodeData::Namespace { prefix, uri }, node);
             self.doc.ns_ids.push(id);
         }
         for (prefix, uri) in declared {
+            let prefix = self.doc.push_expanded(&prefix);
+            let uri = self.doc.push_expanded(&uri);
             let id = self
                 .doc
-                .push_detached(NodeKind::Namespace { prefix, uri }, node);
+                .push_detached(NodeData::Namespace { prefix, uri }, node);
             self.doc.ns_ids.push(id);
         }
         (start, self.doc.ns_ids.len() - start)
@@ -852,7 +960,7 @@ impl<'a> Parser<'a> {
 
     fn parse_children(&mut self, node: NodeId, open_qname: &str) -> Result<()> {
         let mark = self.doc.scratch_mark();
-        let mut text = String::new();
+        let mut text = Run::default();
         loop {
             // Checked once per child rather than at each `push`: every
             // node this parser creates is created from inside this loop
@@ -896,14 +1004,14 @@ impl<'a> Parser<'a> {
                 } else if self.starts_with("<!--") {
                     self.flush_text(&mut text, node)?;
                     let c = self.parse_comment()?;
-                    let _ = self.doc.push(NodeKind::Comment(c), node);
+                    let _ = self.doc.push(NodeData::Comment(c), node);
                 } else if self.starts_with("<![CDATA[") {
                     self.parse_cdata(&mut text)?;
                 } else if self.starts_with("<?") {
                     self.flush_text(&mut text, node)?;
                     let (t, d) = self.parse_pi()?;
                     let _ = self.doc.push(
-                        NodeKind::ProcessingInstruction { target: t, data: d },
+                        NodeData::ProcessingInstruction { target: t, data: d },
                         node,
                     );
                 } else {
@@ -916,18 +1024,26 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn flush_text(&mut self, text: &mut String, node: NodeId) -> Result<()> {
+    fn flush_text(&mut self, text: &mut Run, node: NodeId) -> Result<()> {
         if !text.is_empty() {
-            let owned = core::mem::take(text);
-            if self.limits.max_text_length.is_some_and(|m| owned.len() > m) {
+            let run = core::mem::take(text);
+            if self.limits.max_text_length.is_some_and(|m| run.len() > m) {
                 return Err(Error::new(ErrorKind::TextTooLong, self.pos));
             }
-            let _ = self.doc.push(NodeKind::Text(owned), node);
+            // A run still expressible as a slice becomes a range; one
+            // that is not joins the side table.
+            let chars = if let Some((start, len)) = run.as_span() {
+                self.verbatim(start, len)
+            } else {
+                let text = run.as_str(self.input);
+                self.doc.push_expanded(text)
+            };
+            let _ = self.doc.push(NodeData::Text(chars), node);
         }
         Ok(())
     }
 
-    pub(crate) fn parse_text_run(&mut self, out: &mut String) -> Result<()> {
+    pub(crate) fn parse_text_run(&mut self, out: &mut Run) -> Result<()> {
         while self.pos < self.bytes.len() {
             // `CharData ::= [^<&]* - ([^<&]* ']]>' [^<&]*)`. The
             // sequence is forbidden literally so that a reader can
@@ -949,7 +1065,11 @@ impl<'a> Parser<'a> {
                     // Element content, not an attribute value: section
                     // 3.3.3 does not apply, and a newline in content is
                     // content.
-                    out.push_str(&self.expand_entity(ent, s, false)?);
+                    let expanded = self.expand_entity(ent, s, false)?;
+                    // The one thing in a text run the input does not
+                    // hold verbatim: this is where a run stops being a
+                    // slice and starts being a string.
+                    out.push_owned(&expanded, self.input);
                     self.pos += end + 1;
                 }
                 _ => {
@@ -972,7 +1092,7 @@ impl<'a> Parser<'a> {
                             start + at,
                         ));
                     }
-                    out.push_str(run);
+                    out.push_slice(start, run, self.input);
                 }
             }
         }
@@ -986,17 +1106,54 @@ impl<'a> Parser<'a> {
     /// text `abc`. Extracted so the streaming reader consumes CDATA
     /// exactly as the tree parser does; when it had its own copy, the
     /// copy did not advance and read the section forever.
-    pub(crate) fn parse_cdata(&mut self, out: &mut String) -> Result<()> {
+    pub(crate) fn parse_cdata(&mut self, out: &mut Run) -> Result<()> {
         self.pos += "<![CDATA[".len();
         let end = self.input[self.pos..].find("]]>").ok_or_else(|| {
             Error::new(ErrorKind::Unterminated("CDATA"), self.pos)
         })?;
-        out.push_str(&self.input[self.pos..self.pos + end]);
+        // The body is itself a slice of the input, so a text node that
+        // is *only* a `CDATA` section still costs nothing. One mixed
+        // with adjacent text does, because the delimiters sit between
+        // them and the pieces are no longer contiguous.
+        let body = &self.input[self.pos..self.pos + end];
+        out.push_slice(self.pos, body, self.input);
         self.pos += end + 3;
         Ok(())
     }
 
-    pub(crate) fn parse_comment(&mut self) -> Result<String> {
+    /// Resolve stored character data against the text being scanned.
+    ///
+    /// The streaming reader needs the text itself rather than a range,
+    /// because an event outlives the scan that produced it.
+    pub(crate) fn owned(&self, c: Chars) -> &str {
+        match c {
+            Chars::Span(start, len) => {
+                let (start, len) = (start as usize, len as usize);
+                self.input.get(start..start + len).unwrap_or_default()
+            }
+            Chars::Expanded(i) => self
+                .doc
+                .expanded
+                .get(i as usize)
+                .map_or("", alloc::string::String::as_str),
+        }
+    }
+
+    /// Record a verbatim slice of the input as a range into it.
+    ///
+    /// This is where an allocation used to be. The document owns the
+    /// text already; a node that repeats it owns nothing.
+    pub(crate) fn verbatim(&mut self, start: usize, len: usize) -> Chars {
+        if let (Ok(s), Ok(l)) = (u32::try_from(start), u32::try_from(len)) {
+            return Chars::Span(s, l);
+        }
+        // Past what a 32-bit range can address. Keep the text in the
+        // side table rather than truncate the document.
+        let text = &self.input[start..start + len];
+        self.doc.push_expanded(text)
+    }
+
+    pub(crate) fn parse_comment(&mut self) -> Result<Chars> {
         let start = self.pos;
         self.pos += "<!--".len();
         let end = self.input[self.pos..].find("-->").ok_or_else(|| {
@@ -1009,15 +1166,18 @@ impl<'a> Parser<'a> {
         if body.contains("--") || body.ends_with('-') {
             return Err(Error::new(ErrorKind::MalformedComment, start));
         }
-        let body = body.to_owned();
+        let at = self.pos;
+        let len = body.len();
         self.pos += end + 3;
-        Ok(body)
+        Ok(self.verbatim(at, len))
     }
 
-    pub(crate) fn parse_pi(&mut self) -> Result<(String, String)> {
+    pub(crate) fn parse_pi(&mut self) -> Result<(Chars, Chars)> {
         let start = self.pos;
         self.pos += 2; // '<?'
+        let target_at = self.pos;
         let target = self.parse_name()?;
+        let target_len = target.len();
         // `PITarget ::= Name - (('X'|'x')('M'|'m')('L'|'l'))`. The name
         // `xml` in any case is reserved, so a second XML declaration
         // later in the document is not merely misplaced — it is not a
@@ -1044,14 +1204,20 @@ impl<'a> Parser<'a> {
         let end = self.input[self.pos..].find("?>").ok_or_else(|| {
             Error::new(ErrorKind::Unterminated("processing instruction"), start)
         })?;
-        let data = self.input[self.pos..self.pos + end].trim().to_owned();
+        // Trimming a slice yields a slice of the same buffer, so the
+        // trimmed data is still a range into the input rather than
+        // anything that has to be built.
+        let raw = &self.input[self.pos..self.pos + end];
+        let lead = raw.len() - raw.trim_start().len();
+        let data_at = self.pos + lead;
+        let data_len = raw.trim().len();
         self.pos += end + 2;
-        // A processing instruction keeps its target, so this one
-        // copy is retained rather than discarded.
-        Ok((target.to_owned(), data))
+        let target = self.verbatim(target_at, target_len);
+        let data = self.verbatim(data_at, data_len);
+        Ok((target, data))
     }
 
-    fn parse_attributes(&mut self) -> Result<Vec<(&'a str, String)>> {
+    fn parse_attributes(&mut self) -> Result<Vec<(&'a str, Run)>> {
         let mut out = Vec::new();
         loop {
             self.skip_whitespace();
@@ -1102,7 +1268,7 @@ impl<'a> Parser<'a> {
     /// A literal `<` is forbidden — it must be written `&lt;` — because
     /// otherwise an unclosed tag inside a value is indistinguishable
     /// from markup.
-    fn parse_attribute_value(&mut self) -> Result<String> {
+    fn parse_attribute_value(&mut self) -> Result<Run> {
         let start = self.pos;
         if self.pos >= self.bytes.len() {
             return Err(Error::new(ErrorKind::UnexpectedEof, start));
@@ -1112,7 +1278,7 @@ impl<'a> Parser<'a> {
             return Err(Error::new(ErrorKind::UnquotedAttributeValue, start));
         }
         self.pos += 1;
-        let mut out = String::new();
+        let mut out = Run::default();
         loop {
             if self.pos >= self.bytes.len() {
                 return Err(Error::new(
@@ -1142,7 +1308,8 @@ impl<'a> Parser<'a> {
                     // Normalisation happens inside the expansion, so
                     // that a character reference within an entity's
                     // replacement text stays exempt.
-                    out.push_str(&self.expand_entity(ent, s, true)?);
+                    let expanded = self.expand_entity(ent, s, true)?;
+                    out.push_owned(&expanded, self.input);
                     self.pos += end + 1;
                 }
                 _ => {
@@ -1157,10 +1324,18 @@ impl<'a> Parser<'a> {
                     {
                         self.pos += 1;
                     }
-                    push_attribute_normalized(
-                        &mut out,
-                        &self.input[s..self.pos],
-                    );
+                    // Normalisation only rewrites a value that
+                    // contains a tab or a line break, which almost
+                    // none do. When it would change nothing, the value
+                    // is a slice of the input and costs nothing.
+                    let raw = &self.input[s..self.pos];
+                    if raw.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\r')) {
+                        let mut normalized = String::new();
+                        push_attribute_normalized(&mut normalized, raw);
+                        out.push_owned(&normalized, self.input);
+                    } else {
+                        out.push_slice(s, raw, self.input);
+                    }
                 }
             }
         }

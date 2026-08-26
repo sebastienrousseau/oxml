@@ -55,10 +55,13 @@ The closest comparison. A read-only tree, no `unsafe`-free guarantee,
 and — importantly — it **borrows from the input**, so a node's text is
 a slice of the document you passed in rather than an owned `String`.
 
-That is the design oxml has not yet adopted, and it accounts for much
-of the allocation difference: oxml currently performs 4.13 allocations
-per node, most of them owned strings that a borrowing design would not
-need.
+oxml reaches the same place by a different route: rather than borrow
+the caller's string, the document **owns** its input and a node's text
+is a range into that. It costs one copy of the document and means no
+lifetime parameter, which is what makes `parse_bytes` on a UTF-16
+document work at all -- there, the decoded string is a temporary with
+nothing to borrow from. The measured cost is **0.50 allocations per
+node**, down from 4.13.
 
 `roxmltree` has no XPath. If you need queries, you are writing the
 traversal yourself.

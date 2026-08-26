@@ -321,15 +321,16 @@ impl Reader {
                 return Err(Error::new(ErrorKind::TrailingContent, parser.pos));
             }
             if parser.starts_with("<!--") {
+                let c = parser.parse_comment()?;
                 return Ok(Scanned::Event(Event::Comment(
-                    parser.parse_comment()?,
+                    parser.owned(c).to_owned(),
                 )));
             }
             if parser.starts_with("<?") {
                 let (target, data) = parser.parse_pi()?;
                 return Ok(Scanned::Event(Event::ProcessingInstruction {
-                    target,
-                    data,
+                    target: parser.owned(target).to_owned(),
+                    data: parser.owned(data).to_owned(),
                 }));
             }
             if parser.starts_with("<!DOCTYPE") {
@@ -368,12 +369,12 @@ impl Reader {
     /// one text node, so yielding it as one event is what makes the
     /// two agree on `a &amp; <![CDATA[b]]> c`.
     fn char_data(parser: &mut Parser<'_>) -> Result<Event> {
-        let mut text = String::new();
+        let mut run = crate::parser::Run::default();
         loop {
             if parser.starts_with("<![CDATA[") {
-                parser.parse_cdata(&mut text)?;
+                parser.parse_cdata(&mut run)?;
             } else if parser.pos < parser.bytes.len() && !parser.peek_is(b'<') {
-                parser.parse_text_run(&mut text)?;
+                parser.parse_text_run(&mut run)?;
             } else {
                 break;
             }
@@ -381,14 +382,14 @@ impl Reader {
         // The same limit the tree parser applies when it flushes a run
         // into a text node. Accepting `Limits` and then not applying
         // them would be worse than not accepting them.
-        if parser
-            .limits
-            .max_text_length
-            .is_some_and(|m| text.len() > m)
-        {
+        if parser.limits.max_text_length.is_some_and(|m| run.len() > m) {
             return Err(Error::new(ErrorKind::TextTooLong, parser.pos));
         }
-        Ok(Event::Text(text))
+        // An event owns its text: a borrowed one would tie the caller
+        // to the reader between calls, which is the opposite of what a
+        // streaming interface is for. The tree keeps the range; the
+        // reader pays one copy per run and keeps nothing.
+        Ok(Event::Text(run.as_str(parser.input).to_owned()))
     }
 
     fn one_event(
@@ -450,13 +451,16 @@ impl Reader {
         }
 
         if parser.starts_with("<!--") {
-            return Ok(Scanned::Event(Event::Comment(parser.parse_comment()?)));
+            let c = parser.parse_comment()?;
+            return Ok(Scanned::Event(Event::Comment(
+                parser.owned(c).to_owned(),
+            )));
         }
         if parser.starts_with("<?") {
             let (target, data) = parser.parse_pi()?;
             return Ok(Scanned::Event(Event::ProcessingInstruction {
-                target,
-                data,
+                target: parser.owned(target).to_owned(),
+                data: parser.owned(data).to_owned(),
             }));
         }
 
@@ -502,7 +506,7 @@ impl Reader {
                     at,
                 ));
             }
-            attributes.push((name, value));
+            attributes.push((name, value.as_str(parser.input).to_owned()));
         }
 
         // `tag.declared` is not used here. `scan_start_tag` has already

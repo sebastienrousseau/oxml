@@ -74,7 +74,7 @@ impl ExpandedName {
 
 /// An attribute on an element.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Attribute {
+pub struct Attribute<'a> {
     /// The attribute's name, interned.
     ///
     /// A handle rather than an `ExpandedName` because attribute names
@@ -84,12 +84,18 @@ pub struct Attribute {
     /// hold three values. Resolve it with [`Document::name`].
     pub name: NameId,
     /// The attribute's value, with entities already resolved.
-    pub value: String,
+    ///
+    /// Borrowed from the document. Where the value appears verbatim in
+    /// the source -- which is almost always -- this is a slice of the
+    /// input the document owns and cost nothing to produce. Where
+    /// entity expansion or attribute-value normalisation rewrote it,
+    /// it is a slice of the document's side table of expanded values.
+    pub value: &'a str,
 }
 
 /// What a node is.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NodeKind {
+pub enum NodeKind<'a> {
     /// The document root. Exactly one per [`Document`], and it is not
     /// the same thing as the root *element*.
     Root,
@@ -126,12 +132,12 @@ pub enum NodeKind {
     /// `attribute::` axis can yield them and `string()` can return
     /// their value. They are deliberately *not* in their element's
     /// `children`, because `child::` must not see them.
-    Attr(Attribute),
+    Attr(Attribute<'a>),
     /// Character data. Adjacent runs are merged during parsing, so a
     /// caller never sees two text siblings in a row.
-    Text(String),
+    Text(&'a str),
     /// A comment's content, without the `<!--` and `-->`.
-    Comment(String),
+    Comment(&'a str),
     /// A namespace declaration in scope for an element.
     ///
     /// Like attributes, these are real nodes so `XPath`'s `namespace::`
@@ -146,21 +152,78 @@ pub enum NodeKind {
         /// This is the namespace node's name in `XPath`'s data model:
         /// `local-name()` returns it, and it is empty rather than
         /// absent for `xmlns="..."`.
-        prefix: String,
+        prefix: &'a str,
         /// The URI bound to it, which is the node's string-value.
         ///
         /// Empty for an *undeclaration* (`xmlns=""`, XML 1.1 only).
         /// Such a node exists so it can shadow the same prefix on an
         /// ancestor, but `namespace::` does not report it: the prefix
         /// is out of scope, not bound to the empty string.
-        uri: String,
+        uri: &'a str,
     },
     /// A processing instruction.
     ProcessingInstruction {
         /// The PI target, e.g. `xml-stylesheet`.
-        target: String,
+        target: &'a str,
         /// Everything after the target, verbatim.
-        data: String,
+        data: &'a str,
+    },
+}
+
+/// Character data belonging to the document, as stored.
+///
+/// The point of the whole arena: a text node or attribute value that
+/// appears verbatim in the source is a range into the input the
+/// document already owns, and costs no allocation at all.
+///
+/// Not everything can be. `&amp;` in a value, a `CDATA` section inside
+/// a text run, or attribute-value normalisation collapsing a tab to a
+/// space all produce characters that are nowhere in the input as
+/// written. Those go in a side table, which is empty for the
+/// overwhelming majority of documents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Chars {
+    /// A range into [`Document::input`], as `(start, len)`.
+    Span(u32, u32),
+    /// An index into [`Document::expanded`], for text that the input
+    /// does not contain verbatim.
+    Expanded(u32),
+}
+
+impl Chars {
+    /// The empty string, which every document can spell.
+    pub(crate) const EMPTY: Self = Self::Span(0, 0);
+}
+
+/// A node as stored, with character data unresolved.
+///
+/// The counterpart of [`NodeKind`], which is the same information with
+/// every [`Chars`] resolved against the document that owns it. They
+/// are separate types because the stored form must not borrow -- the
+/// document owns both the nodes and the text they point into, and a
+/// node holding a `&str` into its own document would be
+/// self-referential.
+#[derive(Debug, Clone)]
+pub(crate) enum NodeData {
+    Root,
+    Element {
+        name: NameId,
+        attributes: (u32, u32),
+        namespaces: (u32, u32),
+    },
+    Attr {
+        name: NameId,
+        value: Chars,
+    },
+    Text(Chars),
+    Comment(Chars),
+    Namespace {
+        prefix: Chars,
+        uri: Chars,
+    },
+    ProcessingInstruction {
+        target: Chars,
+        data: Chars,
     },
 }
 
@@ -179,7 +242,7 @@ pub struct NameId(pub(crate) u32);
 
 #[derive(Debug, Clone)]
 pub(crate) struct Node {
-    pub(crate) kind: NodeKind,
+    pub(crate) data: NodeData,
     pub(crate) parent: Option<NodeId>,
     /// Where this node's children live in the document's flat child
     /// arena, as `(start, len)`.
@@ -196,6 +259,24 @@ pub(crate) struct Node {
 /// Construct one with [`crate::parse`].
 #[derive(Debug, Clone)]
 pub struct Document {
+    /// The document text, decoded and line-ending normalised.
+    ///
+    /// Owned rather than borrowed from the caller. `parse_bytes` on a
+    /// UTF-16 or ISO-8859-1 document has nothing to borrow *from* --
+    /// the decoded string is a temporary the parser made -- so a
+    /// lifetime parameter would serve one entry point and not the
+    /// other. See `doc/adr/0007-owned-strings-for-now.md`.
+    ///
+    /// Text nodes, comments and attribute values are ranges into this
+    /// rather than strings of their own, which is what took the
+    /// allocation count down.
+    pub(crate) input: String,
+    /// Character data the input does not contain verbatim.
+    ///
+    /// Entity expansion, `CDATA` merged into a text run, and
+    /// attribute-value normalisation all produce text that is nowhere
+    /// in the source as written. Empty for most documents.
+    pub(crate) expanded: Vec<String>,
     pub(crate) nodes: Vec<Node>,
     /// Every distinct element name in the document, once.
     pub(crate) names: Vec<ExpandedName>,
@@ -245,11 +326,13 @@ impl Document {
     pub(crate) fn with_capacity(nodes: usize) -> Self {
         let mut v = Vec::with_capacity(nodes.saturating_add(1));
         v.push(Node {
-            kind: NodeKind::Root,
+            data: NodeData::Root,
             parent: None,
             children: (0, 0),
         });
         Self {
+            input: String::new(),
+            expanded: Vec::new(),
             nodes: v,
             names: Vec::new(),
             name_prefixes: Vec::new(),
@@ -271,10 +354,10 @@ impl Document {
         NodeId(0)
     }
 
-    pub(crate) fn push(&mut self, kind: NodeKind, parent: NodeId) -> NodeId {
+    pub(crate) fn push(&mut self, data: NodeData, parent: NodeId) -> NodeId {
         let id = NodeId(self.nodes.len());
         self.nodes.push(Node {
-            kind,
+            data,
             parent: Some(parent),
             children: (0, 0),
         });
@@ -311,27 +394,95 @@ impl Document {
     /// must not appear on the `child::` axis.
     pub(crate) fn push_detached(
         &mut self,
-        kind: NodeKind,
+        data: NodeData,
         parent: NodeId,
     ) -> NodeId {
         let id = NodeId(self.nodes.len());
         self.nodes.push(Node {
-            kind,
+            data,
             parent: Some(parent),
             children: (0, 0),
         });
         id
     }
 
-    /// The kind of a node, or `None` if the id is not from this
-    /// document.
-    #[must_use]
-    pub fn kind(&self, id: NodeId) -> Option<&NodeKind> {
-        self.nodes.get(id.0).map(|n| &n.kind)
+    /// Resolve stored character data against the document.
+    ///
+    /// A `Span` is a slice of the input; an `Expanded` is a slice of
+    /// the side table. Either way the caller gets a `&str` borrowed
+    /// from the document and no allocation happens.
+    pub(crate) fn chars(&self, c: Chars) -> &str {
+        match c {
+            Chars::Span(start, len) => {
+                let (start, len) = (start as usize, len as usize);
+                // A span is written by the parser from positions it
+                // scanned, so it is in range and on a character
+                // boundary. `get` rather than indexing so that a bug
+                // is an empty string and not a panic: this crate's
+                // contract is that no input panics it.
+                self.input.get(start..start + len).unwrap_or_default()
+            }
+            Chars::Expanded(i) => self
+                .expanded
+                .get(i as usize)
+                .map_or("", alloc::string::String::as_str),
+        }
     }
 
-    pub(crate) fn kind_mut(&mut self, id: NodeId) -> Option<&mut NodeKind> {
-        self.nodes.get_mut(id.0).map(|n| &mut n.kind)
+    /// The kind of a node, or `None` if the id is not from this
+    /// document.
+    ///
+    /// Returns a *view*: character data is resolved against the
+    /// document and borrowed from it, so this allocates nothing.
+    #[must_use]
+    pub fn kind(&self, id: NodeId) -> Option<NodeKind<'_>> {
+        let node = self.nodes.get(id.0)?;
+        Some(match &node.data {
+            NodeData::Root => NodeKind::Root,
+            NodeData::Element {
+                name,
+                attributes,
+                namespaces,
+            } => NodeKind::Element {
+                name: *name,
+                attributes: *attributes,
+                namespaces: *namespaces,
+            },
+            NodeData::Attr { name, value } => NodeKind::Attr(Attribute {
+                name: *name,
+                value: self.chars(*value),
+            }),
+            NodeData::Text(c) => NodeKind::Text(self.chars(*c)),
+            NodeData::Comment(c) => NodeKind::Comment(self.chars(*c)),
+            NodeData::Namespace { prefix, uri } => NodeKind::Namespace {
+                prefix: self.chars(*prefix),
+                uri: self.chars(*uri),
+            },
+            NodeData::ProcessingInstruction { target, data } => {
+                NodeKind::ProcessingInstruction {
+                    target: self.chars(*target),
+                    data: self.chars(*data),
+                }
+            }
+        })
+    }
+
+    /// Add to the side table of text the input does not contain.
+    pub(crate) fn push_expanded(&mut self, text: &str) -> Chars {
+        let Ok(i) = u32::try_from(self.expanded.len()) else {
+            return Chars::EMPTY;
+        };
+        self.expanded.push(text.into());
+        Chars::Expanded(i)
+    }
+
+    /// The stored form of a node, for the parser to amend in place.
+    ///
+    /// Element attribute and namespace ranges are only known once the
+    /// start tag has been fully read, so the node is pushed first and
+    /// filled in after.
+    pub(crate) fn data_mut(&mut self, id: NodeId) -> Option<&mut NodeData> {
+        self.nodes.get_mut(id.0).map(|n| &mut n.data)
     }
 
     /// A node's parent, or `None` for the root.
@@ -383,7 +534,7 @@ impl Document {
     #[must_use]
     pub fn element_name(&self, id: NodeId) -> Option<&ExpandedName> {
         match self.kind(id) {
-            Some(NodeKind::Element { name, .. }) => self.name(*name),
+            Some(NodeKind::Element { name, .. }) => self.name(name),
             _ => None,
         }
     }
@@ -451,7 +602,7 @@ impl Document {
 
     /// An element's attributes, in document order.
     #[must_use]
-    pub fn attributes(&self, id: NodeId) -> Vec<&Attribute> {
+    pub fn attributes(&self, id: NodeId) -> Vec<Attribute<'_>> {
         self.attribute_nodes(id)
             .iter()
             .filter_map(|a| match self.kind(*a) {
@@ -471,7 +622,7 @@ impl Document {
         self.attributes(id)
             .into_iter()
             .find(|a| self.name(a.name).is_some_and(|n| n.local == local))
-            .map(|a| a.value.as_str())
+            .map(|a| a.value)
     }
 
     /// The concatenated text of a node and its descendants.
@@ -488,7 +639,7 @@ impl Document {
 
     fn collect_text(&self, id: NodeId, out: &mut String) {
         match self.kind(id) {
-            Some(NodeKind::Attr(a)) => out.push_str(&a.value),
+            Some(NodeKind::Attr(a)) => out.push_str(a.value),
             // A namespace node's string-value is the URI, not the
             // prefix -- the prefix is its *name*.
             Some(NodeKind::Namespace { uri, .. }) => out.push_str(uri),

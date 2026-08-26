@@ -1,6 +1,7 @@
 # 0007 — Own the strings; borrow later
 
-**Status:** Accepted
+**Status:** Accepted, and the intended fix is now implemented.
+See [design/owned-input.md](../design/owned-input.md).
 
 ## Context
 
@@ -32,18 +33,30 @@ That last case is the decisive one. `parse_bytes` on a UTF-16 document
 must produce an owned buffer, so a borrowing `Document` either cannot
 support it or needs a second representation.
 
-## The intended fix
+## The fix, now done
 
-Have the document own its input — a `String` inside `Document` — with
+The document owns its input — a `String` inside `Document` — with
 nodes holding `(start, len)` ranges into it, exactly as they already
 hold ranges into the child and attribute arenas.
 
-That removes the per-node strings without a lifetime parameter, and it
-works identically for `parse` and for a transcoded `parse_bytes`. It is
-planned and not done.
+That removed the per-node strings without a lifetime parameter, and it
+works identically for `parse` and for a transcoded `parse_bytes`,
+which was the decisive case. Measured: **0.50 allocations per node**,
+down from 4.13 when this ADR was written and 1.13 immediately before
+the change.
 
-## Meanwhile
+The decision this ADR records — *no lifetime parameter on `Document`*
+— stands, and the outcome is that oxml gets most of what a borrowing
+design offers while `Document` remains a plain owned type that
+outlives whatever it was parsed from.
 
-The number is published rather than rounded down: the README says 4.1,
-says what the remaining allocations are, and a test holds it to a
-ceiling so it cannot drift upward unnoticed.
+The cost is one copy of the decoded input, against one allocation per
+text node and per attribute value. It is not free, and the README says
+so.
+
+## What the number is held to
+
+The figure is published rather than rounded down, and
+`crates/oxml/tests/allocations.rs` holds it to a ceiling so it cannot
+drift upward unnoticed. The ceiling came down from 1.3 to 0.6 with
+this change.

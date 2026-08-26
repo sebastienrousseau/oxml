@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // document with 2,000 items and three attributes each holds
         // three names rather than six thousand. Resolve the handle
         // through the document.
-        let name = doc.name(*name).expect("interned");
+        let name = doc.name(name).expect("interned");
         match &name.namespace {
             Some(uri) => println!("  {{{uri}}}{} = {value:?}", name.local),
             None => println!("  {} = {value:?}", name.local),
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .attributes(order)
         .into_iter()
         .find(|a| doc.name(a.name) == Some(&wanted))
-        .map(|a| a.value.as_str());
+        .map(|a| a.value);
     println!("  {{urn:example:x}}ref = {found:?}");
 
     // Attributes are also nodes, which is what the XPath attribute

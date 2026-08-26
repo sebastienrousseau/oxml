@@ -37,10 +37,10 @@ fn migration_from_quick_xml_md_line_55() {
     assert_eq!(titles, ["Dune", "Germinal"]);
 }
 
-/// From `doc/MIGRATION-FROM-ROXMLTREE.md`, line 51.
+/// From `doc/MIGRATION-FROM-ROXMLTREE.md`, line 53.
 #[rustfmt::skip]
 #[test]
-fn migration_from_roxmltree_md_line_51() {
+fn migration_from_roxmltree_md_line_53() {
     use oxml::parse;
 
     let doc = parse("<r><a/></r>").unwrap();
@@ -49,10 +49,10 @@ fn migration_from_roxmltree_md_line_51() {
     assert_eq!(doc.children(root).len(), 1);
 }
 
-/// From `doc/MIGRATION-FROM-ROXMLTREE.md`, line 64.
+/// From `doc/MIGRATION-FROM-ROXMLTREE.md`, line 66.
 #[rustfmt::skip]
 #[test]
-fn migration_from_roxmltree_md_line_64() {
+fn migration_from_roxmltree_md_line_66() {
     use oxml::parse;
 
     let doc = parse("<p>a<em>b</em>c</p>").unwrap();
@@ -61,10 +61,10 @@ fn migration_from_roxmltree_md_line_64() {
     assert_eq!(doc.text(p), "abc");
 }
 
-/// From `doc/MIGRATION-FROM-ROXMLTREE.md`, line 82.
+/// From `doc/MIGRATION-FROM-ROXMLTREE.md`, line 84.
 #[rustfmt::skip]
 #[test]
-fn migration_from_roxmltree_md_line_82() {
+fn migration_from_roxmltree_md_line_84() {
     use oxml::{XPath, parse};
 
     let doc = parse(r#"<r><a href="one"/><a href="two"/></r>"#).unwrap();
@@ -200,7 +200,7 @@ fn user_guide_md_line_152() {
         .attributes(a)
         .into_iter()
         .find(|at| doc.name(at.name) == Some(&wanted));
-    assert_eq!(found.map(|at| at.value.as_str()), Some("R"));
+    assert_eq!(found.map(|at| at.value), Some("R"));
 }
 
 /// From `doc/USER-GUIDE.md`, line 174.

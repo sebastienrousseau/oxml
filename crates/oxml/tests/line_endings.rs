@@ -121,7 +121,7 @@ fn normalisation_applies_inside_every_construct() {
     let comment = doc
         .descendants()
         .find_map(|id| match doc.kind(id) {
-            Some(oxml::NodeKind::Comment(text)) => Some(text.clone()),
+            Some(oxml::NodeKind::Comment(text)) => Some(text.to_owned()),
             _ => None,
         })
         .expect("a comment");

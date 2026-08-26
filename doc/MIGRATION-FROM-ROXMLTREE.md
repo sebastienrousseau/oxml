@@ -15,10 +15,12 @@ already have in memory. The move is mostly mechanical.
 
 ## What you give up
 
-- **Borrowing from the input.** This is the real difference.
-  `roxmltree` hands you `&str` slices of the document you passed in;
-  oxml allocates owned `String`s. That costs oxml roughly 4.13
-  allocations per node, and it is the design oxml has not yet adopted.
+- **Where the text lives.** `roxmltree` hands you `&str` slices of the
+  document *you* passed in and holds a lifetime to it. oxml owns its
+  input and stores ranges into that, so `Document` has no lifetime
+  parameter and outlives whatever you parsed from — which is also what
+  lets `parse_bytes` decode UTF-16, where there is no caller string to
+  borrow. The measured cost is **0.50 allocations per node**.
 - **Some throughput**, for the same reason.
 
 If your workload is "parse a document, read a few fields, drop it", and

@@ -71,7 +71,7 @@ does not depend on machine load:
 
 | Measurement | Value |
 |---|---|
-| Allocations per node | **4.13** (66,037 for 16,002 nodes) |
+| Allocations per node | **0.50** (8,076 for 16,004 nodes) |
 | Allocations for a 1 MB text node | **17** |
 
 Both are held to a ceiling by `crates/oxml/tests/allocations.rs`, which
@@ -80,11 +80,15 @@ serialised behind a mutex: the counter is global, and when they ran
 concurrently they reported each other's allocations and agreed on a
 figure that was wrong for both.
 
-The remaining per-node allocations are the owned `String`s — text node
-contents, attribute values, and element names before interning.
-Removing them requires the document to own its input and store
-`(start, len)` ranges into it. That is planned and not done; until it
-is, 4.13 is the number.
+It was 4.13, then 1.13 once child lists were flattened and names
+interned by borrowed parts. The step to 0.50 is the document owning
+its input: text nodes, comments and attribute values are `(start,
+len)` ranges into it, so a document that expands no entities allocates
+nothing at all for its character data.
+
+What is left is the arenas themselves — the node, child, attribute and
+name vectors — which grow by doubling and so cost a handful of
+allocations for the whole document rather than one per node.
 
 ## Running them
 
