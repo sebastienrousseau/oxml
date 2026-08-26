@@ -874,15 +874,35 @@ Honestly:
 
 ### Is it faster than quick-xml or roxmltree?
 
-Not yet, and the README will say so until it is. On a 16.86 MB document,
-measured on one machine: quick-xml 704 MB/s building no tree,
-roxmltree 291 MB/s building a borrowed tree, `oxml` 123 MB/s. The gap is
-allocation — `oxml` performs about two per node where a borrowed design
-performs almost none — and closing it is in progress.
+No, and the README will say so until it is. Measured against each on
+the job it actually does, on the same 855 KB document:
 
-Any figure here states the machine and the method. During development
-the same binary measured 14.7 and 123.1 MB/s on a loaded host, which is
-why a number without its conditions is not a measurement.
+| | oxml | reference | ratio |
+|---|---|---|---|
+| Events, no tree | `oxml::stream` | `quick-xml` | **0.09×** |
+| Tree | `oxml::parse` | `roxmltree` | **0.32×** |
+
+So `quick-xml` reads events about eleven times faster, and
+`roxmltree` builds a tree about three times faster. The gap is
+allocation: `oxml` performs about 1.13 per node where a borrowed
+design performs almost none, and text and attribute values are owned
+`String`s rather than slices of the input.
+
+Reproduce it with `cargo bench --bench comparison`. Both crates are
+dev-dependencies, so this is a measurement you can rerun rather than a
+claim you have to take on trust — an earlier version of this section
+quoted absolute MB/s from a comparison nothing in the repository could
+regenerate.
+
+**Why a ratio and not MB/s.** An absolute figure describes the machine
+as much as the code: the same binary measured 14.7 and 123.1 MB/s on
+one host on one day, and the difference was load. A ratio survives
+that, because contention slows both arms. The benchmark times each
+implementation against its reference back to back and takes the
+*fastest* run of each — the sample contention perturbed least. With
+ten CPU hogs competing on a six-core machine the ratios moved by 3%
+and 5%, while a median-based estimate of the same data halved. See
+[doc/BENCHMARKS.md](https://github.com/sebastienrousseau/oxml/blob/main/doc/BENCHMARKS.md).
 
 ### Can it stream?
 

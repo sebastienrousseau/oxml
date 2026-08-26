@@ -102,6 +102,16 @@ jobs:
       - name: Run benchmarks briefly
         run: cargo bench -- --warm-up-time 1 --measurement-time 2
 
+      # Ratios rather than absolutes, because a shared runner cannot
+      # give a trustworthy absolute. The comparison times each parser
+      # against quick-xml and roxmltree on the same document and takes
+      # the fastest run of each, which is the sample contention
+      # perturbed least. It gates only on architectures with a
+      # recorded baseline; x86_64 has none yet, so this reports its
+      # numbers and passes, and they become the baseline once seen.
+      - name: Compare against quick-xml and roxmltree
+        run: cargo bench --bench comparison -- --check
+
   examples:
     name: Examples run
     runs-on: ubuntu-latest

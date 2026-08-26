@@ -49,6 +49,8 @@ libm = { version = "0.2", optional = true }
 [dev-dependencies]
 proptest = "1"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+quick-xml = "0.42"
+roxmltree = "0.21"
 
 [[bench]]
 name = "parse"
@@ -126,6 +128,12 @@ required-features = ["std"]
 name = "stream_events"
 path = "examples/stream_events.rs"
 required-features = ["std"]
+
+[[bench]]
+name = "comparison"
+path = "benches/comparison.rs"
+harness = false
+required-features = ["std", "xpath"]
 
 [[test]]
 name = "doc_examples"

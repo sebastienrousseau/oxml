@@ -3,8 +3,12 @@
 # Benchmarks
 
 Method, machine, and how to reproduce. **This file deliberately
-publishes no throughput figures yet.** The reason is below, and it is
-not modesty.
+publishes no absolute throughput figures yet** — no MB/s. The reason
+is below, and it is not modesty.
+
+It does publish **ratios** against `quick-xml` and `roxmltree`, which
+survive the conditions an absolute cannot. See
+[Comparing against other parsers](#comparing-against-other-parsers).
 
 ## Contents
 
@@ -13,7 +17,7 @@ not modesty.
 - [Allocation counts](#allocation-counts)
 - [Running them](#running-them)
 - [Recording a figure](#recording-a-figure)
-- [How to compare against other parsers](#how-to-compare-against-other-parsers)
+- [Comparing against other parsers](#comparing-against-other-parsers)
 
 ## Why there are no numbers here
 
@@ -113,24 +117,102 @@ interval. A delta inside the interval is not a result — a benchmark
 delta within noise, cited as a win, is one of the ways a performance
 claim becomes untrue without anyone lying.
 
-## How to compare against other parsers
+## Comparing against other parsers
 
 Comparing to `quick-xml` or `roxmltree` fairly is harder than it looks,
 because they do not do the same work:
 
 - `quick-xml` is a **pull parser**. It does not build a tree. Comparing
-  its throughput to oxml's is comparing tokenisation to tokenisation
-  *plus* allocation, interning and namespace resolution.
+  its throughput to `oxml::parse` is comparing tokenisation to
+  tokenisation *plus* allocation, interning and namespace resolution.
+  Since [`oxml::stream`](../crates/oxml/src/stream.rs) exists there is
+  a like-for-like counterpart, and that is what is compared.
 - `roxmltree` builds a tree but **borrows from the input**, so it does
   not own its strings. That is the design oxml has not yet adopted, and
-  it accounts for much of the difference.
+  it accounts for much of the difference. It is the substance of the
+  comparison, not an unfairness in it.
 - `libxml2` does considerably more — validation, XPath, XSLT — and
-  carries the cost of it.
+  carries the cost of it. It is not benchmarked here.
 
-A comparison worth publishing measures a task, not a parser: "extract
-every `@href` from this 40 MB document" is a question all four can
-answer, and the answer includes the cost of getting the data out, not
-only of scanning past it.
+`benches/comparison.rs` measures the two fair pairings. Both crates
+are dev-dependencies, so the numbers can be regenerated rather than
+believed:
+
+```sh
+cargo bench --bench comparison
+cargo bench --bench comparison -- --check   # fail on regression
+```
+
+Recorded 2026-08-26, 6-core Mac17,5, rustc 1.98.0, 855 KB catalogue,
+median of six runs at load averages between 8 and 15:
+
+| Group | oxml | Reference | Ratio |
+|---|---|---|---|
+| events, no tree | `oxml::stream` | `quick-xml` | **0.089×** |
+| tree | `oxml::parse` | `roxmltree` | **0.319×** |
+
+### Why a ratio works where an absolute does not
+
+An absolute figure is a property of the machine as much as of the
+code. A ratio is much less so: when two implementations parse the same
+document while the same processes compete for the same cores,
+contention slows both, and what it does to their quotient is far
+smaller than what it does to either term.
+
+That only holds if they are measured *together*. Criterion measures
+each benchmark in its own block, seconds apart, so a load spike
+between blocks lands on one arm and not the other — precisely the
+error the ratio is meant to remove. So this harness pairs them: within
+a round every implementation parses the same document back to back,
+milliseconds apart.
+
+Pairing alone is not enough either, and the measurement says so.
+Preemption is not proportional: a scheduler quantum lands on whichever
+arm is running when it falls, so the slower arm absorbs more of them.
+With ten CPU hogs on six cores, a median-of-ratios estimate of the
+`events` group **halved**, from 0.096 to 0.054, because `quick-xml` is
+roughly ten times faster on this document and preemption did not
+divide evenly between them.
+
+The reported figure is therefore the ratio of the **fastest** run of
+each arm. Contention can only make a run slower, never faster, so the
+fastest observed run is the best available estimate of the uncontended
+cost and the sample the fewest quanta landed on. Under the same ten
+hogs, that estimator moved by 3% and 5%:
+
+| | quiet | 10 CPU hogs | drift |
+|---|---|---|---|
+| `oxml::stream` (fastest-run) | 0.096× | 0.091× | 5% |
+| `oxml::parse` (fastest-run) | 0.322× | 0.313× | 3% |
+| median-of-pairs, for contrast | 0.096× | 0.048× | halved |
+
+The median-of-pairs is still printed, as a diagnostic: when it sits
+well below the reported ratio, the machine was contended while
+measuring.
+
+### What the check does and does not catch
+
+`--check` fails if a ratio falls more than **15%** below its recorded
+baseline. That band comes from measurement, not taste: six runs on a
+loaded machine spread the ratios about ±8% around their median, so a
+tighter tolerance would fail on noise.
+
+The cost is worth stating plainly — this catches regressions of
+roughly a fifth or worse, not of a twentieth. A quiet machine would
+support a tighter band.
+
+Baselines are keyed by architecture, because instruction mix, cache
+sizes and memory bandwidth move two parsers differently: a figure from
+Apple Silicon is not evidence about an x86 runner. An architecture
+with no recorded baseline reports its numbers and does not gate, so
+adding a platform cannot produce a spurious red build.
+
+### Still missing
+
+A task-level comparison: "extract every `@href` from this 40 MB
+document" is a question all four can answer, and the answer includes
+the cost of getting the data out, not only of scanning past it. The
+ratios above measure parsing, which is the cost before any of that.
 
 See [COMPARISON.md](COMPARISON.md) for the feature-level differences,
 which do not depend on a quiet machine.
