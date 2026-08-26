@@ -23,7 +23,7 @@ one is listed as not done, however close it feels.
 |---|---|---|---|
 | Memory safety | No `unsafe` | `#![forbid(unsafe_code)]`, CI-checked | ✅ |
 | `no_std` | Full, with `alloc` | Builds for 3 bare-metal targets in CI | ✅ |
-| Panics on hostile input | Zero | 0 across 2,585 conformance documents, 5 fuzz targets, Miri | ✅ |
+| Panics on hostile input | Zero | 0 across 2,585 conformance documents, 6 fuzz targets, Miri | ✅ |
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
 | Line coverage | ≥95% | **97.4%**, gated | ✅ |
@@ -151,9 +151,10 @@ happens to a token that straddles a refill.
 - **The 28 unsupported conformance tests**: 14 want namespace
   processing switched off, 8 want Namespaces 1.1, 6 want encodings
   beyond UTF-8/UTF-16/ISO-8859-1.
-- **`xmlschema`: an XSD conformance suite.** It has 97 tests its
-  authors thought of, against oxml's 2,585 with a denominator. That is
-  the weakest evidence anywhere in the suite.
+- **`xmlschema`: closing the remaining conformance failures.** The
+  suite itself is no longer the gap — it runs the W3C XSD tests,
+  39,420 of them, at 95.6% of decided. What remains is substitution
+  groups and the undecidable corners of derivation validity.
 - **`oxml-lsp`: the LSP transport.** The crate is named for a protocol
   it does not yet speak; `analyse()` and a linter are what exist.
 - **`oxml-mcp`: a handle-based flow**, so a large document need not
