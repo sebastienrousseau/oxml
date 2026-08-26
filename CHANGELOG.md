@@ -10,6 +10,14 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [0.0.6] - 2026-08-26
+
+### Changed
+
+- No change to `oxml` itself. The suite ships one version number
+  across all six crates, and this release exists for xmlschema 0.0.6,
+  whose W3C conformance pass rate moved from 71.7% to 95.6%.
+
 ## [0.0.5] - 2026-08-24
 
 ### Added
