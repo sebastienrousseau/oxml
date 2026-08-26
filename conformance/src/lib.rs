@@ -79,7 +79,20 @@ macro_rules! require_suite {
     () => {
         match $crate::data_dir() {
             Some(d) => d,
-            None => {
+            // Set `OXML_REQUIRE_SUITE=1` to make a missing suite a
+            // failure instead of a skip.
+            //
+            // `cargo test` on a fresh clone has no network and should
+            // not need one, so the default is to skip. But a skip is
+            // reported as a pass, and `scripts/gate.sh` exists to be
+            // "everything CI runs, locally" -- so on a fresh clone the
+            // gate printed `conformance ok` having run **zero** of the
+            // 2,585 tests. That is the failure this repository keeps
+            // finding: a check that appears to run and does not.
+            //
+            // The gate and CI set the variable. A bare `cargo test`
+            // does not, and still skips.
+            None if ::std::env::var_os("OXML_REQUIRE_SUITE").is_none() => {
                 eprintln!(
                     "conformance suite not present; run \
                      `cargo run -p oxml-conformance --bin download` \
@@ -87,6 +100,12 @@ macro_rules! require_suite {
                 );
                 return;
             }
+            None => panic!(
+                "OXML_REQUIRE_SUITE is set and the conformance suite is \
+                 not present. Run `cargo run -p oxml-conformance --bin \
+                 download`. Refusing to report a pass for tests that \
+                 did not run."
+            ),
         }
     };
 }
