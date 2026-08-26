@@ -281,7 +281,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [parse, tree_walk, parse_limits, xpath_compile, xpath_eval]
+        target: [parse, stream, tree_walk, parse_limits, xpath_compile, xpath_eval]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly

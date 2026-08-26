@@ -468,12 +468,16 @@ impl Reader {
         parser: &mut Parser<'_>,
         open: &mut Vec<(String, ExpandedName)>,
     ) -> Result<Scanned> {
+        // Before scanning, not after. `parse_element` checks depth on
+        // entry, so for a malformed tag at the limit the tree parser
+        // reports the depth and the reader reported whatever the scan
+        // tripped over first -- found by fuzzing, at 980 bytes in.
+        if parser.depth >= parser.limits.max_depth {
+            return Err(Error::new(ErrorKind::DepthLimitExceeded, parser.pos));
+        }
+
         let tag = parser.scan_start_tag()?;
         let at = tag.tag_start;
-
-        if parser.depth >= parser.limits.max_depth {
-            return Err(Error::new(ErrorKind::DepthLimitExceeded, at));
-        }
 
         let mut attributes = Vec::with_capacity(tag.raw_attrs.len());
         for (raw, value) in tag.raw_attrs {

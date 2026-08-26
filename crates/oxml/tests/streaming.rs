@@ -448,3 +448,51 @@ fn the_text_length_limit_applies_to_a_run() {
         Reader::with_limits(short, limits).expect("prolog is fine");
     while reader.next_event().expect("within the limit").is_some() {}
 }
+
+/// A malformed tag *at* the depth limit reports the depth, not the tag.
+///
+/// Found by fuzzing, 980 bytes into a generated document. The tree
+/// parser checks depth on entry to an element; the reader scanned the
+/// start tag first and reported whatever the scan tripped over, so the
+/// two disagreed only when a document was both too deep and malformed
+/// at exactly that point. Every balanced document agreed, which is why
+/// the hand-written depth tests missed it.
+#[test]
+fn a_malformed_tag_at_the_depth_limit_reports_the_depth() {
+    let mut limits = oxml::Limits::default();
+    limits.max_depth = 4;
+
+    // The first four are start tags, where the depth check applies and
+    // must win. The last two are not, so they report what they are --
+    // included because both entry points must still agree on them.
+    for (tail, depth_first) in [
+        ("<", true),
+        ("<3", true),
+        ("<a b", true),
+        ("<a", true),
+        ("</", false),
+        ("<!", false),
+    ] {
+        let doc = format!("{}{tail}", "<a>".repeat(4));
+        let tree = oxml::parse_with(&doc, limits)
+            .map(|_| ())
+            .map_err(|e| (e.kind, e.offset));
+        let mut reader =
+            Reader::with_limits(&doc, limits).expect("prolog is fine");
+        let stream = loop {
+            match reader.next_event() {
+                Ok(Some(_)) => {}
+                Ok(None) => break Ok(()),
+                Err(e) => break Err((e.kind, e.offset)),
+            }
+        };
+        assert_eq!(tree, stream, "{doc:?}");
+        if depth_first {
+            assert_eq!(
+                stream,
+                Err((oxml::ErrorKind::DepthLimitExceeded, 12)),
+                "{doc:?} is at the limit before it is malformed"
+            );
+        }
+    }
+}
