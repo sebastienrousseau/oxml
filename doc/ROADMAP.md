@@ -100,7 +100,7 @@ including the entity-expansion complication: a value containing
 
 Breaking: `Document::text` would return `&str` rather than `String`.
 
-### 3. Conformance — 108 failures, in two groups
+### 3. Conformance — 37 failures, in two groups
 
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
@@ -112,12 +112,16 @@ information to enforce and was not enforcing.
 
 What is left is two pieces of work, not more missing checks:
 
-- **~93 need external entity or subset content** — a text declaration,
-  a version number, a standalone declaration, in a file oxml never
-  reads. The shape is a caller-supplied map from identifier to content;
-  the parser still performs no I/O. See
-  [adr/0003](adr/0003-no-external-entities.md).
-- **~11 need entity replacement text parsed as markup.**
+- **Most need external entity or subset content** — a text
+  declaration, a version number, a standalone declaration, in a file
+  oxml never reads. The shape is a caller-supplied map from identifier
+  to content; the parser still performs no I/O. See
+  [adr/0003](adr/0003-no-external-entities.md). The per-group split
+  was last counted when there were 163 failures and has not been
+  re-derived against the current 37; run
+  `cargo run --release -p oxml-conformance --bin report` for the list
+  rather than trusting a number here.
+- **Some need entity replacement text parsed as markup.**
   `<!ENTITY e "<foo/>">` referenced from content should produce an
   *element*; oxml substitutes it as text. A semantic gap rather than a
   missing rule, and the harder of the two: the replacement text has to
