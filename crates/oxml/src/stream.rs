@@ -268,6 +268,7 @@ impl Reader {
             dtd: carried.dtd.take(),
             version: carried.version,
             entity_budget: carried.entity_budget,
+            entity_depth: 0,
         };
 
         let result = Self::one_event(

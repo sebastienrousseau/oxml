@@ -21,7 +21,7 @@ use crate::tree::{Chars, Document, ExpandedName, NameId, NodeData, NodeId};
 /// A `Vec` searched backwards rather than a map: scopes are tiny in
 /// practice (a handful of bindings), and this keeps push/pop free of
 /// allocation and hashing on the hot path.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Namespaces {
     bindings: Vec<(String, String)>,
     marks: Vec<usize>,
@@ -92,6 +92,9 @@ pub(crate) struct Parser<'a> {
     /// times at depth one produced 100 MB from 100 KB of input while
     /// every individual expansion stayed within its allowance.
     pub(crate) entity_budget: usize,
+    /// How many entity replacement texts are being parsed above this
+    /// one, so a self-referential entity terminates.
+    pub(crate) entity_depth: usize,
 }
 
 /// Parse an XML document.
@@ -477,6 +480,7 @@ fn parse_normalized(
         dtd: None,
         version,
         entity_budget: limits.max_entity_expansion,
+        entity_depth: 0,
     };
     p.parse_document()?;
     Ok(p.doc)
@@ -1121,6 +1125,221 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    /// An entity's replacement text: character references included,
+    /// general entity references left alone.
+    ///
+    /// XML 1.0 section 4.4: inside an `EntityValue`, character
+    /// references are *included* -- expanded there and then -- while
+    /// general entity references are *bypassed* and left for the point
+    /// of use. That distinction is the whole of why
+    /// `<!ENTITY e "&#38;">` is a trap and `<!ENTITY e "&amp;">` is
+    /// not: the first has the single character `&` as its replacement
+    /// text, which is markup wherever it lands and starts no
+    /// reference, while the second still holds a reference that
+    /// resolves cleanly when it is used.
+    ///
+    /// This parser stores entity values as written, so the inclusion
+    /// is done here instead, for the benefit of the checks below.
+    fn replacement_text(&self, text: &str, offset: usize) -> Result<String> {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(amp) = rest.find('&') {
+            out.push_str(&rest[..amp]);
+            let tail = &rest[amp..];
+            let Some(semi) = tail.find(';') else {
+                // Not a reference at all. Left as written so the
+                // content check reports it.
+                out.push_str(tail);
+                return Ok(out);
+            };
+            let name = &tail[1..semi];
+            if let Some(rest_name) = name.strip_prefix('#') {
+                let _ = rest_name;
+                match decode_predefined(name) {
+                    Some(direct) => {
+                        if let Some(bad) = direct
+                            .chars()
+                            .find(|c| !is_xml_char_for(*c, self.version))
+                        {
+                            return Err(Error::new(
+                                ErrorKind::IllegalCharacter(bad),
+                                offset,
+                            ));
+                        }
+                        out.push_str(&direct);
+                    }
+                    None => out.push_str(&tail[..=semi]),
+                }
+            } else {
+                // Bypassed: a general entity reference stays a
+                // reference until it is used.
+                out.push_str(&tail[..=semi]);
+            }
+            rest = &tail[semi + 1..];
+        }
+        out.push_str(rest);
+        Ok(out)
+    }
+
+    /// Check replacement text included in an attribute value.
+    ///
+    /// XML 1.0 section 4.4.5, *Included in Literal*: the replacement
+    /// text is parsed as though it were the literal, so `<` is
+    /// forbidden and `&` must begin a reference. `<!ENTITY e "&#38;">`
+    /// used as `a="&e;"` therefore fails, while `a="&amp;"` -- a
+    /// predefined reference, not an entity's replacement text --
+    /// does not.
+    fn check_entity_in_attribute(text: &str, offset: usize) -> Result<()> {
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'<' => {
+                    return Err(Error::new(
+                        ErrorKind::IllegalCharacter('<'),
+                        offset,
+                    ));
+                }
+                b'&' => {
+                    // Must be a complete reference *within* the
+                    // replacement text: a document may not assemble one
+                    // out of an entity plus the characters after it.
+                    let rest = &text[i + 1..];
+                    let Some(semi) = rest.find(';') else {
+                        return Err(Error::new(
+                            ErrorKind::Unterminated("entity"),
+                            offset,
+                        ));
+                    };
+                    if semi == 0 {
+                        return Err(Error::new(ErrorKind::InvalidName, offset));
+                    }
+                    i += semi + 2;
+                }
+                _ => i += 1,
+            }
+        }
+        Ok(())
+    }
+
+    /// Check an entity's replacement text as though it were markup.
+    ///
+    /// XML 1.0 section 4.4.2: a general entity referenced from content
+    /// is *included*, which means its replacement text is parsed as
+    /// content -- not substituted as characters. So
+    /// `<!ENTITY e "</foo><foo>">` closes an element it never opened,
+    /// `<!ENTITY e "&#60;foo>">` opens one it never closes, and
+    /// `<!ENTITY e "&#38;">` yields a bare `&` where a reference is
+    /// required. All three are documents this parser used to accept.
+    ///
+    /// Character references and the five predefined entities do **not**
+    /// go through here. `&#38;` in content is the character `&` and is
+    /// text; it is only when that `&` arrives as the replacement text
+    /// of a declared entity that it has to be markup.
+    ///
+    /// The replacement text is parsed with this same parser into a
+    /// document that is then thrown away. Reusing the scanner rather
+    /// than writing a second one is the point: attribute-value rules,
+    /// reserved processing-instruction targets, name validity and
+    /// comment termination are all enforced here without being
+    /// restated, and cannot drift from what the tree parser does.
+    ///
+    /// # Cost
+    ///
+    /// This runs once per *reference*, not once per entity, so a
+    /// document that references one entity a thousand times parses its
+    /// replacement text a thousand times. That cost is real and is not
+    /// quantified here: the machine available while this was written
+    /// measured the same benchmark between 1.45 and 3.76 ms in one
+    /// state, so no honest before-and-after could be taken. See
+    /// `doc/BENCHMARKS.md` for why an absolute figure is not published.
+    ///
+    /// Memoising by entity name is the obvious fix and is **not**
+    /// obviously sound: validity depends on the namespace bindings in
+    /// scope, so `<!ENTITY e "<p:x/>">` is well-formed where `p` is
+    /// bound and not where it is not. A cache would have to key on the
+    /// scope as well as the name, and a wrong key here accepts
+    /// documents that should be refused -- which is the bug this
+    /// function exists to fix. Left undone deliberately.
+    fn check_entity_as_content(
+        &mut self,
+        text: &str,
+        offset: usize,
+    ) -> Result<()> {
+        if self.entity_depth >= self.limits.max_entity_depth {
+            return Err(Error::new(ErrorKind::EntityLimitExceeded, offset));
+        }
+        let mut sub = Parser {
+            input: text,
+            bytes: text.as_bytes(),
+            pos: 0,
+            // Thrown away: only whether it parses matters, so the
+            // ranges it records point nowhere and are never read.
+            doc: Document::with_capacity(0),
+            // Cloned so a prefix bound outside the entity resolves
+            // inside it, and so bindings the entity makes do not
+            // escape.
+            ns: self.ns.clone(),
+            depth: self.depth,
+            limits: self.limits,
+            dtd: self.dtd.clone(),
+            version: self.version,
+            name_index: alloc::collections::BTreeMap::new(),
+            external: self.external,
+            entity_budget: self.entity_budget,
+            entity_depth: self.entity_depth + 1,
+        };
+        let result = sub.parse_entity_body();
+        // The budget is per document, so what the check spent counts.
+        self.entity_budget = sub.entity_budget;
+        // An offset into the replacement text means nothing to a
+        // caller holding the document, so errors are reported at the
+        // reference that pulled the text in.
+        result.map_err(|e| Error::new(e.kind, offset))
+    }
+
+    /// Parse replacement text as `content`, to the end of it.
+    ///
+    /// Differs from [`Parser::parse_children`] in where it stops: this
+    /// ends at the end of the text rather than at an end tag, and an
+    /// end tag with nothing open is an error rather than the signal to
+    /// return.
+    fn parse_entity_body(&mut self) -> Result<()> {
+        let root = self.doc.root();
+        let mark = self.doc.scratch_mark();
+        while self.pos < self.bytes.len() {
+            if !self.peek_is(b'<') {
+                let mut run = Run::default();
+                self.parse_text_run(&mut run)?;
+                continue;
+            }
+            if self.starts_with("</") {
+                // The entity closes an element it did not open, so the
+                // replacement text is not `content` and including it
+                // would unbalance the document around it.
+                let name = self.peek_end_tag_name();
+                return Err(Error::new(
+                    ErrorKind::UnexpectedEndTag(name),
+                    self.pos,
+                ));
+            }
+            if self.starts_with("<!--") {
+                let _ = self.parse_comment()?;
+            } else if self.starts_with("<![CDATA[") {
+                let mut run = Run::default();
+                self.parse_cdata(&mut run)?;
+            } else if self.starts_with("<?") {
+                let _ = self.parse_pi()?;
+            } else {
+                // `parse_element` requires a matching end tag, so an
+                // element opened here and left open is reported.
+                self.parse_element(root)?;
+            }
+        }
+        self.doc.finish_children(root, mark);
+        Ok(())
+    }
+
     /// Resolve stored character data against the text being scanned.
     ///
     /// The streaming reader needs the text itself rather than a range,
@@ -1598,6 +1817,14 @@ impl<'a> Parser<'a> {
         match dtd.entity(ent) {
             Some(crate::dtd::EntityValue::Internal(text)) => {
                 let text = text.clone();
+                // Included, not substituted: the replacement text of a
+                // declared entity is markup where it lands.
+                let replacement = self.replacement_text(&text, offset)?;
+                if in_attribute {
+                    Self::check_entity_in_attribute(&replacement, offset)?;
+                } else {
+                    self.check_entity_as_content(&replacement, offset)?;
+                }
                 let mut budget = self.entity_budget;
                 let out = self.expand_text(
                     &text,

@@ -1,4 +1,4 @@
-#counts	pass=2520	fail=37	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2533	fail=24	panic=0	unsupported=28	blocked=0	total=2585
 sun	cond01	fail	accepted a document that is not well-formed
 sun	cond02	fail	accepted a document that is not well-formed
 sun	decl01	fail	accepted a document that is not well-formed
@@ -25,19 +25,6 @@ ibm	ibm-not-wf-P79-ibm79n01.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P79-ibm79n02.xml	fail	accepted a document that is not well-formed
 xmltest	not-wf-ext-sa-001	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-008	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-074	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-090	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-092	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-103	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-115	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-116	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-117	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-119	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-120	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-140	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-141	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-153	fail	accepted a document that is not well-formed
-xmltest	not-wf-sa-182	fail	accepted a document that is not well-formed
 sun	not-wf-sa03	fail	accepted a document that is not well-formed
 oasis	o-p04pass1	unsupported	namespace-processing-off
 oasis	o-p05pass1	unsupported	namespace-processing-off

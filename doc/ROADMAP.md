@@ -27,7 +27,7 @@ one is listed as not done, however close it feels.
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
 | Line coverage | ≥95% | **97.4%**, gated | ✅ |
-| Conformance | Published with denominator | **98.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
+| Conformance | Published with denominator | **99.1% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **0.50** | ✅ |
 | Throughput | <100 ms at load | **Ratios measured, absolute still not** — `benches/comparison.rs` reports 0.089× `quick-xml` (events) and 0.319× `roxmltree` (tree), stable to 3–5% under 10 CPU hogs and gated at 15%. MB/s still needs a quiet machine; `scripts/record-throughput.sh` refuses above 0.20 load per core and has never yet been able to record | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
@@ -35,6 +35,15 @@ one is listed as not done, however close it feels.
 | Streaming | An entry point | **`stream::Reader`**, same scanner as the tree parser; holds 92% less at peak. Not yet from a reader | 🟡 |
 
 ## Done
+
+**Entity replacement text is markup.** An entity referenced from
+content is *included* per XML 1.0 §4.4.2 — its replacement text parsed
+as content, not substituted as characters. Thirteen conformance
+failures went at once, taking the pass rate from 98.6% to **99.1%**.
+The replacement text is checked by the same scanner the document uses,
+into a throwaway tree, so attribute-value rules, reserved
+processing-instruction targets, name validity and comment termination
+are enforced without being restated.
 
 **Owned input.** `Document` owns its text and character data is
 `(start, len)` ranges into it, so **0.50 allocations per node** —
@@ -96,58 +105,54 @@ claim rests entirely on the allocation count, which is a proxy.
 `doc/BENCHMARKS.md` states the method and the conditions a figure must
 carry.
 
-### 2. Conformance — 37 failures, in two groups
+### 2. Conformance — 24 failures, all needing external content
 
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
 
-**126 failures have been fixed since counting began** — 163 to 37,
-taking the pass rate from 93.6% to **98.6%**. Almost none needed a
-feature; nearly every one was a rule the parser already had the
-information to enforce and was not enforcing.
+The count was 37. The thirteen that went shared one cause — an
+entity's replacement text substituted as characters where XML 1.0
+§4.4.2 requires it to be *included*, that is parsed as content — and
+were fixed as one change. `crates/oxml/tests/entity_markup.rs` keeps
+them fixed and records the distinction that makes the rule subtle: a
+character reference in an entity's declaration is *included* there and
+then, while a general entity reference is *bypassed*, so
+`<!ENTITY e "&#38;">` is a trap and `<!ENTITY e "&amp;">` is not.
 
-What is left is two pieces of work, not more missing checks. The split
-below was derived by reading all 37, not carried over:
+What is left all turns on a file oxml never reads:
 
-**13 need entity replacement text parsed as markup.** `<!ENTITY e
-"<foo/>">` referenced from content should produce an *element*; oxml
-substitutes the replacement text as characters. Every one of these is
-a document oxml accepts and should not:
-
-| Test | Replacement text | Why it is not well-formed |
-|---|---|---|
-| `not-wf-sa-074` | `</foo><foo>` | closes an element it did not open |
-| `not-wf-sa-090` | `<foo a='&#60;'>…` | `<` in an attribute value |
-| `not-wf-sa-092` | `<foo a='&#38;'>…` | `&` not starting a reference |
-| `not-wf-sa-103` | `&#60;foo>` | opens an element it does not close |
-| `not-wf-sa-115` | `&#38;` in an attribute | `&` not starting a reference |
-| `not-wf-sa-116/117/119/120` | `&#38;` | a reference assembled across the entity boundary |
-| `not-wf-sa-140/141` | `<&#x309a;>` | not a name start character |
-| `not-wf-sa-153` | `<?xml …?>` | a reserved processing-instruction target |
-| `not-wf-sa-182` | `&#60;!--` | an unterminated comment |
-
-They share one cause, so they are one change: include the replacement
-text as *markup*, with offsets that still point somewhere useful and a
-check that anything opened inside it is closed inside it.
-
-**24 need external entity or subset content** — a text declaration, a
-version number, a standalone declaration, in a file oxml never reads.
-Mostly `ibm` P77 (text declarations in external entities), the `sun`
-conditional-section tests, and `oasis/o-p09fail1`, whose DTD is a
-separate file. The shape is a caller-supplied map from identifier to
-content; the parser still performs no I/O. See
-[adr/0003](adr/0003-no-external-entities.md).
-
-Regenerate the list with
-`cargo run --release -p oxml-conformance --bin report` rather than
-trusting these counts once the code has moved.
+| What the failure needs | Count |
+|---|---|
+| Text declarations in external entities (`ibm` P77, P79) | 11 |
+| Conditional sections and declarations in an external subset (`sun`) | 4 |
+| An external DTD (`oasis/o-p09fail1`, `eduni/rmt-*`) | 4 |
+| Standalone declarations against external content | 3 |
+| External identifier and entity-reference rules | 2 |
 
 The design constraint is fixed: the parser must never perform I/O. The
 shape is a caller-supplied map from identifier to content, so the
 caller decides what may be read. See
 [adr/0003-no-external-entities.md](adr/0003-no-external-entities.md).
 
-### 3. Streaming from a reader
+Regenerate the list with
+`cargo run --release -p oxml-conformance --bin report` rather than
+trusting these counts once the code has moved.
+
+### 3. Memoise entity validation
+
+An entity's replacement text is checked once per *reference*, so a
+document referencing one entity a thousand times parses it a thousand
+times. Keying a cache on the entity name alone is unsound: validity
+depends on the namespace bindings in scope, so `<!ENTITY e "<p:x/>">`
+is well-formed where `p` is bound and not where it is not. The key has
+to include the scope, and a wrong key accepts documents that should be
+refused.
+
+Unquantified: the machine available measured the same entity benchmark
+between 1.45 and 3.76 ms in one state, so no honest before-and-after
+could be taken. Measure it on a quiet machine before optimising it.
+
+### 4. Streaming from a reader
 
 `stream::Reader` now yields events over the same scanner with no tree
 built, which is most of this item: measured against parsing the same

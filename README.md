@@ -298,7 +298,7 @@ Two architectural choices motivate the design:
 
 **Verification**
 
-- 2,520 of 2,557 decided W3C conformance tests pass (98.6%), with
+- 2,533 of 2,557 decided W3C conformance tests pass (99.1%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
 - 365 tests and 24 doctests; 97.4% line coverage, gated in CI
 - Six fuzz targets, Miri, property tests, and a feature powerset build
@@ -916,14 +916,20 @@ the answer is no, and `quick-xml` is the tool.
 
 ### How conformant is it?
 
-98.6% of decided tests in the W3C XML Conformance Test Suite, release
+99.1% of decided tests in the W3C XML Conformance Test Suite, release
 `xmlts20130923`, with 98.9% coverage of the 2,585 tests and zero panics.
 Both numbers are published because either alone misleads: a pass rate
 can be raised by skipping the hard tests.
 
-Most of the 37 remaining failures need entity replacement text to be
-**parsed as markup** rather than substituted as text — a structural
-change to how expansion works, not a missing feature.
+All 24 remaining failures need content from a file oxml never reads —
+an external entity, an external subset, or a conditional section
+inside one. Since the parser performs no I/O by construction, closing
+them means the caller supplying that content, not oxml fetching it.
+
+Entity replacement text being parsed as markup rather than substituted
+as characters was the previous leader and accounted for 13; that is
+done. Every remaining failure is the parser being too *permissive* —
+there is no document in the suite it wrongly rejects.
 
 ### Why does it not fetch external entities?
 
