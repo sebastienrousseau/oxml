@@ -70,6 +70,19 @@ pub(crate) struct Dtd {
     /// available unless the caller supplied it, and a reference to one
     /// leaves the subset incomplete.
     pub(crate) parameters: BTreeMap<String, String>,
+    /// External parameter entities the caller supplied, by name.
+    ///
+    /// `Ok` is the entity's content with its text declaration removed;
+    /// `Err` is why that declaration was not acceptable. The error is
+    /// carried rather than raised because a processor need not read an
+    /// entity nothing references: raising at the declaration rejected
+    /// documents whose unreferenced entity happened to be malformed,
+    /// which is a rule that only applies to content actually used.
+    ///
+    /// A name absent here was either not external or not supplied, and
+    /// leaves the subset [`Dtd::incomplete`] exactly as before.
+    pub(crate) parameters_external:
+        BTreeMap<String, Result<String, &'static str>>,
     /// Whether an external subset or a parameter entity was referenced.
     ///
     /// When either is true the internal subset is not the whole story,
@@ -146,6 +159,11 @@ pub(crate) struct DtdParser<'a> {
     /// the DTD too — element and attribute declarations, notation
     /// names, and processing-instruction targets.
     pub(crate) edition: crate::Edition,
+    /// What the caller made available. This parser opens nothing.
+    pub(crate) external: &'a dyn crate::external::ExternalSource,
+    /// The document's version, for judging an entity's text
+    /// declaration against it.
+    pub(crate) version: crate::parser::Version,
 }
 
 /// What went wrong, as an offset and a static reason.
@@ -162,7 +180,22 @@ impl<'a> DtdParser<'a> {
             bytes: input.as_bytes(),
             pos,
             edition,
+            // No source and 1.0 unless told otherwise, so a caller that
+            // supplies neither behaves exactly as before.
+            external: &crate::external::NoExternal,
+            version: crate::parser::Version::V10,
         }
+    }
+
+    /// The same parser, able to see what the caller supplied.
+    pub(crate) const fn with_external(
+        mut self,
+        external: &'a dyn crate::external::ExternalSource,
+        version: crate::parser::Version,
+    ) -> Self {
+        self.external = external;
+        self.version = version;
+        self
     }
 
     fn is_name_start(&self, c: char) -> bool {
@@ -398,7 +431,7 @@ impl<'a> DtdParser<'a> {
             self.expect(b';', "unterminated parameter entity reference")?;
             // Unknown: the section's fate is undecidable, so treat it
             // as ignored and record that we did not read it.
-            let Some(text) = dtd.parameters.get(&name) else {
+            let Some(text) = Self::parameter_text(dtd, &name, self.pos)? else {
                 dtd.incomplete = true;
                 return self.skip_conditional_section();
             };
@@ -428,7 +461,8 @@ impl<'a> DtdParser<'a> {
         match keyword.as_str() {
             "IGNORE" => Ok(()),
             "INCLUDE" => {
-                let mut sub = DtdParser::new(body, 0, self.edition);
+                let mut sub = DtdParser::new(body, 0, self.edition)
+                    .with_external(self.external, self.version);
                 sub.parse_subset_decls(dtd, None, depth + 1)
             }
             _ => Err((
@@ -500,10 +534,11 @@ impl<'a> DtdParser<'a> {
                     // is `extSubsetDecl` in its own right, so it is
                     // parsed as one. Only an entity we do not have
                     // leaves the subset incomplete.
-                    match dtd.parameters.get(&name).cloned() {
+                    match Self::parameter_text(dtd, &name, self.pos)? {
                         Some(text) if depth < MAX_PE_DEPTH => {
                             let mut sub =
-                                DtdParser::new(&text, 0, self.edition);
+                                DtdParser::new(&text, 0, self.edition)
+                                    .with_external(self.external, self.version);
                             sub.parse_subset_decls(dtd, None, depth + 1)?;
                         }
                         Some(_) => {
@@ -549,7 +584,11 @@ impl<'a> DtdParser<'a> {
                         match expand_pes(raw, dtd, depth) {
                             Some(expanded) => {
                                 let mut sub =
-                                    DtdParser::new(&expanded, 0, self.edition);
+                                    DtdParser::new(&expanded, 0, self.edition)
+                                        .with_external(
+                                            self.external,
+                                            self.version,
+                                        );
                                 if sub.parse_markup_decl(dtd, depth).is_err() {
                                     dtd.incomplete = true;
                                 }
@@ -992,6 +1031,20 @@ impl<'a> DtdParser<'a> {
             // entity is referenced, so `WFC: PEs in Internal Subset`
             // still applies to every declaration after this one.
             dtd.incomplete = true;
+            if let EntityValue::External { system, public } = &value {
+                // Fetched now, judged later. Only the caller can supply
+                // it -- this parser opens nothing -- and a name it does
+                // not know simply stays unresolved.
+                if let Some(content) =
+                    self.external.fetch(system, public.as_deref())
+                {
+                    let resolved = self.text_declaration(content);
+                    let _ = dtd
+                        .parameters_external
+                        .entry(name.to_owned())
+                        .or_insert(resolved);
+                }
+            }
             if let EntityValue::Internal(text) = &value {
                 // Character references in an entity value are expanded
                 // when it is **declared**, not when it is used. The
@@ -1009,6 +1062,52 @@ impl<'a> DtdParser<'a> {
             let _ = dtd.general.entry(name.to_owned()).or_insert(value);
         }
         Ok(())
+    }
+
+    /// The replacement text of a parameter entity, wherever it lives.
+    ///
+    /// Internal entities are held as text; external ones were fetched
+    /// when they were declared and are judged **here**, at the
+    /// reference, because an entity nothing references need not be
+    /// read at all. `None` means the name is unknown or was never
+    /// supplied, which leaves the subset incomplete rather than wrong.
+    fn parameter_text(
+        dtd: &Dtd,
+        name: &str,
+        at: usize,
+    ) -> Result<Option<String>, DtdError> {
+        if let Some(text) = dtd.parameters.get(name) {
+            return Ok(Some(text.clone()));
+        }
+        match dtd.parameters_external.get(name) {
+            Some(Ok(body)) => Ok(Some(body.clone())),
+            Some(Err(reason)) => Err((at, reason)),
+            None => Ok(None),
+        }
+    }
+
+    /// An external parameter entity's content, minus its text
+    /// declaration, or why the declaration was not acceptable.
+    ///
+    /// `TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'` — the
+    /// version is optional but must precede the encoding, the encoding
+    /// is required, `standalone` belongs to a document and not to an
+    /// entity, and the whole thing must come first. The suite tests
+    /// each of those separately, which is why this defers to the same
+    /// checks the external *subset* path uses rather than restating
+    /// them.
+    fn text_declaration(&self, content: &str) -> Result<String, &'static str> {
+        // Each entity is normalised by its own declared version: one
+        // declaring 1.1 may use U+2028 as whitespace, including inside
+        // its own text declaration.
+        let version = crate::parser::entity_version(content, self.version);
+        let normalized =
+            crate::parser::normalize_line_endings(content, version);
+        crate::parser::check_text_decl_position(&normalized, 0)
+            .map_err(|_| "a text declaration must come first")?;
+        crate::parser::check_text_decl(&normalized, self.version, 0)
+            .map_err(|_| "malformed text declaration")?;
+        Ok(crate::parser::strip_text_decl(&normalized).to_owned())
     }
 
     fn parse_notation_decl(&mut self) -> Result<(), DtdError> {

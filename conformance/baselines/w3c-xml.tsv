@@ -1,11 +1,6 @@
-#counts	pass=2535	fail=22	panic=0	unsupported=28	blocked=0	total=2585
-sun	decl01	fail	accepted a document that is not well-formed
+#counts	pass=2546	fail=11	panic=0	unsupported=28	blocked=0	total=2585
 eduni	ht-bh-ns11-007	unsupported	namespaces-1.1
 eduni	ht-bh-ns11-008	unsupported	namespaces-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-1-1-not-wf-P77-ibm77n02.xml	fail	accepted a document that is not well-formed
-ibm	ibm-1-1-not-wf-P77-ibm77n03.xml	fail	accepted a document that is not well-formed
-ibm	ibm-1-1-not-wf-P77-ibm77n16.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n17.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n18.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-not-wf-P77-ibm77n21.xml	fail	accepted a document that is not well-formed
@@ -17,11 +12,6 @@ ibm	ibm-1-1-valid-P05-ibm05v05.xml	unsupported	namespace-processing-off
 ibm	ibm-not-wf-P32-ibm32n09.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P68-ibm68n06.xml	fail	accepted a document that is not well-formed
 ibm	ibm-not-wf-P75-ibm75n07.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P77-ibm77n03.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P77-ibm77n04.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P79-ibm79n01.xml	fail	accepted a document that is not well-formed
-ibm	ibm-not-wf-P79-ibm79n02.xml	fail	accepted a document that is not well-formed
-xmltest	not-wf-ext-sa-001	fail	accepted a document that is not well-formed
 xmltest	not-wf-not-sa-008	fail	accepted a document that is not well-formed
 sun	not-wf-sa03	fail	accepted a document that is not well-formed
 oasis	o-p04pass1	unsupported	namespace-processing-off
@@ -32,7 +22,6 @@ japanese	pr-xml-euc-jp	unsupported	unsupported-encoding
 japanese	pr-xml-iso-2022-jp	unsupported	unsupported-encoding
 japanese	pr-xml-shift_jis	unsupported	unsupported-encoding
 eduni	rmt-002	fail	accepted a document that is not well-formed
-eduni	rmt-005	fail	accepted a document that is not well-formed
 eduni	rmt-ns10-012	fail	accepted a document that is not well-formed
 eduni	rmt-ns11-001	unsupported	namespaces-1.1
 eduni	rmt-ns11-002	unsupported	namespaces-1.1

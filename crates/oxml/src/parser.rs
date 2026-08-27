@@ -395,7 +395,10 @@ fn push_attribute_normalized(out: &mut String, text: &str) {
     }
 }
 
-fn normalize_line_endings(input: &str, version: Version) -> Cow<'_, str> {
+pub(crate) fn normalize_line_endings(
+    input: &str,
+    version: Version,
+) -> Cow<'_, str> {
     let terminator = |c: char| {
         c == '\r'
             || (version == Version::V11 && (c == '\u{85}' || c == '\u{2028}'))
@@ -597,7 +600,11 @@ impl<'a> Parser<'a> {
             self.input,
             self.pos,
             self.limits.edition,
-        );
+        )
+        // So an external parameter entity the caller supplied can be
+        // read. Without this the DTD parser sees no source at all and
+        // `%pExternal;` pulls in nothing.
+        .with_external(self.external, self.version);
         match p.parse_doctype() {
             Ok(mut dtd) => {
                 self.pos = p.pos;
@@ -616,15 +623,25 @@ impl<'a> Parser<'a> {
                         check_text_decl_position(&normalized, self.pos)?;
                         check_text_decl(&normalized, self.version, self.pos)?;
                         let body = strip_text_decl(&normalized);
-                        // The subset's characters are judged by the
-                        // subset's own declared version. An external
-                        // DTD declaring 1.0 may not contain characters
-                        // only 1.1 allows, even when the document that
-                        // includes it is 1.1 -- which is what carrying
-                        // a version per entity is for.
-                        if let Some((_, c)) = body
-                            .char_indices()
-                            .find(|(_, c)| !is_literal_char_for(*c, version))
+                        // Judged by **both** versions, and it has to
+                        // be both.
+                        //
+                        // The subset's own version rules it: a DTD
+                        // declaring 1.0 may not contain characters only
+                        // 1.1 allows, which is what carrying a version
+                        // per entity is for. But the including
+                        // document's version rules it too. XML 1.1
+                        // section 4.3.4: a 1.0 external DTD may hold
+                        // `#x7F`, legal in 1.0, and pulling it into a
+                        // document declaring 1.1 puts a character there
+                        // that 1.1 requires to be escaped. Checking
+                        // only the entity's version accepted seven
+                        // documents the suite calls not well-formed.
+                        if let Some((_, c)) =
+                            body.char_indices().find(|(_, c)| {
+                                !is_literal_char_for(*c, version)
+                                    || !is_literal_char_for(*c, self.version)
+                            })
                         {
                             return Err(Error::new(
                                 ErrorKind::IllegalCharacter(c),
@@ -635,7 +652,8 @@ impl<'a> Parser<'a> {
                             body,
                             0,
                             self.limits.edition,
-                        );
+                        )
+                        .with_external(self.external, version);
                         if let Err((offset, reason)) =
                             sub.parse_external_subset(&mut dtd)
                         {
@@ -1884,6 +1902,17 @@ impl<'a> Parser<'a> {
                                 offset,
                             ));
                         }
+                        // An external parsed entity is *included*
+                        // exactly as an internal one is, so its
+                        // replacement text is content and not
+                        // characters. Checking only internal entities
+                        // left `<root&#x85;/>` -- NEL, whitespace in
+                        // 1.1 and not in 1.0 -- accepted inside a 1.0
+                        // document, because nothing ever read the
+                        // replacement text as a tag.
+                        if !in_attribute {
+                            self.check_entity_as_content(body, offset)?;
+                        }
                         let mut budget = self.entity_budget;
                         let out = self.expand_text(
                             body,
@@ -2143,7 +2172,7 @@ fn is_legal_version(value: &str) -> bool {
 /// one that declares its own uses that. The distinction matters before
 /// normalisation, because which characters are line terminators
 /// depends on it.
-fn entity_version(content: &str, document: Version) -> Version {
+pub(crate) fn entity_version(content: &str, document: Version) -> Version {
     let Some(rest) = content.strip_prefix("<?xml") else {
         return document;
     };
@@ -2168,7 +2197,10 @@ fn entity_version(content: &str, document: Version) -> Version {
 ///
 /// The target is reserved case-insensitively, so `<?XML …?>` is an
 /// error even at the start: `TextDecl` spells it in lower case.
-fn check_text_decl_position(content: &str, offset: usize) -> Result<()> {
+pub(crate) fn check_text_decl_position(
+    content: &str,
+    offset: usize,
+) -> Result<()> {
     let mut at = 0;
     while let Some(i) = content[at..].find("<?") {
         let start = at + i;
@@ -2186,7 +2218,7 @@ fn check_text_decl_position(content: &str, offset: usize) -> Result<()> {
     Ok(())
 }
 
-fn strip_text_decl(content: &str) -> &str {
+pub(crate) fn strip_text_decl(content: &str) -> &str {
     let Some(rest) = content.strip_prefix("<?xml") else {
         return content;
     };
@@ -2210,7 +2242,7 @@ fn strip_text_decl(content: &str) -> &str {
 /// * the version, if given, may not be later than the document's. A
 ///   1.1 document may include a 1.0 entity; a 1.0 document may not
 ///   include a 1.1 one.
-fn check_text_decl(
+pub(crate) fn check_text_decl(
     content: &str,
     document_version: Version,
     offset: usize,

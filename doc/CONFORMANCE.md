@@ -21,8 +21,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2535 pass, 22 fail, 0 panic, 28 unsupported, 0 blocked
-         99.1% of 2557 decided (98.9% coverage of 2585)
+overall  2546 pass, 11 fail, 0 panic, 28 unsupported, 0 blocked
+         99.6% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -31,10 +31,10 @@ By submission:
 |---|---|---|---|
 | japanese | 100.0% | 6 | 6 |
 | oasis | 99.7% | 345 | 3 |
-| eduni | 99.5% | 552 | 13 |
-| ibm | 98.8% | 1,131 | 5 |
-| sun | 98.7% | 159 | 0 |
-| xmltest | 99.5% | 364 | 1 |
+| eduni | 99.6% | 552 | 13 |
+| ibm | 99.5% | 1,131 | 5 |
+| sun | 99.4% | 159 | 0 |
+| xmltest | 99.7% | 364 | 1 |
 
 **Zero panics.** No document in the suite makes the parser abort. That
 is the number to look at first: a wrong answer is a bug, but a panic on
@@ -45,7 +45,7 @@ input from the network is a denial of service.
 The pass rate and the coverage figure are always reported together, and
 neither means much alone.
 
-- **99.1% of 2,557 decided** — of the tests where the parser gave a
+- **99.6% of 2,557 decided** — of the tests where the parser gave a
   definite answer, this many agreed with the suite.
 - **98.9% coverage of 2,585** — this many of the suite's tests produced
   a definite answer at all.
@@ -60,7 +60,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-22 failures, and **every one of them is the parser being too
+11 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -78,15 +78,14 @@ conditional-section tests came to pass.
 
 | What the failure needs | Count |
 |---|---|
-| Text declarations in external **parameter** entities (`ibm` P77, P79) | 11 |
 | Standalone declarations against external content | 3 |
-| An external DTD (`oasis/o-p09fail1`, `eduni/rmt-*`) | 4 |
-| External identifier and entity-reference rules | 4 |
+| Remaining §4.3.4 version-agreement cases | 3 |
+| External identifier and entity-reference rules | 3 |
+| An external DTD (`eduni/rmt-*`, `oasis/o-p09fail1`) | 2 |
 
-The leader is one gap: an external *parameter* entity's replacement
-text is never fetched, even when the caller supplied it —
-`Dtd::parameters` holds internal ones only. Its text declaration
-therefore goes unchecked, and eleven tests turn on exactly that.
+No group is now a majority, which is itself the news: the failures
+that shared a cause have been fixed, and what is left is individual
+rules rather than one missing mechanism.
 
 Derived by reading the 37 rather than estimating: the thirteen above
 were confirmed one at a time against the specification, and the
