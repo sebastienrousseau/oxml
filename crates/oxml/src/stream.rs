@@ -164,6 +164,8 @@ struct Carried {
     /// built a parser with `dtd: None`, every DTD-declared entity was
     /// unknown to the reader and known to `parse`.
     dtd: Option<crate::dtd::Dtd>,
+    /// Whether the document declared `standalone="yes"`.
+    standalone: bool,
     /// What is left of the document's entity-expansion budget.
     ///
     /// Per document, not per event. Rebuilding it each scan handed a
@@ -201,6 +203,7 @@ impl Reader {
                 depth: 0,
                 dtd: None,
                 entity_budget: limits.max_entity_expansion,
+                standalone: crate::parser::declared_standalone(input),
             },
             cursor: Cursor {
                 pos: 0,
@@ -269,6 +272,7 @@ impl Reader {
             version: carried.version,
             entity_budget: carried.entity_budget,
             entity_depth: 0,
+            standalone: carried.standalone,
         };
 
         let result = Self::one_event(

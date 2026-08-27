@@ -21,7 +21,7 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2551 pass, 6 fail, 0 panic, 28 unsupported, 0 blocked
+overall  2553 pass, 4 fail, 0 panic, 28 unsupported, 0 blocked
          99.8% of 2557 decided (98.9% coverage of 2585)
 ```
 
@@ -32,7 +32,7 @@ By submission:
 | japanese | 100.0% | 6 | 6 |
 | oasis | 100.0% | 345 | 3 |
 | eduni | 99.6% | 552 | 13 |
-| ibm | 99.7% | 1,131 | 5 |
+| ibm | 99.9% | 1,131 | 5 |
 | sun | 99.4% | 159 | 0 |
 | xmltest | 100.0% | 364 | 1 |
 
@@ -60,7 +60,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-6 failures, and **every one of them is the parser being too
+4 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -78,12 +78,12 @@ conditional-section tests came to pass.
 
 | What the failure needs | Count |
 |---|---|
-| Standalone declarations against external content | 2 |
-| External identifier and entity-reference rules | 2 |
-| An external DTD (`eduni/rmt-*`) | 2 |
+| `eduni/rmt-*`, external DTD and namespace rules | 2 |
+| An external identifier rule (`ibm` P75) | 1 |
+| A remaining standalone case (`sun`) | 1 |
 
-Three submissions — `japanese`, `oasis` and `xmltest` — now pass every
-test they decide, and `ibm` is at 99.7% of 1,131.
+Three submissions — `japanese`, `oasis` and `xmltest` — pass every
+test they decide, and `ibm` is at **99.9%** of 1,131.
 
 No group is now a majority, which is itself the news: the failures
 that shared a cause have been fixed, and what is left is individual

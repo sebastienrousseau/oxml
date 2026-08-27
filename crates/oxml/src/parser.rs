@@ -95,6 +95,12 @@ pub(crate) struct Parser<'a> {
     /// How many entity replacement texts are being parsed above this
     /// one, so a self-referential entity terminates.
     pub(crate) entity_depth: usize,
+    /// Whether the document said `standalone="yes"`.
+    ///
+    /// When it did, an entity declared outside the internal subset may
+    /// not be referenced: the document promised it needs nothing from
+    /// out there.
+    pub(crate) standalone: bool,
 }
 
 /// Parse an XML document.
@@ -484,6 +490,7 @@ fn parse_normalized(
         version,
         entity_budget: limits.max_entity_expansion,
         entity_depth: 0,
+        standalone: declared_standalone(input),
     };
     p.parse_document()?;
     Ok(p.doc)
@@ -654,6 +661,13 @@ impl<'a> Parser<'a> {
                             self.limits.edition,
                         )
                         .with_external(self.external, version);
+                        // Which names arrive from out here, so that
+                        // `standalone="yes"` can refuse them. Taken as
+                        // a before-and-after rather than threaded
+                        // through the DTD parser: the boundary is
+                        // exactly this call.
+                        let before: alloc::collections::BTreeSet<String> =
+                            dtd.general.keys().cloned().collect();
                         if let Err((offset, reason)) =
                             sub.parse_external_subset(&mut dtd)
                         {
@@ -663,6 +677,12 @@ impl<'a> Parser<'a> {
                                 self.pos,
                             ));
                         }
+                        dtd.declared_externally = dtd
+                            .general
+                            .keys()
+                            .filter(|k| !before.contains(*k))
+                            .cloned()
+                            .collect();
                         // The declarations are now known, so an entity
                         // that is still missing really is undeclared.
                         dtd.incomplete = false;
@@ -1306,6 +1326,7 @@ impl<'a> Parser<'a> {
             external: self.external,
             entity_budget: self.entity_budget,
             entity_depth: self.entity_depth + 1,
+            standalone: self.standalone,
         };
         let result = sub.parse_entity_body();
         // The budget is per document, so what the check spent counts.
@@ -1832,6 +1853,17 @@ impl<'a> Parser<'a> {
                 offset,
             ));
         };
+        // `WFC: Entity Declared`. With `standalone="yes"` the document
+        // has promised it depends on nothing outside its internal
+        // subset, so referencing an entity declared out there
+        // contradicts the promise -- even though the declaration was
+        // found and would otherwise resolve.
+        if self.standalone && dtd.declared_externally.contains(ent) {
+            return Err(Error::new(
+                ErrorKind::ForbiddenEntityReference(ent.to_owned()),
+                offset,
+            ));
+        }
         match dtd.entity(ent) {
             Some(crate::dtd::EntityValue::Internal(text)) => {
                 let text = text.clone();
@@ -2407,6 +2439,40 @@ fn validate_xml_declaration(
 /// # Errors
 ///
 /// Returns [`Error`] if the version is not one this parser implements.
+/// Whether the document declares `standalone="yes"`.
+///
+/// It is not merely a hint to the application. XML 1.0 section 2.9
+/// makes it a well-formedness matter: with `yes`, the *WFC: Entity
+/// Declared* constraint stops being relaxed for declarations that came
+/// from outside the internal subset, because the document has promised
+/// there is nothing out there it depends on.
+pub(crate) fn declared_standalone(input: &str) -> bool {
+    let Some(rest) = input.strip_prefix("<?xml") else {
+        return false;
+    };
+    let Some(end) = rest.find("?>") else {
+        return false;
+    };
+    let decl = &rest[..end];
+    let Some(at) = decl.find("standalone") else {
+        return false;
+    };
+    let after = trim_xml_start(&decl[at + "standalone".len()..]);
+    let Some(after) = after.strip_prefix('=') else {
+        return false;
+    };
+    let after = trim_xml_start(after);
+    let Some(quote) = after.chars().next() else {
+        return false;
+    };
+    if quote != '"' && quote != '\'' {
+        return false;
+    }
+    let body = &after[1..];
+    body.find(quote)
+        .is_some_and(|close| &body[..close] == "yes")
+}
+
 fn declared_version(input: &str) -> Result<Version> {
     let Some(rest) = input.strip_prefix("<?xml") else {
         return Ok(Version::V10);

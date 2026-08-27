@@ -247,3 +247,42 @@ fn a_text_declaration_is_separated_by_xml_whitespace() {
         );
     }
 }
+
+/// `standalone="yes"` refuses an entity declared outside.
+///
+/// XML 1.0 §2.9 makes this a well-formedness matter, not advice to the
+/// application: with `yes` the document has promised it depends on
+/// nothing beyond its internal subset, so referencing an entity
+/// declared in an external one contradicts the promise — even though
+/// the declaration was found and would otherwise resolve.
+#[test]
+fn a_standalone_document_may_not_use_an_external_declaration() {
+    let dtd = "<!ENTITY greeting \"hello\">";
+
+    let standalone = "<?xml version='1.0' standalone='yes'?>\n\
+         <!DOCTYPE doc SYSTEM \"p.ent\" [<!ELEMENT doc (#PCDATA)>]>\n\
+         <doc>&greeting;</doc>";
+    assert!(
+        with_ent(standalone, dtd).is_err(),
+        "a standalone document may not depend on an external declaration"
+    );
+
+    // The identical document without the promise is fine.
+    let not_standalone = "<?xml version='1.0' standalone='no'?>\n\
+         <!DOCTYPE doc SYSTEM \"p.ent\" [<!ELEMENT doc (#PCDATA)>]>\n\
+         <doc>&greeting;</doc>";
+    let source: &[(&str, &str)] = &[("p.ent", dtd)];
+    let parsed =
+        parse_with_external(not_standalone, Limits::default(), &source)
+            .expect("without the promise the declaration is usable");
+    assert_eq!(parsed.text(parsed.root()), "hello");
+
+    // And declaring it internally satisfies the promise.
+    let internal = "<?xml version='1.0' standalone='yes'?>\n\
+         <!DOCTYPE doc [<!ELEMENT doc (#PCDATA)>\
+         <!ENTITY greeting \"hello\">]>\n<doc>&greeting;</doc>";
+    assert!(
+        parse(internal).is_ok(),
+        "an internal declaration is exactly what standalone permits"
+    );
+}

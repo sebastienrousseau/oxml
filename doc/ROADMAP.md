@@ -105,7 +105,7 @@ claim rests entirely on the allocation count, which is a proxy.
 `doc/BENCHMARKS.md` states the method and the conditions a figure must
 carry.
 
-### 2. Conformance — 6 failures, all about external content
+### 2. Conformance — 4 failures, all about external content
 
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
@@ -129,9 +129,9 @@ What is left all turns on a file oxml never reads:
 
 | What the failure needs | Count |
 |---|---|
-| Standalone declarations against external content | 2 |
-| External identifier and entity-reference rules | 2 |
-| An external DTD (`eduni/rmt-*`) | 2 |
+| `eduni/rmt-*`, external DTD and namespace rules | 2 |
+| An external identifier rule (`ibm` P75) | 1 |
+| A remaining standalone case (`sun`) | 1 |
 
 No group is a majority any more, which is the news: every failure
 that shared a cause with others has been fixed, and the eleven left

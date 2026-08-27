@@ -83,6 +83,13 @@ pub(crate) struct Dtd {
     /// leaves the subset [`Dtd::incomplete`] exactly as before.
     pub(crate) parameters_external:
         BTreeMap<String, Result<String, &'static str>>,
+    /// General entities that were declared outside the internal
+    /// subset.
+    ///
+    /// A document saying `standalone="yes"` may not reference one:
+    /// XML 1.0 section 2.9 makes that a well-formedness matter, not
+    /// merely advice to the application.
+    pub(crate) declared_externally: alloc::collections::BTreeSet<String>,
     /// Whether an external subset or a parameter entity was referenced.
     ///
     /// When either is true the internal subset is not the whole story,
