@@ -2231,6 +2231,22 @@ pub(crate) fn strip_text_decl(content: &str) -> &str {
     }
 }
 
+/// Trim leading **XML** whitespace, which is not Rust's.
+///
+/// `S ::= (#x20 | #x9 | #xD | #xA)+` — four characters, in both 1.0
+/// and 1.1. Rust's `trim_start` follows Unicode and also strips NEL
+/// (#x85) and LSEP (#x2028), which is exactly wrong here: XML 1.1
+/// treats those two as *line ends* and normalises them to #xA before
+/// anything is parsed, so one that survives to be read as a separator
+/// is in 1.0 content, where it is not whitespace at all.
+///
+/// Using Rust's version accepted
+/// `<?xml version='1.0'<LSEP>encoding='UTF-8'?>` in an entity
+/// declaring 1.0.
+fn trim_xml_start(s: &str) -> &str {
+    s.trim_start_matches([' ', '\t', '\r', '\n'])
+}
+
 /// Check the text declaration at the head of an external entity.
 ///
 /// `TextDecl ::= '<?xml' VersionInfo? EncodingDecl S? '?>'`, and it
@@ -2267,8 +2283,8 @@ pub(crate) fn check_text_decl(
 
     let field = |name: &str| -> Option<&str> {
         let at = decl.find(name)?;
-        let after = decl[at + name.len()..].trim_start();
-        let after = after.strip_prefix('=')?.trim_start();
+        let after = trim_xml_start(&decl[at + name.len()..]);
+        let after = trim_xml_start(after.strip_prefix('=')?);
         let quote = after.chars().next()?;
         let body = after.get(1..)?;
         let close = body.find(quote)?;
@@ -2299,7 +2315,7 @@ fn validate_xml_declaration(
     let mut seen: Vec<&str> = Vec::new();
 
     loop {
-        let trimmed = rest.trim_start();
+        let trimmed = trim_xml_start(rest);
         if trimmed.is_empty() {
             break;
         }
@@ -2331,11 +2347,11 @@ fn validate_xml_declaration(
         }
         seen.push(name);
 
-        let after = rest[name_end..].trim_start();
+        let after = trim_xml_start(&rest[name_end..]);
         let Some(after) = after.strip_prefix('=') else {
             return Err(Error::new(ErrorKind::MalformedDeclaration, offset));
         };
-        let after = after.trim_start();
+        let after = trim_xml_start(after);
         let Some(quote) =
             after.chars().next().filter(|c| *c == '"' || *c == '\'')
         else {
@@ -2467,7 +2483,7 @@ const fn is_restricted_char(c: char) -> bool {
 /// marks not-well-formed — a control character pasted into a comment or
 /// into content is exactly the case this separates.
 #[must_use]
-const fn is_literal_char_for(c: char, version: Version) -> bool {
+pub(crate) const fn is_literal_char_for(c: char, version: Version) -> bool {
     match version {
         Version::V10 => is_xml_char(c),
         Version::V11 => is_xml_char_for(c, version) && !is_restricted_char(c),

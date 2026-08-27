@@ -1107,7 +1107,19 @@ impl<'a> DtdParser<'a> {
             .map_err(|_| "a text declaration must come first")?;
         crate::parser::check_text_decl(&normalized, self.version, 0)
             .map_err(|_| "malformed text declaration")?;
-        Ok(crate::parser::strip_text_decl(&normalized).to_owned())
+        let body = crate::parser::strip_text_decl(&normalized);
+        // Judged by both versions, as the external *subset* path is.
+        // The entity's own version rules its characters, and so does
+        // the version of the document pulling it in: `#x8F` is invalid
+        // in XML 1.1 whatever the entity declares, and nothing checked
+        // an external parameter entity's characters at all.
+        if body.chars().any(|c| {
+            !crate::parser::is_literal_char_for(c, version)
+                || !crate::parser::is_literal_char_for(c, self.version)
+        }) {
+            return Err("a character the document's version forbids");
+        }
+        Ok(body.to_owned())
     }
 
     fn parse_notation_decl(&mut self) -> Result<(), DtdError> {

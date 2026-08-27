@@ -1,9 +1,6 @@
-#counts	pass=2548	fail=9	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2551	fail=6	panic=0	unsupported=28	blocked=0	total=2585
 eduni	ht-bh-ns11-007	unsupported	namespaces-1.1
 eduni	ht-bh-ns11-008	unsupported	namespaces-1.1
-ibm	ibm-1-1-not-wf-P77-ibm77n17.xml	fail	accepted a document that is not well-formed
-ibm	ibm-1-1-not-wf-P77-ibm77n18.xml	fail	accepted a document that is not well-formed
-ibm	ibm-1-1-not-wf-P77-ibm77n21.xml	fail	accepted a document that is not well-formed
 ibm	ibm-1-1-valid-P04-ibm04v01.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v01.xml	unsupported	namespace-processing-off
 ibm	ibm-1-1-valid-P05-ibm05v02.xml	unsupported	namespace-processing-off

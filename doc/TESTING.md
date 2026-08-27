@@ -58,8 +58,8 @@ The XML Conformance Test Suite (`xmlts20130923`, 2,585 tests) is
 downloaded, verified against a pinned SHA-256, and run on every push.
 
 ```
-overall  2548 pass, 9 fail, 0 panic, 28 unsupported, 0 blocked
-         99.6% of 2557 decided (98.9% coverage of 2585)
+overall  2551 pass, 6 fail, 0 panic, 28 unsupported, 0 blocked
+         99.8% of 2557 decided (98.9% coverage of 2585)
 ```
 
 Both numbers are reported together, always. A pass rate on a thin

@@ -27,7 +27,7 @@ one is listed as not done, however close it feels.
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
 | Line coverage | ≥95% | **97.4%**, gated | ✅ |
-| Conformance | Published with denominator | **99.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
+| Conformance | Published with denominator | **99.8% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **0.50** | ✅ |
 | Throughput | <100 ms at load | **Ratios measured, absolute still not** — `benches/comparison.rs` reports 0.089× `quick-xml` (events) and 0.319× `roxmltree` (tree), stable to 3–5% under 10 CPU hogs and gated at 15%. MB/s still needs a quiet machine; `scripts/record-throughput.sh` refuses above 0.20 load per core and has never yet been able to record | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
@@ -105,7 +105,7 @@ claim rests entirely on the allocation count, which is a proxy.
 `doc/BENCHMARKS.md` states the method and the conditions a figure must
 carry.
 
-### 2. Conformance — 9 failures, all about external content
+### 2. Conformance — 6 failures, all about external content
 
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
@@ -129,7 +129,6 @@ What is left all turns on a file oxml never reads:
 
 | What the failure needs | Count |
 |---|---|
-| Remaining §4.3.4 version-agreement cases | 3 |
 | Standalone declarations against external content | 2 |
 | External identifier and entity-reference rules | 2 |
 | An external DTD (`eduni/rmt-*`) | 2 |

@@ -214,3 +214,36 @@ fn a_percent_in_an_entity_value_must_start_a_reference() {
         assert!(with_ent(doc, good).is_ok(), "{good:?} should be accepted");
     }
 }
+
+/// A text declaration's separators are **XML** whitespace, not
+/// Unicode's.
+///
+/// `S ::= (#x20 | #x9 | #xD | #xA)+` in both versions. XML 1.1 treats
+/// NEL (#x85) and LSEP (#x2028) as *line ends* and normalises them to
+/// #xA before anything is parsed — so one that survives to be read as
+/// a separator is in 1.0 content, where it is not whitespace at all.
+///
+/// Rust's `trim_start` follows Unicode and strips both, which accepted
+/// `<?xml version='1.0'<LSEP>encoding='UTF-8'?>`.
+#[test]
+fn a_text_declaration_is_separated_by_xml_whitespace() {
+    let doc = "<!DOCTYPE doc [<!ELEMENT doc ANY><!ELEMENT root EMPTY>\
+               <!ENTITY e SYSTEM \"p.ent\">]><doc>&e;</doc>";
+
+    for (sep, name) in [('\u{2028}', "LSEP"), ('\u{85}', "NEL")] {
+        let ent = format!("<?xml version='1.0'{sep}encoding='UTF-8'?><root/>");
+        assert!(
+            with_ent(doc, &ent).is_err(),
+            "{name} is not whitespace in XML 1.0"
+        );
+    }
+
+    // The four that are whitespace stay accepted.
+    for sep in [' ', '\t', '\r', '\n'] {
+        let ent = format!("<?xml version='1.0'{sep}encoding='UTF-8'?><root/>");
+        assert!(
+            with_ent(doc, &ent).is_ok(),
+            "{sep:?} is XML whitespace and must be accepted"
+        );
+    }
+}
