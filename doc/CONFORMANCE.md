@@ -21,8 +21,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2553 pass, 4 fail, 0 panic, 28 unsupported, 0 blocked
-         99.8% of 2557 decided (98.9% coverage of 2585)
+overall  2554 pass, 3 fail, 0 panic, 28 unsupported, 0 blocked
+         99.9% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -33,7 +33,7 @@ By submission:
 | oasis | 100.0% | 345 | 3 |
 | eduni | 99.6% | 552 | 13 |
 | ibm | 99.9% | 1,131 | 5 |
-| sun | 99.4% | 159 | 0 |
+| sun | 100.0% | 159 | 0 |
 | xmltest | 100.0% | 364 | 1 |
 
 **Zero panics.** No document in the suite makes the parser abort. That
@@ -45,7 +45,7 @@ input from the network is a denial of service.
 The pass rate and the coverage figure are always reported together, and
 neither means much alone.
 
-- **99.8% of 2,557 decided** — of the tests where the parser gave a
+- **99.9% of 2,557 decided** — of the tests where the parser gave a
   definite answer, this many agreed with the suite.
 - **98.9% coverage of 2,585** — this many of the suite's tests produced
   a definite answer at all.
@@ -60,7 +60,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-4 failures, and **every one of them is the parser being too
+3 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -80,10 +80,10 @@ conditional-section tests came to pass.
 |---|---|
 | `eduni/rmt-*`, external DTD and namespace rules | 2 |
 | An external identifier rule (`ibm` P75) | 1 |
-| A remaining standalone case (`sun`) | 1 |
 
-Three submissions — `japanese`, `oasis` and `xmltest` — pass every
-test they decide, and `ibm` is at **99.9%** of 1,131.
+**Four submissions pass every test they decide** — `japanese`,
+`oasis`, `sun` and `xmltest`. `ibm` is at 99.9% of 1,131 and `eduni`
+at 99.6% of 552.
 
 No group is now a majority, which is itself the news: the failures
 that shared a cause have been fixed, and what is left is individual

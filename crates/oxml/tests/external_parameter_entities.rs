@@ -286,3 +286,48 @@ fn a_standalone_document_may_not_use_an_external_declaration() {
         "an internal declaration is exactly what standalone permits"
     );
 }
+
+/// `standalone="yes"` also withdraws the benefit of the doubt.
+///
+/// An entity that cannot be found is normally forgiven: the
+/// declaration may be in a subset the caller did not supply, and
+/// refusing would fail valid documents. Saying `standalone="yes"`
+/// withdraws that excuse — the document has stated there is nothing
+/// outside it depends on, so an entity not declared inside it is
+/// undeclared, whether or not an external subset exists and whether
+/// or not anyone could read it.
+///
+/// This is the half of §2.9 that the previous commit did not reach:
+/// there the declaration was found and refused, here it is missing and
+/// must still be refused.
+#[test]
+fn a_standalone_document_may_not_use_an_entity_it_did_not_declare() {
+    // The DTD is named and *not* supplied, so nothing can be resolved.
+    let doc = "<?xml version='1.0' standalone='yes'?>\n\
+         <!DOCTYPE a SYSTEM \"absent.dtd\">\n<a>&number;</a>";
+    assert!(
+        parse(doc).is_err(),
+        "standalone means the entity had to be declared here"
+    );
+
+    // In an attribute value too, which is where the W3C case puts it.
+    let attr = "<?xml version='1.0' standalone='yes'?>\n\
+         <!DOCTYPE a SYSTEM \"absent.dtd\">\n<a id=\"x-&number;\"/>";
+    assert!(parse(attr).is_err(), "an attribute value is no different");
+
+    // Without the promise, the same document is accepted: the
+    // declaration may well be in the subset nobody supplied.
+    let relaxed = "<?xml version='1.0' standalone='no'?>\n\
+         <!DOCTYPE a SYSTEM \"absent.dtd\">\n<a>&number;</a>";
+    assert!(
+        parse(relaxed).is_ok(),
+        "without the promise, an unreadable subset is the benefit of \
+         the doubt"
+    );
+
+    // And a standalone document that declares what it uses is fine.
+    let complete = "<?xml version='1.0' standalone='yes'?>\n\
+         <!DOCTYPE a [<!ENTITY number \"7\">]>\n<a>&number;</a>";
+    let parsed = parse(complete).expect("declared internally");
+    assert_eq!(parsed.text(parsed.root()), "7");
+}

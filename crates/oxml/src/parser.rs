@@ -1967,7 +1967,16 @@ impl<'a> Parser<'a> {
                 ErrorKind::ForbiddenEntityReference(ent.to_owned()),
                 offset,
             )),
-            None if dtd.incomplete => Ok(String::new()),
+            // An entity we never found is normally forgiven: the
+            // declaration may well be in a subset the caller did not
+            // supply, and rejecting would fail valid documents.
+            //
+            // `standalone="yes"` withdraws that excuse. The document
+            // has said there is nothing outside it depends on, so an
+            // entity that is not declared inside it is undeclared --
+            // whether or not an external subset exists and whether or
+            // not it could be read.
+            None if dtd.incomplete && !self.standalone => Ok(String::new()),
             None => Err(Error::new(
                 ErrorKind::UnknownEntity(ent.to_owned()),
                 offset,
@@ -2098,7 +2107,9 @@ impl<'a> Parser<'a> {
                 // text must itself be declared. Skipping the reference
                 // silently produced a document missing the content it
                 // asked for, with nothing to say so.
-                None if !self.dtd.as_ref().is_some_and(|d| d.incomplete) => {
+                None if self.standalone
+                    || !self.dtd.as_ref().is_some_and(|d| d.incomplete) =>
+                {
                     return Err(Error::new(
                         ErrorKind::UnknownEntity(name.to_owned()),
                         offset,
