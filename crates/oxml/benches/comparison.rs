@@ -221,18 +221,105 @@ fn median(values: &[f64]) -> f64 {
 /// available estimate of the uncontended cost, and it is the sample
 /// that the fewest quanta landed on. It is the standard estimator for
 /// exactly this reason.
-fn group(name: &str, input: &str, arms: &[Arm], check: bool) -> bool {
-    let reference = *arms.last().expect("a group needs a reference");
-    // Every arm's durations, the reference last.
+/// The one-minute load average per core, if it can be read.
+///
+/// Used to decide whether a verdict is worth giving at all. The
+/// median-of-pairs was tried first as a contention signal and only
+/// catches one direction: under twelve CPU hogs the `tree` group's
+/// median sat *above* its minimum-based ratio, so nothing looked
+/// wrong while the ratio had collapsed from 0.32 to 0.17. The load
+/// average measures the condition directly instead of inferring it,
+/// which is what `scripts/record-throughput.sh` already does for
+/// absolute figures.
+fn load_per_core() -> Option<f64> {
+    // Captured once, before any measuring. The benchmark is itself a
+    // CPU load: reading this *after* a run reported 4.07 per core on a
+    // machine that had been sitting at 2.34, so the measurement
+    // supplied the evidence that it could not be trusted and
+    // suppressed its own verdict.
+    static AT_START: std::sync::OnceLock<Option<f64>> =
+        std::sync::OnceLock::new();
+    *AT_START.get_or_init(read_load_per_core)
+}
+
+/// Read the one-minute load average per core.
+fn read_load_per_core() -> Option<f64> {
+    let out = std::process::Command::new("uptime").output().ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    // Both spellings, because they differ by platform and getting it
+    // wrong fails *silently*: this returned `None` on macOS, where
+    // `uptime` writes "load averages: 72.93 60.98 65.40" with spaces,
+    // while the parser expected Linux's "load average: 0.5, 0.4, 0.3"
+    // with commas. The gate then never fired and looked like it was
+    // there.
+    let after = text.split("average").nth(1)?;
+    let first = after
+        .trim_start_matches([':', 's', ' '])
+        .split([',', ' '])
+        .find_map(|t| t.trim().parse::<f64>().ok())?;
+    let cores = std::thread::available_parallelism().ok()?.get();
+    Some(first / cores as f64)
+}
+
+/// One measurement of a group: every arm's per-round times.
+fn measure(
+    name: &str,
+    input: &str,
+    arms: &[Arm],
+    rounds: usize,
+) -> Vec<Vec<f64>> {
     let mut samples: Vec<Vec<f64>> = vec![Vec::new(); arms.len()];
     let mut found: Vec<usize> = vec![0; arms.len()];
 
-    let total = rounds();
-    for round in 0..(total + WARMUP) {
+    // Equalise how long each timed segment lasts.
+    //
+    // This is what made the `events` group fragile. Preemption lands
+    // on whichever arm is running when a quantum falls, so an arm that
+    // runs ten times longer absorbs ten times as many -- a *systematic*
+    // bias, not noise, which is why measuring again never cleared it.
+    // `quick-xml` is roughly ten times faster than `oxml::stream` on
+    // this document, and that group read anywhere from 0.065 to 0.093
+    // against a 0.089 baseline. The `tree` group, whose arms are within
+    // three times of each other, stayed put.
+    //
+    // Running the faster arm enough times to match the slower one
+    // makes the segments comparable, so a quantum is equally likely to
+    // land on either. The per-iteration time is what is recorded, so
+    // the ratio still means the same thing.
+    let calibration: Vec<f64> = arms
+        .iter()
+        .map(|arm| time(*arm, input).0.as_secs_f64())
+        .collect();
+    let slowest = calibration.iter().copied().fold(0.0_f64, f64::max);
+    let reps: Vec<usize> = calibration
+        .iter()
+        .map(|d| {
+            if *d <= 0.0 {
+                1
+            } else {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss
+                )]
+                let n = (slowest / d).round() as usize;
+                n.clamp(1, 64)
+            }
+        })
+        .collect();
+
+    for round in 0..(rounds + WARMUP) {
         for (i, arm) in arms.iter().enumerate() {
-            let (elapsed, n) = time(*arm, input);
+            let start = std::time::Instant::now();
+            let mut n = 0;
+            for _ in 0..reps[i] {
+                n = black_box(arm.1(black_box(input)));
+            }
+            let elapsed = start.elapsed();
             if round >= WARMUP {
-                samples[i].push(elapsed.as_secs_f64());
+                // Per iteration, so the ratio is unchanged by how many
+                // were needed to fill the segment.
+                #[allow(clippy::cast_precision_loss)]
+                samples[i].push(elapsed.as_secs_f64() / reps[i] as f64);
             }
             found[i] = n;
         }
@@ -246,18 +333,123 @@ fn group(name: &str, input: &str, arms: &[Arm], check: bool) -> bool {
         assert!(found[i] > 0, "{name}: {} found nothing", arm.0);
     }
 
-    let fastest =
-        |v: &Vec<f64>| v.iter().copied().fold(f64::INFINITY, f64::min);
-    let reference_min = fastest(&samples[arms.len() - 1]);
+    samples
+}
 
-    // Throughput as well as ratio, from the same samples. An
-    // absolute figure normally needs a quiet machine -- the same
-    // binary measured 14.7 and 123.1 MB/s here on one day -- but that
-    // is a property of the *estimator*, not of absolutes. The fastest
-    // observed run is the sample contention perturbed least, and it is
-    // stable where a mean or median is not: under ten CPU hogs on six
-    // cores it moves by a few percent while a median-based figure
-    // halves. See `doc/BENCHMARKS.md`.
+/// The fastest time in each arm's samples.
+fn minima(samples: &[Vec<f64>]) -> Vec<f64> {
+    samples
+        .iter()
+        .map(|v| v.iter().copied().fold(f64::INFINITY, f64::min))
+        .collect()
+}
+
+/// Run one group and report each arm's ratio against the reference.
+///
+/// The reference is the last arm, and is the implementation the ratio
+/// is *against* -- so a ratio below 1.0 means slower than it.
+///
+/// # Why the minimum and not the median
+///
+/// Pairing the arms removes load that is *proportional*. Preemption is
+/// not proportional: a scheduler quantum lands on whichever arm is
+/// running when it falls, so the arm that takes longer absorbs more of
+/// them. Measured here against `quick-xml`, which is roughly ten times
+/// faster on this document, ten competing CPU hogs moved the
+/// median-of-ratios from 0.100 to 0.054 -- it halved, while the `tree`
+/// group, whose arms are within 3x of each other, barely moved.
+///
+/// The minimum does not have that failure. Contention can only make a
+/// run slower, never faster, so the fastest observed run is the best
+/// available estimate of the uncontended cost, and it is the sample
+/// that the fewest quanta landed on.
+///
+/// # Why a suspected regression is measured again
+///
+/// The estimator is good, not perfect: at about five load per core
+/// this printed `REGRESSED` against a tree that had not changed. That
+/// is worse than a missing check, because a gate that cries wolf gets
+/// ignored and then misses the real thing.
+///
+/// Contention can only bias the ratio **downward** -- it inflates both
+/// arms' minima and the slower arm's more -- so a low reading may be
+/// noise while a high one cannot be. The best of several attempts is
+/// therefore the trustworthy estimate, and only a regression that
+/// survives every attempt is reported. A real one survives: the code
+/// cannot get faster between attempts.
+fn group(name: &str, input: &str, arms: &[Arm], check: bool) -> bool {
+    /// Attempts before a regression is believed.
+    const ATTEMPTS: usize = 3;
+
+    /// Load per core above which no verdict is given.
+    ///
+    /// Deliberately high, and the reason is the failure mode on the
+    /// other side. A gate that suppresses often is worse than no gate:
+    /// it turns the check off without saying so, and a real regression
+    /// then passes silently. Set at 1.5 first, this refused to judge a
+    /// *genuine* regression on a machine sitting at 2.7 per core --
+    /// which is where this one idles.
+    ///
+    /// Equalising the timed segments is what actually made the
+    /// measurement robust; this is only a backstop for conditions
+    /// where nothing could be measured. With the segments equal, four
+    /// runs under twelve CPU hogs on six cores all stayed above their
+    /// floors. Four per core is past that and into the range where the
+    /// numbers stopped meaning anything.
+    ///
+    /// `scripts/record-throughput.sh` wants 0.20 per core for an
+    /// *absolute* figure. A ratio tolerates twenty times more, which
+    /// is the whole argument for publishing ratios.
+    const MAX_LOAD: f64 = 4.0;
+
+    let reference = *arms.last().expect("a group needs a reference");
+    let last = arms.len() - 1;
+    let arch = std::env::consts::ARCH;
+    let baseline = |arm: &str| {
+        BASELINE
+            .iter()
+            .find(|(a, g, n, _)| *a == arch && *g == name && *n == arm)
+            .map(|(_, _, _, base)| *base)
+    };
+
+    let mut samples = measure(name, input, arms, rounds());
+    let mut best = minima(&samples);
+    let mut attempts = 1;
+
+    // Repeat only if something looks wrong, so a healthy run costs one
+    // measurement.
+    while check
+        && attempts < ATTEMPTS
+        && arms[..last].iter().enumerate().any(|(i, arm)| {
+            baseline(arm.0).is_some_and(|base| {
+                base > 0.0 && best[last] / best[i] < base * (1.0 - TOLERANCE)
+            })
+        })
+    {
+        attempts += 1;
+        println!(
+            "  {name}: a ratio is below its floor -- measuring again \
+             ({attempts} of {ATTEMPTS}) to tell a regression from a \
+             busy machine"
+        );
+        let again = measure(name, input, arms, rounds());
+        // Accumulated, not replaced: every round is a sample of the
+        // same quantity, so a later attempt adds evidence rather than
+        // superseding it. The minimum over all of them is the least
+        // contended run seen, and cannot get worse.
+        for (all, more) in samples.iter_mut().zip(again) {
+            all.extend(more);
+        }
+        best = minima(&samples);
+    }
+
+    let reference_min = best[last];
+
+    // Throughput as well as ratio, from the same samples. An absolute
+    // figure normally needs a quiet machine -- the same binary
+    // measured 14.7 and 123.1 MB/s here on one day -- but that is a
+    // property of the *estimator*, not of absolutes. See
+    // `doc/BENCHMARKS.md`.
     let mb = |secs: f64| input.len() as f64 / secs / 1_000_000.0;
     println!(
         "\n{name}  ({} KB, vs {} at {:.2} ms = {:.0} MB/s)",
@@ -268,22 +460,21 @@ fn group(name: &str, input: &str, arms: &[Arm], check: bool) -> bool {
     );
 
     let mut ok = true;
-    for (i, arm) in arms[..arms.len() - 1].iter().enumerate() {
-        let mine = fastest(&samples[i]);
+    let mut contended = false;
+    for (i, arm) in arms[..last].iter().enumerate() {
+        let mine = best[i];
         let ratio = reference_min / mine;
-
-        // The median is reported alongside as a diagnostic: when it
-        // sits far below the minimum-based ratio, the machine was
-        // contended while measuring, and the ratio is the one to
-        // believe.
+        // The median of the paired ratios, as a contention
+        // diagnostic: when it sits well below the reported ratio the
+        // machine was busy while measuring, and the minimum-based
+        // figure is the one to believe.
         let median_ratio = median(
             &samples[i]
                 .iter()
-                .zip(&samples[arms.len() - 1])
+                .zip(&samples[last])
                 .map(|(m, t)| t / m)
                 .collect::<Vec<_>>(),
         );
-
         print!(
             "  {:<14} {ratio:.3}x  ({:.2} ms = {:>4.0} MB/s)   \
              median-of-pairs {median_ratio:.3}x",
@@ -291,29 +482,43 @@ fn group(name: &str, input: &str, arms: &[Arm], check: bool) -> bool {
             mine * 1e3,
             mb(mine)
         );
-
-        let arch = std::env::consts::ARCH;
-        if let Some((_, _, _, base)) = BASELINE
-            .iter()
-            .find(|(a, g, n, _)| *a == arch && *g == name && *n == arm.0)
-        {
-            if *base > 0.0 {
+        match baseline(arm.0) {
+            Some(base) if base > 0.0 => {
                 let floor = base * (1.0 - TOLERANCE);
-                if ratio < floor {
+                if ratio >= floor {
+                    print!("  baseline {base:.3}x");
+                } else if load_per_core().is_some_and(|l| l > MAX_LOAD) {
+                    // Below the floor, but the machine was too busy
+                    // for the reading to mean anything. Say so and do
+                    // not fail: a gate that cries wolf on a loaded
+                    // runner gets ignored, and then it misses the real
+                    // regression. "Cannot tell" is a different answer
+                    // from "no regression", and this prints it.
+                    let load = load_per_core().unwrap_or(0.0);
                     print!(
-                        "  REGRESSED (baseline {base:.3}x, floor {floor:.3}x)"
+                        "  BELOW FLOOR but the machine is busy \
+                         ({load:.2} load per core, limit {MAX_LOAD:.1}); \
+                         not judged"
+                    );
+                    contended = true;
+                } else {
+                    print!(
+                        "  REGRESSED after {attempts} attempts \
+                         (baseline {base:.3}x, floor {floor:.3}x)"
                     );
                     ok = false;
-                } else {
-                    print!("  baseline {base:.3}x");
                 }
-            } else {
-                print!("  no baseline recorded");
             }
-        } else {
-            print!("  no baseline for {arch}");
+            Some(_) => print!("  no baseline recorded"),
+            None => print!("  no baseline for {arch}"),
         }
         println!();
+    }
+    if contended {
+        println!(
+            "  {name}: measured on a busy machine, so a low ratio here \
+             is not evidence of a regression. Re-run when quiet."
+        );
     }
     if check { ok } else { true }
 }
@@ -337,6 +542,10 @@ fn main() {
                 |s| s.split("age").last().unwrap_or("?").trim().to_owned(),
             )
     );
+
+    // Read before anything is measured, so the figure describes the
+    // machine rather than this process.
+    let _ = load_per_core();
 
     let events = group(
         "events",

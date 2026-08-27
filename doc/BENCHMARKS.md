@@ -194,6 +194,61 @@ The median-of-pairs is still printed, as a diagnostic: when it sits
 well below the reported ratio, the machine was contended while
 measuring.
 
+### The check cried wolf, and what it took to stop it
+
+`--check` once printed `REGRESSED` against a tree that had not
+changed. That is worse than a missing check: a gate that fails on a
+busy machine gets ignored, and then it misses the real thing. Fixing
+it turned up four defects, every one of them silent.
+
+**The bias was systematic, not noise.** Preemption lands on whichever
+arm is running when a quantum falls, so an arm that runs ten times
+longer absorbs ten times as many. `quick-xml` is about ten times
+faster than `oxml::stream` here, and that group read anywhere from
+0.065 to 0.093 against a 0.089 baseline, while `tree` — whose arms are
+within three times of each other — stayed put. Measuring again never
+helped, because a systematic bias repeats.
+
+The fix is to run the faster arm enough times to fill the same span,
+so a quantum is equally likely to land on either. Per-iteration time is
+what gets recorded, so the ratio still means the same thing. The group
+went to **0.084–0.098**, and the minimum and the median now agree.
+
+**The first contention signal only worked in one direction.** It
+compared the median-of-pairs against the minimum-based ratio. Under
+twelve CPU hogs the `tree` group's median sat *above* its ratio, so
+nothing looked wrong while the ratio had collapsed from 0.32 to 0.17.
+
+**The load gate never fired.** `uptime` writes
+`load averages: 72.93 60.98 65.40` on macOS and
+`load average: 0.5, 0.4, 0.3` on Linux. The parser expected commas,
+returned `None`, and the gate did nothing while appearing to be there.
+It was found only by forcing the branch to execute.
+
+**The benchmark inflated the load it then read.** A machine sitting at
+2.34 per core measured 4.07 during a run, because the run is itself a
+load — so the measurement produced the evidence that it could not be
+trusted and suppressed its own verdict. The reading is now taken
+before anything is measured.
+
+**And the threshold moved for a reason.** At 1.5 per core the gate
+refused to judge a *genuine* regression on a machine idling at 2.7,
+which is where this one sits. A gate that suppresses often is worse
+than no gate: it switches the check off without saying so. Equalising
+the segments is what made the measurement robust; the gate at 4.0 per
+core is only a backstop for conditions where nothing could be
+measured.
+
+Verified as a matrix rather than a single run:
+
+| | Quiet | Twelve CPU hogs |
+|---|---|---|
+| Healthy tree | passes | passes |
+| Real regression | **fails** | reports "not judged" |
+
+with four stress runs producing no false failure, where the original
+code failed.
+
 ### Why the ratio is published and the absolute is not
 
 This was tested rather than assumed, and the test failed in a useful
