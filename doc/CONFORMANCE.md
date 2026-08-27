@@ -21,7 +21,7 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2533 pass, 24 fail, 0 panic, 28 unsupported, 0 blocked
+overall  2535 pass, 22 fail, 0 panic, 28 unsupported, 0 blocked
          99.1% of 2557 decided (98.9% coverage of 2585)
 ```
 
@@ -33,7 +33,7 @@ By submission:
 | oasis | 99.7% | 345 | 3 |
 | eduni | 99.5% | 552 | 13 |
 | ibm | 98.8% | 1,131 | 5 |
-| sun | 97.5% | 159 | 0 |
+| sun | 98.7% | 159 | 0 |
 | xmltest | 99.5% | 364 | 1 |
 
 **Zero panics.** No document in the suite makes the parser abort. That
@@ -60,7 +60,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-24 failures, and **every one of them is the parser being too
+22 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -70,17 +70,23 @@ XML 1.0 §4.4.2 requires it to be *included* — parsed as content. They
 are listed in `crates/oxml/tests/entity_markup.rs`, which keeps them
 fixed.
 
-What remains needs content oxml never reads. Every one of the 24
-depends on a file outside the document: an external entity, an
-external subset, or a conditional section within one.
+What remains needs content oxml never reads — and, in every case,
+rules *about* that content rather than the content itself. The caller
+already supplies it: the conformance runner hands the parser every
+file sitting beside the document, which is how the two `sun`
+conditional-section tests came to pass.
 
 | What the failure needs | Count |
 |---|---|
-| Text declarations in external entities (`ibm` P77, P79) | 11 |
-| Conditional sections and declarations in an external subset (`sun`) | 4 |
+| Text declarations in external **parameter** entities (`ibm` P77, P79) | 11 |
 | Standalone declarations against external content | 3 |
 | An external DTD (`oasis/o-p09fail1`, `eduni/rmt-*`) | 4 |
-| External identifier and entity-reference rules | 2 |
+| External identifier and entity-reference rules | 4 |
+
+The leader is one gap: an external *parameter* entity's replacement
+text is never fetched, even when the caller supplied it —
+`Dtd::parameters` holds internal ones only. Its text declaration
+therefore goes unchecked, and eleven tests turn on exactly that.
 
 Derived by reading the 37 rather than estimating: the thirteen above
 were confirmed one at a time against the specification, and the

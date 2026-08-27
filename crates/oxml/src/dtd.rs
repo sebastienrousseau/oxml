@@ -391,7 +391,8 @@ impl<'a> DtdParser<'a> {
         // The keyword may arrive through a parameter entity:
         // `<![%MAYBE;[ … ]]>` is how the suite tests both branches from
         // one document.
-        let keyword = if self.peek() == Some(b'%') {
+        // Whether the entity supplied the `[` as well as the keyword.
+        let (keyword, bracket_from_entity) = if self.peek() == Some(b'%') {
             self.pos += 1;
             let name = self.name()?.to_owned();
             self.expect(b';', "unterminated parameter entity reference")?;
@@ -401,13 +402,24 @@ impl<'a> DtdParser<'a> {
                 dtd.incomplete = true;
                 return self.skip_conditional_section();
             };
-            text.trim().to_owned()
+            let text = text.trim();
+            // A parameter entity is replacement *text*, not a token, so
+            // it may carry the opening bracket with it:
+            // `<!ENTITY % e "INCLUDE[">` used as `<![ %e; … ]]>` is in
+            // the suite and is legal. Requiring a `[` after the
+            // reference rejected it.
+            match text.strip_suffix('[') {
+                Some(keyword) => (keyword.trim().to_owned(), true),
+                None => (text.to_owned(), false),
+            }
         } else {
-            self.name()?.to_owned()
+            (self.name()?.to_owned(), false)
         };
 
-        self.skip_ws();
-        self.expect(b'[', "expected `[` in a conditional section")?;
+        if !bracket_from_entity {
+            self.skip_ws();
+            self.expect(b'[', "expected `[` in a conditional section")?;
+        }
         let body_start = self.pos;
         self.skip_conditional_section()?;
         // `skip_conditional_section` consumed the closing `]]>`.
@@ -512,7 +524,21 @@ impl<'a> DtdParser<'a> {
                     // declaration is skipped as *unknown* rather than
                     // reported as malformed. Failing here rejected
                     // valid documents outright.
-                    if terminator.is_none() && self.decl_uses_pe() {
+                    // A conditional section is not a markup
+                    // declaration, and its keyword arriving through a
+                    // parameter entity is the normal way to write one:
+                    // `<![%MAYBE;[ … ]]>`. Letting it fall into the
+                    // branch below sent it down a path that reports an
+                    // unparseable declaration as merely *incomplete*,
+                    // so a section saying `CDATA` where only INCLUDE or
+                    // IGNORE is legal was accepted in silence.
+                    // `parse_conditional_section` resolves the keyword
+                    // itself and rejects the ones that are not
+                    // keywords.
+                    if terminator.is_none() && self.starts_with("<![") {
+                        self.pos += 3;
+                        self.parse_conditional_section(dtd, depth)?;
+                    } else if terminator.is_none() && self.decl_uses_pe() {
                         let start = self.pos;
                         self.skip_decl();
                         let raw = &self.input[start..self.pos];

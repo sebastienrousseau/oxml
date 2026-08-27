@@ -105,12 +105,18 @@ claim rests entirely on the allocation count, which is a proxy.
 `doc/BENCHMARKS.md` states the method and the conditions a figure must
 carry.
 
-### 2. Conformance — 24 failures, all needing external content
+### 2. Conformance — 22 failures, all needing external content
 
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
 
-The count was 37. The thirteen that went shared one cause — an
+The count was 37. Two more went when conditional sections in an
+external subset stopped being swallowed: a section saying `CDATA`
+where only `INCLUDE` or `IGNORE` is legal was accepted in silence,
+because a declaration containing a parameter entity took a path that
+reports anything unparseable as merely *incomplete*.
+
+The thirteen before them shared one cause — an
 entity's replacement text substituted as characters where XML 1.0
 §4.4.2 requires it to be *included*, that is parsed as content — and
 were fixed as one change. `crates/oxml/tests/entity_markup.rs` keeps
@@ -123,11 +129,21 @@ What is left all turns on a file oxml never reads:
 
 | What the failure needs | Count |
 |---|---|
-| Text declarations in external entities (`ibm` P77, P79) | 11 |
-| Conditional sections and declarations in an external subset (`sun`) | 4 |
+| Text declarations in external **parameter** entities (`ibm` P77, P79) | 11 |
 | An external DTD (`oasis/o-p09fail1`, `eduni/rmt-*`) | 4 |
 | Standalone declarations against external content | 3 |
-| External identifier and entity-reference rules | 2 |
+| External identifier and entity-reference rules | 4 |
+
+**Eleven of the twenty-two are one gap.** An external *parameter*
+entity's replacement text is never fetched, even when the caller
+supplied it: `Dtd::parameters` holds internal ones only, and
+`DtdParser` has no reference to the caller's source at all. So a
+`%pExternal;` in the internal subset pulls in nothing and its file's
+text declaration goes unchecked — which is precisely what those
+eleven test. Closing it means threading the source into the DTD
+parser, storing external parameter entities' identifiers, and
+validating the text declaration on reference as the external *subset*
+path already does.
 
 The design constraint is fixed: the parser must never perform I/O. The
 shape is a caller-supplied map from identifier to content, so the

@@ -1,6 +1,4 @@
-#counts	pass=2533	fail=24	panic=0	unsupported=28	blocked=0	total=2585
-sun	cond01	fail	accepted a document that is not well-formed
-sun	cond02	fail	accepted a document that is not well-formed
+#counts	pass=2535	fail=22	panic=0	unsupported=28	blocked=0	total=2585
 sun	decl01	fail	accepted a document that is not well-formed
 eduni	ht-bh-ns11-007	unsupported	namespaces-1.1
 eduni	ht-bh-ns11-008	unsupported	namespaces-1.1

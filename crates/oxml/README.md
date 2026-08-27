@@ -298,7 +298,7 @@ Two architectural choices motivate the design:
 
 **Verification**
 
-- 2,533 of 2,557 decided W3C conformance tests pass (99.1%), with
+- 2,535 of 2,557 decided W3C conformance tests pass (99.1%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
 - 365 tests and 24 doctests; 97.4% line coverage, gated in CI
 - Six fuzz targets, Miri, property tests, and a feature powerset build
@@ -921,9 +921,8 @@ the answer is no, and `quick-xml` is the tool.
 Both numbers are published because either alone misleads: a pass rate
 can be raised by skipping the hard tests.
 
-All 24 remaining failures need content from a file oxml never reads —
-an external entity, an external subset, or a conditional section
-inside one. Since the parser performs no I/O by construction, closing
+All 22 remaining failures need content from a file oxml never reads —
+an external entity or an external subset. Since the parser performs no I/O by construction, closing
 them means the caller supplying that content, not oxml fetching it.
 
 Entity replacement text being parsed as markup rather than substituted
