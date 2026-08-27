@@ -92,6 +92,7 @@ extern crate std;
 
 pub mod error;
 mod parser;
+pub mod stream;
 pub mod tree;
 
 #[cfg(feature = "xpath")]

@@ -119,9 +119,12 @@ unavailable.
 
 Verification beyond the type system:
 
-- **Five fuzz targets** (`parse`, `tree_walk`, `parse_limits`,
-  `xpath_compile`, `xpath_eval`) with a seeded corpus and an XML
-  dictionary.
+- **Six fuzz targets** (`parse`, `stream`, `tree_walk`,
+  `parse_limits`, `xpath_compile`, `xpath_eval`) with a seeded corpus
+  and an XML dictionary. `stream` checks not only that the event
+  reader never panics but that it *agrees* with `parse` — same
+  documents accepted, same refused with the same error at the same
+  offset.
 - **Miri** over the test suite, for undefined behaviour the compiler
   does not catch.
 - **Property tests**, including that no input makes the parser panic

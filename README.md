@@ -50,6 +50,8 @@
 **Practical**
 
 - [Library usage](#library-usage) — the full surface
+- [Reading without a tree](#reading-without-a-tree) — events, and what
+  streaming does and does not buy you
 - [Configuration](#configuration) — limits, profiles, cargo features
 - [Error reporting](#error-reporting) — offsets, line/column, carets
 - [External entities and subsets](#external-entities-and-subsets) —
@@ -57,7 +59,7 @@
 - [Encodings](#encodings) — UTF-8, UTF-16, ISO-8859-1
 - [Examples](#examples) — runnable programs
 - [When not to use oxml](#when-not-to-use-oxml) — honestly
-- [FAQ](#faq) — twenty questions, answered directly
+- [FAQ](#faq) — twenty-one questions, answered directly
 - [Development](#development) — building, testing, benchmarking
 - [Security](#security) — threat model
 - [Documentation](#documentation)
@@ -253,6 +255,8 @@ Two architectural choices motivate the design:
   ISO-8859-1, chosen by BOM or declaration
 - Adjacent character data merged, so a caller never sees two text
   siblings in a row
+- A pull reader over the same scanner, for callers that want events
+  rather than a tree
 
 **Tree**
 
@@ -296,8 +300,8 @@ Two architectural choices motivate the design:
 
 - 2,520 of 2,557 decided W3C conformance tests pass (98.6%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 367 tests and 22 doctests; 97.3% line coverage, gated in CI
-- Five fuzz targets, Miri, property tests, and a feature powerset build
+- 365 tests and 24 doctests; 97.4% line coverage, gated in CI
+- Six fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not yet:** serialisation, mutation, XSD validation and XSLT. The
 external DTD subset is supported when the
@@ -575,6 +579,46 @@ let q = XPath::compile("count(//a)").unwrap();
 assert_eq!(q.evaluate(&doc).to_str(&doc), "1");
 ```
 
+## Reading without a tree
+
+`parse` builds a tree. When you only need to walk a document once —
+counting, extracting, converting — `stream::Reader` hands you one
+event at a time and builds nothing.
+
+```rust
+use oxml::stream::{Event, Reader};
+
+let mut reader = Reader::new("<r><a id='1'>x</a></r>").unwrap();
+let mut names = Vec::new();
+while let Some(event) = reader.next_event().unwrap() {
+    if let Event::StartElement { name, .. } = event {
+        names.push(name.local);
+    }
+}
+assert_eq!(names, ["r", "a"]);
+```
+
+It is the same scanner the tree parser runs, not a second
+implementation, so the two accept exactly the same documents and
+report the same error at the same byte offset when they don't. A test
+holds them to that.
+
+**What it saves.** Reading the 16,004-node document from the
+allocation tests holds 191,957 bytes at peak against the tree's
+2,277,184 — 92% less.
+
+**What it does not.** `Reader::new` takes a `&str`, and normalising
+line endings copies it once more, so almost all of that 191,957 bytes
+*is* the document. A file larger than memory is still a file oxml
+cannot read; `quick-xml` reads from any `BufRead` and remains the
+right tool for that. Reading from a reader is
+[on the roadmap](https://github.com/sebastienrousseau/oxml/blob/main/doc/ROADMAP.md).
+
+Events carry resolved names, so a prefix is looked up in the scopes
+open at that point exactly as in the tree, and `Limits` apply
+identically — including the depth limit, which here bounds a `Vec`
+rather than the call stack.
+
 ## Examples
 
 Every example compiles and runs in CI, and a CI job checks that
@@ -597,6 +641,7 @@ cargo run --example parse_and_query
 | [`external_entities`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/external_entities.rs) | Supplying external entities and subsets, an allow-list source, and why XXE cannot happen |
 | [`names_and_ids`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/names_and_ids.rs) | Qualified names, DTD-declared IDs, inherited `xml:lang`, and the functions that read them |
 | [`decode_bytes`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/decode_bytes.rs) | The same document in five encodings, and the two kinds of encoding failure |
+| [`stream_events`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/stream_events.rs) | Reading a document as events with no tree built, and the identical errors both entry points give |
 
 ## Configuration
 
@@ -816,8 +861,10 @@ Honestly:
 - **You need complete XSD validation today.** `xmlschema` is
   published, but it is early: check its own README for what is
   implemented before depending on it.
-- **You are streaming gigabytes.** oxml builds a full tree in memory.
-  `quick-xml` is the right tool and will stay so.
+- **You are streaming gigabytes, or reading from a socket.**
+  `stream::Reader` skips the tree, but it is handed a `&str`, so the
+  document is resident either way. `quick-xml` reads from any
+  `BufRead` and is the right tool for input larger than memory.
 - **You need XPath 2.0 or 3.1.** oxml implements 1.0.
 - **Raw parse throughput is your only metric.** `quick-xml` is
   extremely well optimised and years ahead on that axis. oxml's
@@ -827,15 +874,45 @@ Honestly:
 
 ### Is it faster than quick-xml or roxmltree?
 
-Not yet, and the README will say so until it is. On a 16.86 MB document,
-measured on one machine: quick-xml 704 MB/s building no tree,
-roxmltree 291 MB/s building a borrowed tree, `oxml` 123 MB/s. The gap is
-allocation — `oxml` performs about two per node where a borrowed design
-performs almost none — and closing it is in progress.
+No, and the README will say so until it is. Measured against each on
+the job it actually does, on the same 855 KB document:
 
-Any figure here states the machine and the method. During development
-the same binary measured 14.7 and 123.1 MB/s on a loaded host, which is
-why a number without its conditions is not a measurement.
+| | oxml | reference | ratio |
+|---|---|---|---|
+| Events, no tree | `oxml::stream` | `quick-xml` | **0.09×** |
+| Tree | `oxml::parse` | `roxmltree` | **0.32×** |
+
+So `quick-xml` reads events about eleven times faster, and
+`roxmltree` builds a tree about three times faster. The gap is
+allocation: `oxml` performs about 1.13 per node where a borrowed
+design performs almost none, and text and attribute values are owned
+`String`s rather than slices of the input.
+
+Reproduce it with `cargo bench --bench comparison`. Both crates are
+dev-dependencies, so this is a measurement you can rerun rather than a
+claim you have to take on trust — an earlier version of this section
+quoted absolute MB/s from a comparison nothing in the repository could
+regenerate.
+
+**Why a ratio and not MB/s.** An absolute figure describes the machine
+as much as the code: the same binary measured 14.7 and 123.1 MB/s on
+one host on one day, and the difference was load. A ratio survives
+that, because contention slows both arms. The benchmark times each
+implementation against its reference back to back and takes the
+*fastest* run of each — the sample contention perturbed least. With
+ten CPU hogs competing on a six-core machine the ratios moved by 3%
+and 5%, while a median-based estimate of the same data halved. See
+[doc/BENCHMARKS.md](https://github.com/sebastienrousseau/oxml/blob/main/doc/BENCHMARKS.md).
+
+### Can it stream?
+
+It can read a document as events without building a tree — see
+[Reading without a tree](#reading-without-a-tree) — which is 92% less
+held at peak on a 16,000-node document.
+
+It cannot read from a `Read` or a `BufRead`, so it cannot handle a
+document larger than memory. If that is what "stream" means to you,
+the answer is no, and `quick-xml` is the tool.
 
 ### How conformant is it?
 

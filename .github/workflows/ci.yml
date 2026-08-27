@@ -3,8 +3,21 @@ name: CI
 on:
   push:
     branches: [main]
+  # No `branches:` filter on `pull_request`. With one, a pull request
+  # whose base is another branch -- a stacked PR, the natural shape for
+  # a change that builds on an unmerged one -- matches nothing and gets
+  # **no checks at all**. Not a red build: an empty one, which reads as
+  # "nothing to report" rather than "nothing ran".
+  #
+  # `push` stays pinned to `main` so a branch does not build twice, once
+  # for the push and once for its pull request.
   pull_request:
-    branches: [main]
+    # `'**'` matches every branch, so a PR based on another
+    # branch is checked too. A bare `pull_request:` with no value
+    # ought to mean the same and did not: it stopped triggering
+    # anything at all, silently, including on PRs that had been
+    # working. Be explicit.
+    branches: ['**']
 
 permissions:
   contents: read
@@ -101,6 +114,16 @@ jobs:
       # trustworthy timings.
       - name: Run benchmarks briefly
         run: cargo bench -- --warm-up-time 1 --measurement-time 2
+
+      # Ratios rather than absolutes, because a shared runner cannot
+      # give a trustworthy absolute. The comparison times each parser
+      # against quick-xml and roxmltree on the same document and takes
+      # the fastest run of each, which is the sample contention
+      # perturbed least. It gates only on architectures with a
+      # recorded baseline; x86_64 has none yet, so this reports its
+      # numbers and passes, and they become the baseline once seen.
+      - name: Compare against quick-xml and roxmltree
+        run: cargo bench --bench comparison -- --check
 
   examples:
     name: Examples run
@@ -281,7 +304,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [parse, tree_walk, parse_limits, xpath_compile, xpath_eval]
+        target: [parse, stream, tree_walk, parse_limits, xpath_compile, xpath_eval]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly

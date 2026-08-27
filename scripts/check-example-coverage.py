@@ -31,8 +31,15 @@ def run(*args: str) -> str:
     proc = subprocess.run(
         args, cwd=ROOT, capture_output=True, text=True, check=False
     )
-    if proc.returncode != 0 and "llvm-cov report" in " ".join(args):
-        sys.exit(f"coverage report failed:\n{proc.stderr}")
+    if proc.returncode != 0:
+        # Every command here must succeed. When a failing command was
+        # ignored, an example that did not compile produced no coverage
+        # data, the file it exercised was skipped for having none, and
+        # the check reported success over an API nothing had run.
+        sys.exit(
+            f"command failed: {' '.join(args)}\n"
+            f"{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
+        )
     return proc.stdout
 
 
@@ -65,16 +72,28 @@ def main() -> int:
                 counts[current][int(row.group(1))] = row.group(2).strip()
 
     total = 0
-    unexercised = []
+    unexercised: list[str] = []
     for path in sorted(SRC.rglob("*.rs")):
         rel = path.relative_to(ROOT / "crates" / "oxml")
+        lines = path.read_text().splitlines()
+        declared = [
+            (n, t.strip())
+            for n, t in enumerate(lines, 1)
+            if t.strip().startswith(("pub fn ", "pub const fn "))
+        ]
         keys = [k for k in counts if k.endswith(str(rel))]
         if not keys:
+            # Not "nothing to check" -- a file with public functions and
+            # no coverage data at all means the instrumented build never
+            # reached it, which is a failure to measure, not a pass.
+            if declared:
+                unexercised.append(
+                    f"{rel} has {len(declared)} public functions and no "
+                    f"coverage data at all"
+                )
+                total += len(declared)
             continue
-        for number, text in enumerate(path.read_text().splitlines(), 1):
-            stripped = text.strip()
-            if not stripped.startswith(("pub fn ", "pub const fn ")):
-                continue
+        for number, stripped in declared:
             total += 1
             count = counts[keys[0]].get(number)
             if count is None:

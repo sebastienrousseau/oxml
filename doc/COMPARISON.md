@@ -29,7 +29,7 @@ check before relying on it.
 | `no_std` | Yes (`alloc`) | Partial | No | No | No |
 | `unsafe` | Forbidden | Some | Some | Some | C library |
 | C dependency | None | None | None | None | libxml2 |
-| Streaming | No | Yes | No | No | Yes |
+| Streaming | Events, in memory | Yes, from a reader | No | No | Yes |
 | Mutation / writing | No | Writing | No | Yes | Yes |
 
 ### `quick-xml`
@@ -37,6 +37,12 @@ check before relying on it.
 A pull parser, and the right tool for streaming. It hands you events;
 you build whatever you need. That is why it is fast — it does not
 allocate a tree — and why it is more work to use for random access.
+
+oxml's [`stream`](https://docs.rs/oxml/latest/oxml/stream/) module is
+the same idea over the same scanner, and skips the tree in the same
+way. The difference that remains is the input: `quick-xml` reads from
+anything implementing `BufRead`, so a document need never be resident.
+oxml takes a `&str`.
 
 Use it for gigabyte documents, and for pipelines where you touch a
 small part of a large file. It will stay faster than oxml at
@@ -85,7 +91,7 @@ Worth knowing what the ceiling looks like.
 | XPath | 1.0 | 1.0 | 1.0 | No | 1.0 |
 | XSLT | No | 1.0 | Via Xalan | No | 1.0 |
 | XSD | Separate crate | Yes | Yes | No | Yes |
-| Streaming | No | Yes | Yes | Yes | Yes |
+| Streaming | Events, in memory | Yes | Yes | Yes | Yes |
 | Memory safety | Guaranteed | Manual | Manual / GC | GC | Manual (C core) |
 
 **libxml2** is the yardstick for behaviour. When oxml and libxml2
@@ -120,8 +126,13 @@ programs need no more than that.
 Stated plainly, because a comparison that only lists wins is an
 advertisement:
 
-- **Streaming.** `quick-xml`, libxml2, Xerces and Go all handle
-  documents larger than memory. oxml does not.
+- **Streaming from a reader.** `quick-xml`, libxml2, Xerces and Go
+  all handle documents larger than memory. oxml's
+  [`stream::Reader`](https://docs.rs/oxml/latest/oxml/stream/struct.Reader.html)
+  yields events without building a tree — measured at 92% less held at
+  peak than parsing the same document — but it is handed a `&str` and
+  normalises it into another, so the whole document is still resident.
+  Incremental I/O is the missing half.
 - **Raw parse throughput.** `quick-xml` is years ahead and will stay
   there.
 - **Borrowing from the input.** `roxmltree` and `quick-xml` do; oxml
@@ -134,7 +145,7 @@ advertisement:
 
 ## Choosing
 
-- Streaming gigabytes → **`quick-xml`**
+- Streaming gigabytes, or reading from a socket → **`quick-xml`**
 - A read-only tree, no queries, maximum speed → **`roxmltree`**
 - XSLT, or XSD today → **`libxml`** bindings
 - XPath on a tree, in safe Rust, possibly without `std` → **`oxml`**

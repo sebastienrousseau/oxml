@@ -23,16 +23,16 @@ one is listed as not done, however close it feels.
 |---|---|---|---|
 | Memory safety | No `unsafe` | `#![forbid(unsafe_code)]`, CI-checked | ✅ |
 | `no_std` | Full, with `alloc` | Builds for 3 bare-metal targets in CI | ✅ |
-| Panics on hostile input | Zero | 0 across 2,585 conformance documents, 5 fuzz targets, Miri | ✅ |
+| Panics on hostile input | Zero | 0 across 2,585 conformance documents, 6 fuzz targets, Miri | ✅ |
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
-| Line coverage | ≥95% | **97.3%**, gated | ✅ |
+| Line coverage | ≥95% | **97.4%**, gated | ✅ |
 | Conformance | Published with denominator | **98.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **1.13** | ✅ |
-| Throughput | <100 ms at load | **Measurable, not yet measured** — `benches/throughput.rs` reports MB/s; `scripts/record-throughput.sh` refuses above 0.20 load per core | 🟡 |
+| Throughput | <100 ms at load | **Ratios measured, absolute still not** — `benches/comparison.rs` reports 0.089× `quick-xml` (events) and 0.319× `roxmltree` (tree), stable to 3–5% under 10 CPU hogs and gated at 15%. MB/s still needs a quiet machine; `scripts/record-throughput.sh` refuses above 0.20 load per core and has never yet been able to record | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
 | Documentation | House style, all 6 crates | READMEs, `doc/`, examples, FAQs across all six | ✅ |
-| Streaming | An entry point | Not started | ❌ |
+| Streaming | An entry point | **`stream::Reader`**, same scanner as the tree parser; holds 92% less at peak. Not yet from a reader | 🟡 |
 
 ## Done
 
@@ -46,7 +46,7 @@ defects.
 
 **Verification.** W3C suite with a ratcheted baseline; five seeded fuzz
 targets; Miri; property tests; feature powerset; `no_std` on three
-targets; 97.3% coverage with the conformance harness inside the floor.
+targets; 97.4% coverage with the conformance harness inside the floor.
 
 **Performance.** 4.13 → **1.13 allocations per node**, held to a
 ceiling by a test.
@@ -100,7 +100,7 @@ including the entity-expansion complication: a value containing
 
 Breaking: `Document::text` would return `&str` rather than `String`.
 
-### 3. Conformance — 108 failures, in two groups
+### 3. Conformance — 37 failures, in two groups
 
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
@@ -112,12 +112,16 @@ information to enforce and was not enforcing.
 
 What is left is two pieces of work, not more missing checks:
 
-- **~93 need external entity or subset content** — a text declaration,
-  a version number, a standalone declaration, in a file oxml never
-  reads. The shape is a caller-supplied map from identifier to content;
-  the parser still performs no I/O. See
-  [adr/0003](adr/0003-no-external-entities.md).
-- **~11 need entity replacement text parsed as markup.**
+- **Most need external entity or subset content** — a text
+  declaration, a version number, a standalone declaration, in a file
+  oxml never reads. The shape is a caller-supplied map from identifier
+  to content; the parser still performs no I/O. See
+  [adr/0003](adr/0003-no-external-entities.md). The per-group split
+  was last counted when there were 163 failures and has not been
+  re-derived against the current 37; run
+  `cargo run --release -p oxml-conformance --bin report` for the list
+  rather than trusting a number here.
+- **Some need entity replacement text parsed as markup.**
   `<!ENTITY e "<foo/>">` referenced from content should produce an
   *element*; oxml substitutes it as text. A semantic gap rather than a
   missing rule, and the harder of the two: the replacement text has to
@@ -129,11 +133,19 @@ shape is a caller-supplied map from identifier to content, so the
 caller decides what may be read. See
 [adr/0003-no-external-entities.md](adr/0003-no-external-entities.md).
 
-### 4. Streaming
+### 4. Streaming from a reader
 
-The one thing `quick-xml` does that oxml cannot, and the reason
-"documents larger than memory" is in *When not to use*. A pull or
-event entry point over the same scanner, with no tree built.
+`stream::Reader` now yields events over the same scanner with no tree
+built, which is most of this item: measured against parsing the same
+16,004-node document, it holds 191,957 bytes at peak against
+2,277,184 — 92% less, and nearly all of what remains is the
+normalised copy of the input.
+
+That copy is what is left to remove. The reader takes a `&str`, so
+"documents larger than memory" is still in *When not to use*, and
+`quick-xml` is still the answer for a socket or a gigabyte file. The
+work is an input abstraction that refills a buffer, plus deciding what
+happens to a token that straddles a refill.
 
 ## After that
 
@@ -143,9 +155,10 @@ event entry point over the same scanner, with no tree built.
 - **The 28 unsupported conformance tests**: 14 want namespace
   processing switched off, 8 want Namespaces 1.1, 6 want encodings
   beyond UTF-8/UTF-16/ISO-8859-1.
-- **`xmlschema`: an XSD conformance suite.** It has 97 tests its
-  authors thought of, against oxml's 2,585 with a denominator. That is
-  the weakest evidence anywhere in the suite.
+- **`xmlschema`: closing the remaining conformance failures.** The
+  suite itself is no longer the gap — it runs the W3C XSD tests,
+  39,420 of them, at 95.6% of decided. What remains is substitution
+  groups and the undecidable corners of derivation validity.
 - **`oxml-lsp`: the LSP transport.** The crate is named for a protocol
   it does not yet speak; `analyse()` and a linter are what exist.
 - **`oxml-mcp`: a handle-based flow**, so a large document need not

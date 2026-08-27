@@ -193,5 +193,7 @@ expression runs against each match of an outer one.
   construction rather than by a default.
 - **`unsafe`.** `#![forbid(unsafe_code)]`, checked in CI. This costs
   throughput; see [COMPARISON.md](COMPARISON.md).
-- **Streaming.** The whole document is built in memory. For gigabyte
-  inputs, use `quick-xml`.
+- **Streaming from a reader.** [`stream::Reader`](../crates/oxml/src/stream.rs)
+  yields events without building a tree, but it is handed a `&str`, so
+  the document is resident even though its tree is not. For inputs
+  larger than memory, or for reading from a socket, use `quick-xml`.
