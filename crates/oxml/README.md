@@ -300,7 +300,7 @@ Two architectural choices motivate the design:
 
 - 2,554 of 2,557 decided W3C conformance tests pass (99.9%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 365 tests and 24 doctests; 97.4% line coverage, gated in CI
+- 389 tests and 24 doctests; 97.2% line coverage, gated in CI
 - Six fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not yet:** serialisation, mutation, XSD validation and XSLT. The
@@ -604,11 +604,13 @@ report the same error at the same byte offset when they don't. A test
 holds them to that.
 
 **What it saves.** Reading the 16,004-node document from the
-allocation tests holds 191,957 bytes at peak against the tree's
-2,277,184 — 92% less.
+allocation tests holds 191,967 bytes at peak against the tree's
+1,809,822 — 89% less. It was 92% before the document began owning its
+input: the gap narrowed because the *tree* got cheaper, not because
+reading got dearer.
 
 **What it does not.** `Reader::new` takes a `&str`, and normalising
-line endings copies it once more, so almost all of that 191,957 bytes
+line endings copies it once more, so almost all of that 191,967 bytes
 *is* the document. A file larger than memory is still a file oxml
 cannot read; `quick-xml` reads from any `BufRead` and remains the
 right tool for that. Reading from a reader is
@@ -907,7 +909,7 @@ and 5%, while a median-based estimate of the same data halved. See
 ### Can it stream?
 
 It can read a document as events without building a tree — see
-[Reading without a tree](#reading-without-a-tree) — which is 92% less
+[Reading without a tree](#reading-without-a-tree) — which is 89% less
 held at peak on a 16,000-node document.
 
 It cannot read from a `Read` or a `BufRead`, so it cannot handle a

@@ -13,12 +13,17 @@
 //! # What this saves, and what it does not
 //!
 //! Measured on the 16,004-node document in the allocation tests,
-//! reading holds **191,957 bytes at peak against the tree's
-//! 2,277,184** — 92% less.
+//! reading holds **191,967 bytes at peak against the tree's
+//! 1,809,822** — 89% less.
+//!
+//! That was 92% before the document began owning its input. The gap
+//! narrowed because the *tree* got cheaper, not because reading got
+//! dearer: text nodes and attribute values are now ranges into the
+//! input rather than strings of their own.
 //!
 //! It does **not** let you read a document larger than memory.
 //! [`Reader::new`] takes a `&str`, and normalising line endings copies
-//! it once more, so nearly all of that 191,957 bytes *is* the
+//! it once more, so nearly all of that 191,967 bytes *is* the
 //! document. What is removed is everything that outlives the event
 //! that produced it: the arena, the interned names, the node table.
 //! Reading incrementally from a `BufRead` is a separate piece of work;

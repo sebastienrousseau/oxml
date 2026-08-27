@@ -26,13 +26,13 @@ one is listed as not done, however close it feels.
 | Panics on hostile input | Zero | 0 across 2,585 conformance documents, 6 fuzz targets, Miri | ✅ |
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
-| Line coverage | ≥95% | **97.4%**, gated | ✅ |
+| Line coverage | ≥95% | **97.2%**, gated | ✅ |
 | Conformance | Published with denominator | **99.9% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **0.50** | ✅ |
 | Throughput | <100 ms at load | **Ratios measured, absolute still not** — `benches/comparison.rs` reports 0.089× `quick-xml` (events) and 0.319× `roxmltree` (tree), stable to 3–5% under 10 CPU hogs and gated at 15%. MB/s still needs a quiet machine; `scripts/record-throughput.sh` refuses above 0.20 load per core and has never yet been able to record | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
 | Documentation | House style, all 6 crates | READMEs, `doc/`, examples, FAQs across all six | ✅ |
-| Streaming | An entry point | **`stream::Reader`**, same scanner as the tree parser; holds 92% less at peak. Not yet from a reader | 🟡 |
+| Streaming | An entry point | **`stream::Reader`**, same scanner as the tree parser; holds 89% less at peak. Not yet from a reader | 🟡 |
 
 ## Done
 
@@ -63,7 +63,7 @@ defects.
 
 **Verification.** W3C suite with a ratcheted baseline; five seeded fuzz
 targets; Miri; property tests; feature powerset; `no_std` on three
-targets; 97.4% coverage with the conformance harness inside the floor.
+targets; 97.2% coverage with the conformance harness inside the floor.
 
 **Performance.** 4.13 → **1.13 allocations per node**, held to a
 ceiling by a test.
@@ -164,9 +164,10 @@ could be taken. Measure it on a quiet machine before optimising it.
 
 `stream::Reader` now yields events over the same scanner with no tree
 built, which is most of this item: measured against parsing the same
-16,004-node document, it holds 191,957 bytes at peak against
-2,277,184 — 92% less, and nearly all of what remains is the
-normalised copy of the input.
+16,004-node document, it holds 191,967 bytes at peak against
+1,809,822 — 89% less, and nearly all of what remains is the
+normalised copy of the input. It was 92% before the document began
+owning its input; the gap narrowed because the tree got cheaper.
 
 That copy is what is left to remove. The reader takes a `&str`, so
 "documents larger than memory" is still in *When not to use*, and

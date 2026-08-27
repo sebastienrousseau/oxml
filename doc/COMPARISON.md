@@ -132,7 +132,7 @@ advertisement:
 - **Streaming from a reader.** `quick-xml`, libxml2, Xerces and Go
   all handle documents larger than memory. oxml's
   [`stream::Reader`](https://docs.rs/oxml/latest/oxml/stream/struct.Reader.html)
-  yields events without building a tree — measured at 92% less held at
+  yields events without building a tree — measured at 89% less held at
   peak than parsing the same document — but it is handed a `&str` and
   normalises it into another, so the whole document is still resident.
   Incremental I/O is the missing half.

@@ -165,7 +165,7 @@ Miri, libm and the host disagreed by 2 ULP on `17.49`.
 ## Coverage
 
 ≥95% of lines, gated in CI, measured with `cargo-llvm-cov`. Currently
-**97.4%**.
+**97.2%**.
 
 Two exclusions, both narrow and deliberate: `conformance/src/bin/`,
 whose two `main()` functions shell out to the network and to `tar`.
