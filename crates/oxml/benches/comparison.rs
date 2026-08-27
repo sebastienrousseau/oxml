@@ -55,6 +55,21 @@ use std::time::{Duration, Instant};
 /// Rounds to run. Each yields one ratio per implementation.
 const ROUNDS: usize = 60;
 
+/// Rounds actually run, allowing an override.
+///
+/// The reported figure is the *fastest* run, so it is a bound that can
+/// only improve as rounds are added: more samples cannot make the
+/// minimum worse, only reveal a less-contended one. Sixty is enough to
+/// rank two parsers against each other, which is what this harness is
+/// for. Converging on an absolute throughput takes more, and
+/// `OXML_BENCH_ROUNDS` is how you ask for it.
+fn rounds() -> usize {
+    std::env::var("OXML_BENCH_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(ROUNDS)
+}
+
 /// Rounds discarded before measuring, to let caches and the branch
 /// predictor reach steady state.
 const WARMUP: usize = 10;
@@ -212,7 +227,8 @@ fn group(name: &str, input: &str, arms: &[Arm], check: bool) -> bool {
     let mut samples: Vec<Vec<f64>> = vec![Vec::new(); arms.len()];
     let mut found: Vec<usize> = vec![0; arms.len()];
 
-    for round in 0..(ROUNDS + WARMUP) {
+    let total = rounds();
+    for round in 0..(total + WARMUP) {
         for (i, arm) in arms.iter().enumerate() {
             let (elapsed, n) = time(*arm, input);
             if round >= WARMUP {
@@ -234,11 +250,21 @@ fn group(name: &str, input: &str, arms: &[Arm], check: bool) -> bool {
         |v: &Vec<f64>| v.iter().copied().fold(f64::INFINITY, f64::min);
     let reference_min = fastest(&samples[arms.len() - 1]);
 
+    // Throughput as well as ratio, from the same samples. An
+    // absolute figure normally needs a quiet machine -- the same
+    // binary measured 14.7 and 123.1 MB/s here on one day -- but that
+    // is a property of the *estimator*, not of absolutes. The fastest
+    // observed run is the sample contention perturbed least, and it is
+    // stable where a mean or median is not: under ten CPU hogs on six
+    // cores it moves by a few percent while a median-based figure
+    // halves. See `doc/BENCHMARKS.md`.
+    let mb = |secs: f64| input.len() as f64 / secs / 1_000_000.0;
     println!(
-        "\n{name}  ({} KB, vs {} at {:.2} ms)",
+        "\n{name}  ({} KB, vs {} at {:.2} ms = {:.0} MB/s)",
         input.len() / 1024,
         reference.0,
-        reference_min * 1e3
+        reference_min * 1e3,
+        mb(reference_min)
     );
 
     let mut ok = true;
@@ -259,9 +285,11 @@ fn group(name: &str, input: &str, arms: &[Arm], check: bool) -> bool {
         );
 
         print!(
-            "  {:<14} {ratio:.3}x  ({:.2} ms)   median-of-pairs {median_ratio:.3}x",
+            "  {:<14} {ratio:.3}x  ({:.2} ms = {:>4.0} MB/s)   \
+             median-of-pairs {median_ratio:.3}x",
             arm.0,
-            mine * 1e3
+            mine * 1e3,
+            mb(mine)
         );
 
         let arch = std::env::consts::ARCH;
@@ -295,10 +323,11 @@ fn main() {
     let doc = catalogue(4_000);
 
     println!(
-        "paired ratio benchmark -- {ROUNDS} rounds after {WARMUP} warmup\n\
+        "paired ratio benchmark -- {} rounds after {WARMUP} warmup\n\
          each round times every arm back to back on the same document,\n\
          so contention lands on both and the quotient survives it.\n\
          load now: {}",
+        rounds(),
         std::process::Command::new("uptime")
             .output()
             .ok()

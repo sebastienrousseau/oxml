@@ -194,6 +194,37 @@ The median-of-pairs is still printed, as a diagnostic: when it sits
 well below the reported ratio, the machine was contended while
 measuring.
 
+### Why the ratio is published and the absolute is not
+
+This was tested rather than assumed, and the test failed in a useful
+way.
+
+The fastest-run estimator that makes the *ratio* robust ought to work
+for an absolute figure too: contention can only slow a run, so the
+fastest one is the best estimate of uncontended cost, and adding
+rounds can only reveal a better one. On a machine at ~4 load per core:
+
+| Rounds | `oxml::parse` |
+|---|---|
+| 60 | 74, 118, 119, 119, 128, 130, 133, 145, 155 MB/s |
+| 600 | 116 MB/s |
+
+Six hundred rounds should beat sixty — more samples cannot make a
+minimum worse. It came out *below* the best sixty-round run, which
+means the load varied faster than the measurement did. The estimator
+never converges because there is no stable quantity underneath it.
+
+Over those same runs the **ratios held**: 0.315 to 0.336 against a
+0.319 baseline, and 0.091 against 0.089. A ratio divides the noise
+out; an absolute has nothing to divide it by.
+
+So the absolute figure still waits for a quiet machine, and that is
+not fastidiousness — it is the one thing measured here that a better
+estimator could not rescue.
+
+`OXML_BENCH_ROUNDS` raises the round count when you have a quiet
+machine and want the absolute to converge.
+
 ### What the check does and does not catch
 
 `--check` fails if a ratio falls more than **15%** below its recorded
