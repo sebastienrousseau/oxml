@@ -155,9 +155,9 @@ fn format_number(n: f64) -> String {
 /// The string-value of a node.
 fn string_value(doc: &Document, id: NodeId) -> String {
     match doc.kind(id) {
-        Some(NodeKind::Attr(a)) => a.value.clone(),
-        Some(NodeKind::Comment(t)) => t.clone(),
-        Some(NodeKind::ProcessingInstruction { data, .. }) => data.clone(),
+        Some(NodeKind::Attr(a)) => a.value.to_owned(),
+        Some(NodeKind::Comment(t)) => t.to_owned(),
+        Some(NodeKind::ProcessingInstruction { data, .. }) => data.to_owned(),
         _ => doc.text(id),
     }
 }
@@ -307,10 +307,10 @@ fn axis_nodes(doc: &Document, node: NodeId, axis: Axis) -> Vec<NodeId> {
                     else {
                         continue;
                     };
-                    if seen.contains(&prefix.as_str()) {
+                    if seen.contains(&prefix) {
                         continue;
                     }
-                    seen.push(prefix.as_str());
+                    seen.push(prefix);
                     // An undeclaration shadows the ancestor binding
                     // and then contributes nothing itself: the prefix
                     // is out of scope, not bound to the empty string.
@@ -757,13 +757,11 @@ fn name_parts(doc: &Document, id: NodeId) -> Option<(&str, Option<&str>)> {
         NodeKind::Attr(attribute) => doc
             .name(attribute.name)
             .map(|n| (n.local.as_str(), n.namespace.as_deref())),
-        NodeKind::ProcessingInstruction { target, .. } => {
-            Some((target.as_str(), None))
-        }
+        NodeKind::ProcessingInstruction { target, .. } => Some((target, None)),
         // The node's *name* is the prefix; the URI is its
         // string-value, not its namespace. A namespace node is itself
         // in no namespace.
-        NodeKind::Namespace { prefix, .. } => Some((prefix.as_str(), None)),
+        NodeKind::Namespace { prefix, .. } => Some((prefix, None)),
         NodeKind::Root | NodeKind::Text(_) | NodeKind::Comment(_) => None,
     }
 }
@@ -787,7 +785,7 @@ fn attribute_by_name<'d>(
         };
         let name = doc.name(attribute.name)?;
         (name.local == local && name.namespace.as_deref() == namespace)
-            .then_some(attribute.value.as_str())
+            .then_some(attribute.value)
     })
 }
 
@@ -839,12 +837,12 @@ fn lang_matches(doc: &Document, ctx: NodeId, want: &str) -> bool {
 /// string, as `local-name` does.
 fn qualified_name(doc: &Document, id: NodeId) -> Option<String> {
     let name_id = match doc.kind(id)? {
-        NodeKind::Element { name, .. } => *name,
+        NodeKind::Element { name, .. } => name,
         NodeKind::Attr(attribute) => attribute.name,
         NodeKind::ProcessingInstruction { target, .. } => {
-            return Some(target.clone());
+            return Some(target.to_owned());
         }
-        NodeKind::Namespace { prefix, .. } => return Some(prefix.clone()),
+        NodeKind::Namespace { prefix, .. } => return Some(prefix.to_owned()),
         NodeKind::Root | NodeKind::Text(_) | NodeKind::Comment(_) => {
             return None;
         }

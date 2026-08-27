@@ -159,7 +159,7 @@ let found = doc
     .attributes(a)
     .into_iter()
     .find(|at| doc.name(at.name) == Some(&wanted));
-assert_eq!(found.map(|at| at.value.as_str()), Some("R"));
+assert_eq!(found.map(|at| at.value), Some("R"));
 ```
 
 Attributes are also nodes — `attribute_nodes(id)` gives their ids, which

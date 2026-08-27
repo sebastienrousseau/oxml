@@ -59,7 +59,9 @@ owning a `Vec`, and an element holds one into `attr_ids`. That removed
 one allocation per element with children and one per element with
 attributes: the measured figure went from **4.13 to 3.13 allocations
 per node** on a 16,002-node document, and interning names by borrowed
-parts took it to **1.13**.
+parts took it to **1.13**. Having the document own its input, so text
+nodes, comments and attribute values became ranges into it too, took
+it to **0.50**.
 
 Children need the `scratch` stack because a node's children are only
 known to be complete when its end tag arrives; they are copied into
@@ -124,7 +126,8 @@ The largest single step came last and was the simplest:
 input, and interning discards the copy immediately, so that was one
 allocation per element *and* per attribute for nothing. Returning a
 borrowed `&'a str` took the figure from 2.25 to **1.13** -- half the
-remaining allocations, from deleting two words.
+remaining allocations, from deleting two words. Character data went
+the same way afterwards: see [design/owned-input.md](design/owned-input.md).
 
 Either way, `ExpandedName` holds the namespace **URI** rather than the
 prefix, which makes namespace comparison correct by construction.

@@ -21,8 +21,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2520 pass, 37 fail, 0 panic, 28 unsupported, 0 blocked
-         98.6% of 2557 decided (98.9% coverage of 2585)
+overall  2554 pass, 3 fail, 0 panic, 28 unsupported, 0 blocked
+         99.9% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -30,11 +30,11 @@ By submission:
 | Submission | Pass rate | Decided | Unsupported |
 |---|---|---|---|
 | japanese | 100.0% | 6 | 6 |
-| oasis | 99.7% | 345 | 3 |
-| eduni | 99.5% | 552 | 13 |
-| ibm | 98.8% | 1,131 | 5 |
-| sun | 97.5% | 159 | 0 |
-| xmltest | 95.9% | 364 | 1 |
+| oasis | 100.0% | 345 | 3 |
+| eduni | 99.6% | 552 | 13 |
+| ibm | 99.9% | 1,131 | 5 |
+| sun | 100.0% | 159 | 0 |
+| xmltest | 100.0% | 364 | 1 |
 
 **Zero panics.** No document in the suite makes the parser abort. That
 is the number to look at first: a wrong answer is a bug, but a panic on
@@ -45,7 +45,7 @@ input from the network is a denial of service.
 The pass rate and the coverage figure are always reported together, and
 neither means much alone.
 
-- **98.6% of 2,557 decided** — of the tests where the parser gave a
+- **99.9% of 2,557 decided** — of the tests where the parser gave a
   definite answer, this many agreed with the suite.
 - **98.9% coverage of 2,585** — this many of the suite's tests produced
   a definite answer at all.
@@ -60,29 +60,45 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-37 failures, and **every one of them is the parser being too
+3 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
-They are not all waiting on one feature, which is what this document
-previously implied. Categorised by what the failing document actually
-contains:
+The previous count was 37. The thirteen that went were a single cause:
+an entity's replacement text being substituted as characters where
+XML 1.0 §4.4.2 requires it to be *included* — parsed as content. They
+are listed in `crates/oxml/tests/entity_markup.rs`, which keeps them
+fixed.
 
-| What the failure needs | Section | Count |
-|---|---|---|
-| Text declaration position and ordering | §4.3.2 | 11 |
-| Version agreement between document and entity | §4.3.4 | 9 |
-| `<` reaching an attribute through markup in an entity | §2.3 | 4 |
-| Standalone declarations in external entities | §4.3.1 | 4 |
-| Entity replacement text parsed as markup | §4.5 | 3 |
-| Everything else | | 12 |
+What remains needs content oxml never reads — and, in every case,
+rules *about* that content rather than the content itself. The caller
+already supplies it: the conformance runner hands the parser every
+file sitting beside the document, which is how the two `sun`
+conditional-section tests came to pass.
+
+| What the failure needs | Count |
+|---|---|
+| `eduni/rmt-*`, external DTD and namespace rules | 2 |
+| An external identifier rule (`ibm` P75) | 1 |
+
+**Four submissions pass every test they decide** — `japanese`,
+`oasis`, `sun` and `xmltest`. `ibm` is at 99.9% of 1,131 and `eduni`
+at 99.6% of 552.
+
+No group is now a majority, which is itself the news: the failures
+that shared a cause have been fixed, and what is left is individual
+rules rather than one missing mechanism.
+
+Derived by reading the 37 rather than estimating: the thirteen above
+were confirmed one at a time against the specification, and the
+remaining 24 grouped by the file each one turns on. Regenerate with
+`cargo run --release -p oxml-conformance --bin report` rather than
+trusting this table once the code has moved.
 
 That table has been wrong twice, in the same direction both times: I
 estimated what a group needed instead of counting it. The estimate
 before this one put ~35 failures on parameter entity expansion;
-implementing it moved **one**. Counting afterwards showed the real
-leader was conditional section keywords, which oxml skips wholesale
-rather than validating.
+implementing it moved **one**.
 
 Counted by what the failure *needs* rather than by where the `DOCTYPE`
 points, which is what the earlier table did and why it read as more

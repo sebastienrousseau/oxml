@@ -26,15 +26,32 @@ one is listed as not done, however close it feels.
 | Panics on hostile input | Zero | 0 across 2,585 conformance documents, 6 fuzz targets, Miri | ✅ |
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
-| Line coverage | ≥95% | **97.4%**, gated | ✅ |
-| Conformance | Published with denominator | **98.6% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
-| Allocations per node | ≤2 | **1.13** | ✅ |
+| Line coverage | ≥95% | **97.2%**, gated | ✅ |
+| Conformance | Published with denominator | **99.9% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
+| Allocations per node | ≤2 | **0.50** | ✅ |
 | Throughput | <100 ms at load | **Ratios measured, absolute still not** — `benches/comparison.rs` reports 0.089× `quick-xml` (events) and 0.319× `roxmltree` (tree), stable to 3–5% under 10 CPU hogs and gated at 15%. MB/s still needs a quiet machine; `scripts/record-throughput.sh` refuses above 0.20 load per core and has never yet been able to record | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
 | Documentation | House style, all 6 crates | READMEs, `doc/`, examples, FAQs across all six | ✅ |
-| Streaming | An entry point | **`stream::Reader`**, same scanner as the tree parser; holds 92% less at peak. Not yet from a reader | 🟡 |
+| Streaming | An entry point | **`stream::Reader`**, same scanner as the tree parser; holds 89% less at peak. Not yet from a reader | 🟡 |
 
 ## Done
+
+**Entity replacement text is markup.** An entity referenced from
+content is *included* per XML 1.0 §4.4.2 — its replacement text parsed
+as content, not substituted as characters. Thirteen conformance
+failures went at once, taking the pass rate from 98.6% to **99.1%**.
+The replacement text is checked by the same scanner the document uses,
+into a throwaway tree, so attribute-value rules, reserved
+processing-instruction targets, name validity and comment termination
+are enforced without being restated.
+
+**Owned input.** `Document` owns its text and character data is
+`(start, len)` ranges into it, so **0.50 allocations per node** —
+down from 4.13 when counting began, via 1.13. Fewer than one per node
+means most nodes cost none. No lifetime parameter on `Document`: see
+[adr/0007](adr/0007-owned-strings-for-now.md) for why that mattered
+more than it looks, and [design/owned-input.md](design/owned-input.md)
+for what the design note got wrong.
 
 **Correctness.** Ten defects fixed, each with a test that fails without
 the fix: XML 1.0 and 1.1 line-ending normalisation, attribute-value
@@ -46,7 +63,7 @@ defects.
 
 **Verification.** W3C suite with a ratcheted baseline; five seeded fuzz
 targets; Miri; property tests; feature powerset; `no_std` on three
-targets; 97.4% coverage with the conformance harness inside the floor.
+targets; 97.2% coverage with the conformance harness inside the floor.
 
 **Performance.** 4.13 → **1.13 allocations per node**, held to a
 ceiling by a test.
@@ -88,58 +105,69 @@ claim rests entirely on the allocation count, which is a proxy.
 `doc/BENCHMARKS.md` states the method and the conditions a figure must
 carry.
 
-### 2. Owned input — the last of the allocations
-
-Text nodes and attribute values are the only owned `String`s left. Have
-`Document` own its input and store `(start, len)` ranges into it, as
-child and attribute lists already do.
-
-Design written up in [design/owned-input.md](design/owned-input.md),
-including the entity-expansion complication: a value containing
-`&amp;` does not appear verbatim in the input and needs a side table.
-
-Breaking: `Document::text` would return `&str` rather than `String`.
-
-### 3. Conformance — 37 failures, in two groups
+### 2. Conformance — 3 failures, all about external content
 
 Every remaining failure is the parser being **too permissive**; there
 is no document in the suite it wrongly rejects.
 
-**126 failures have been fixed since counting began** — 163 to 37,
-taking the pass rate from 93.6% to **98.6%**. Almost none needed a
-feature; nearly every one was a rule the parser already had the
-information to enforce and was not enforcing.
+The count was 37. Two more went when conditional sections in an
+external subset stopped being swallowed: a section saying `CDATA`
+where only `INCLUDE` or `IGNORE` is legal was accepted in silence,
+because a declaration containing a parameter entity took a path that
+reports anything unparseable as merely *incomplete*.
 
-What is left is two pieces of work, not more missing checks:
+The thirteen before them shared one cause — an
+entity's replacement text substituted as characters where XML 1.0
+§4.4.2 requires it to be *included*, that is parsed as content — and
+were fixed as one change. `crates/oxml/tests/entity_markup.rs` keeps
+them fixed and records the distinction that makes the rule subtle: a
+character reference in an entity's declaration is *included* there and
+then, while a general entity reference is *bypassed*, so
+`<!ENTITY e "&#38;">` is a trap and `<!ENTITY e "&amp;">` is not.
 
-- **Most need external entity or subset content** — a text
-  declaration, a version number, a standalone declaration, in a file
-  oxml never reads. The shape is a caller-supplied map from identifier
-  to content; the parser still performs no I/O. See
-  [adr/0003](adr/0003-no-external-entities.md). The per-group split
-  was last counted when there were 163 failures and has not been
-  re-derived against the current 37; run
-  `cargo run --release -p oxml-conformance --bin report` for the list
-  rather than trusting a number here.
-- **Some need entity replacement text parsed as markup.**
-  `<!ENTITY e "<foo/>">` referenced from content should produce an
-  *element*; oxml substitutes it as text. A semantic gap rather than a
-  missing rule, and the harder of the two: the replacement text has to
-  be parsed as content, with offsets that still point somewhere useful
-  and a check that markup opened inside it is closed inside it.
+What is left all turns on a file oxml never reads:
+
+| What the failure needs | Count |
+|---|---|
+| `eduni/rmt-*`, external DTD and namespace rules | 2 |
+| An external identifier rule (`ibm` P75) | 1 |
+
+No group is a majority any more, which is the news: every failure
+that shared a cause with others has been fixed, and the eleven left
+are individual rules rather than one missing mechanism. Expect each to
+cost about what it is worth.
 
 The design constraint is fixed: the parser must never perform I/O. The
 shape is a caller-supplied map from identifier to content, so the
 caller decides what may be read. See
 [adr/0003-no-external-entities.md](adr/0003-no-external-entities.md).
 
+Regenerate the list with
+`cargo run --release -p oxml-conformance --bin report` rather than
+trusting these counts once the code has moved.
+
+### 3. Memoise entity validation
+
+An entity's replacement text is checked once per *reference*, so a
+document referencing one entity a thousand times parses it a thousand
+times. Keying a cache on the entity name alone is unsound: validity
+depends on the namespace bindings in scope, so `<!ENTITY e "<p:x/>">`
+is well-formed where `p` is bound and not where it is not. The key has
+to include the scope, and a wrong key accepts documents that should be
+refused.
+
+Unquantified: the machine available measured the same entity benchmark
+between 1.45 and 3.76 ms in one state, so no honest before-and-after
+could be taken. Measure it on a quiet machine before optimising it.
+
 ### 4. Streaming from a reader
 
 `stream::Reader` now yields events over the same scanner with no tree
 built, which is most of this item: measured against parsing the same
-16,004-node document, it holds 191,957 bytes at peak against
-2,277,184 — 92% less, and nearly all of what remains is the
-normalised copy of the input.
+16,004-node document, it holds 191,967 bytes at peak against
+1,809,822 — 89% less, and nearly all of what remains is the
+normalised copy of the input. It was 92% before the document began
+owning its input; the gap narrowed because the tree got cheaper.
 
 That copy is what is left to remove. The reader takes a `&str`, so
 "documents larger than memory" is still in *When not to use*, and

@@ -298,9 +298,9 @@ Two architectural choices motivate the design:
 
 **Verification**
 
-- 2,520 of 2,557 decided W3C conformance tests pass (98.6%), with
+- 2,554 of 2,557 decided W3C conformance tests pass (99.9%), with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 365 tests and 24 doctests; 97.4% line coverage, gated in CI
+- 389 tests and 24 doctests; 97.2% line coverage, gated in CI
 - Six fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not yet:** serialisation, mutation, XSD validation and XSLT. The
@@ -604,11 +604,13 @@ report the same error at the same byte offset when they don't. A test
 holds them to that.
 
 **What it saves.** Reading the 16,004-node document from the
-allocation tests holds 191,957 bytes at peak against the tree's
-2,277,184 — 92% less.
+allocation tests holds 191,967 bytes at peak against the tree's
+1,809,822 — 89% less. It was 92% before the document began owning its
+input: the gap narrowed because the *tree* got cheaper, not because
+reading got dearer.
 
 **What it does not.** `Reader::new` takes a `&str`, and normalising
-line endings copies it once more, so almost all of that 191,957 bytes
+line endings copies it once more, so almost all of that 191,967 bytes
 *is* the document. A file larger than memory is still a file oxml
 cannot read; `quick-xml` reads from any `BufRead` and remains the
 right tool for that. Reading from a reader is
@@ -884,9 +886,9 @@ the job it actually does, on the same 855 KB document:
 
 So `quick-xml` reads events about eleven times faster, and
 `roxmltree` builds a tree about three times faster. The gap is
-allocation: `oxml` performs about 1.13 per node where a borrowed
-design performs almost none, and text and attribute values are owned
-`String`s rather than slices of the input.
+allocation and copying: `oxml` performs about 0.50 allocations per
+node where a borrowed design performs almost none, and it copies the
+input once so the document can own it.
 
 Reproduce it with `cargo bench --bench comparison`. Both crates are
 dev-dependencies, so this is a measurement you can rerun rather than a
@@ -907,7 +909,7 @@ and 5%, while a median-based estimate of the same data halved. See
 ### Can it stream?
 
 It can read a document as events without building a tree — see
-[Reading without a tree](#reading-without-a-tree) — which is 92% less
+[Reading without a tree](#reading-without-a-tree) — which is 89% less
 held at peak on a 16,000-node document.
 
 It cannot read from a `Read` or a `BufRead`, so it cannot handle a
@@ -916,14 +918,20 @@ the answer is no, and `quick-xml` is the tool.
 
 ### How conformant is it?
 
-98.6% of decided tests in the W3C XML Conformance Test Suite, release
+99.9% of decided tests in the W3C XML Conformance Test Suite, release
 `xmlts20130923`, with 98.9% coverage of the 2,585 tests and zero panics.
 Both numbers are published because either alone misleads: a pass rate
 can be raised by skipping the hard tests.
 
-Most of the 37 remaining failures need entity replacement text to be
-**parsed as markup** rather than substituted as text — a structural
-change to how expansion works, not a missing feature.
+All 3 remaining failures turn on rules about content in a separate
+file — an external entity or subset. The caller supplies it; oxml
+opens nothing. Since the parser performs no I/O by construction, closing
+them means the caller supplying that content, not oxml fetching it.
+
+Entity replacement text being parsed as markup rather than substituted
+as characters was the previous leader and accounted for 13; that is
+done. Every remaining failure is the parser being too *permissive* —
+there is no document in the suite it wrongly rejects.
 
 ### Why does it not fetch external entities?
 
@@ -1021,8 +1029,8 @@ XML, build the string, or use `quick-xml`'s writer.
 
 ### How much memory does a document take?
 
-Measured at **1.13 allocations per node** — 18,065 allocations for a
-16,002-node document, counted with a wrapping global allocator over the
+Measured at **0.50 allocations per node** — 8,076 allocations for a
+16,004-node document, counted with a wrapping global allocator over the
 whole of `parse` and divided by `Document::len()`. A test holds that
 figure to a ceiling, so it cannot drift upward unnoticed.
 
@@ -1032,14 +1040,22 @@ names are interned, so traversal is index arithmetic rather than
 pointer chasing and the document is `Send + Sync` for free. That work
 took the figure from 4.13 to 1.13.
 
-What remains is the owned `String`s: every text node and attribute
-value. Element and attribute *names* no longer allocate at all — they
-are slices of the input until interning, and a repeated name costs a
-map probe. Removing the last two means having the document own its
-input so both become ranges into it, which is not done — so 1.13 is
-the number.
+The step from 1.13 to 0.50 is the document **owning its input**. Text
+nodes, comments and attribute values are ranges into that string
+rather than strings of their own, so a document that expands no
+entities allocates nothing at all for its character data. Names had
+already stopped allocating — they are slices of the input until
+interning, and a repeated name costs a map probe.
 
-That said: the whole document is in memory. See "When not to use oxml".
+Fewer than one allocation per node means most nodes cost none: what
+remains is the arenas themselves, which grow by doubling and so cost a
+handful of allocations for the whole document.
+
+The trade is one copy of the input, because the document owns the
+decoded and line-ending-normalised text rather than borrowing yours.
+That is what lets `Document` have no lifetime parameter and
+`parse_bytes` decode UTF-16, where there is no caller string to borrow
+from. See "When not to use oxml" — the whole document is in memory.
 
 ### Why `NodeId` rather than references?
 

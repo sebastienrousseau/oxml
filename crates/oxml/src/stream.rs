@@ -13,12 +13,17 @@
 //! # What this saves, and what it does not
 //!
 //! Measured on the 16,004-node document in the allocation tests,
-//! reading holds **191,957 bytes at peak against the tree's
-//! 2,277,184** — 92% less.
+//! reading holds **191,967 bytes at peak against the tree's
+//! 1,809,822** — 89% less.
+//!
+//! That was 92% before the document began owning its input. The gap
+//! narrowed because the *tree* got cheaper, not because reading got
+//! dearer: text nodes and attribute values are now ranges into the
+//! input rather than strings of their own.
 //!
 //! It does **not** let you read a document larger than memory.
 //! [`Reader::new`] takes a `&str`, and normalising line endings copies
-//! it once more, so nearly all of that 191,957 bytes *is* the
+//! it once more, so nearly all of that 191,967 bytes *is* the
 //! document. What is removed is everything that outlives the event
 //! that produced it: the arena, the interned names, the node table.
 //! Reading incrementally from a `BufRead` is a separate piece of work;
@@ -164,6 +169,8 @@ struct Carried {
     /// built a parser with `dtd: None`, every DTD-declared entity was
     /// unknown to the reader and known to `parse`.
     dtd: Option<crate::dtd::Dtd>,
+    /// Whether the document declared `standalone="yes"`.
+    standalone: bool,
     /// What is left of the document's entity-expansion budget.
     ///
     /// Per document, not per event. Rebuilding it each scan handed a
@@ -201,6 +208,7 @@ impl Reader {
                 depth: 0,
                 dtd: None,
                 entity_budget: limits.max_entity_expansion,
+                standalone: crate::parser::declared_standalone(input),
             },
             cursor: Cursor {
                 pos: 0,
@@ -268,6 +276,8 @@ impl Reader {
             dtd: carried.dtd.take(),
             version: carried.version,
             entity_budget: carried.entity_budget,
+            entity_depth: 0,
+            standalone: carried.standalone,
         };
 
         let result = Self::one_event(
@@ -321,15 +331,16 @@ impl Reader {
                 return Err(Error::new(ErrorKind::TrailingContent, parser.pos));
             }
             if parser.starts_with("<!--") {
+                let c = parser.parse_comment()?;
                 return Ok(Scanned::Event(Event::Comment(
-                    parser.parse_comment()?,
+                    parser.owned(c).to_owned(),
                 )));
             }
             if parser.starts_with("<?") {
                 let (target, data) = parser.parse_pi()?;
                 return Ok(Scanned::Event(Event::ProcessingInstruction {
-                    target,
-                    data,
+                    target: parser.owned(target).to_owned(),
+                    data: parser.owned(data).to_owned(),
                 }));
             }
             if parser.starts_with("<!DOCTYPE") {
@@ -368,12 +379,12 @@ impl Reader {
     /// one text node, so yielding it as one event is what makes the
     /// two agree on `a &amp; <![CDATA[b]]> c`.
     fn char_data(parser: &mut Parser<'_>) -> Result<Event> {
-        let mut text = String::new();
+        let mut run = crate::parser::Run::default();
         loop {
             if parser.starts_with("<![CDATA[") {
-                parser.parse_cdata(&mut text)?;
+                parser.parse_cdata(&mut run)?;
             } else if parser.pos < parser.bytes.len() && !parser.peek_is(b'<') {
-                parser.parse_text_run(&mut text)?;
+                parser.parse_text_run(&mut run)?;
             } else {
                 break;
             }
@@ -381,14 +392,14 @@ impl Reader {
         // The same limit the tree parser applies when it flushes a run
         // into a text node. Accepting `Limits` and then not applying
         // them would be worse than not accepting them.
-        if parser
-            .limits
-            .max_text_length
-            .is_some_and(|m| text.len() > m)
-        {
+        if parser.limits.max_text_length.is_some_and(|m| run.len() > m) {
             return Err(Error::new(ErrorKind::TextTooLong, parser.pos));
         }
-        Ok(Event::Text(text))
+        // An event owns its text: a borrowed one would tie the caller
+        // to the reader between calls, which is the opposite of what a
+        // streaming interface is for. The tree keeps the range; the
+        // reader pays one copy per run and keeps nothing.
+        Ok(Event::Text(run.as_str(parser.input).to_owned()))
     }
 
     fn one_event(
@@ -450,13 +461,16 @@ impl Reader {
         }
 
         if parser.starts_with("<!--") {
-            return Ok(Scanned::Event(Event::Comment(parser.parse_comment()?)));
+            let c = parser.parse_comment()?;
+            return Ok(Scanned::Event(Event::Comment(
+                parser.owned(c).to_owned(),
+            )));
         }
         if parser.starts_with("<?") {
             let (target, data) = parser.parse_pi()?;
             return Ok(Scanned::Event(Event::ProcessingInstruction {
-                target,
-                data,
+                target: parser.owned(target).to_owned(),
+                data: parser.owned(data).to_owned(),
             }));
         }
 
@@ -502,7 +516,7 @@ impl Reader {
                     at,
                 ));
             }
-            attributes.push((name, value));
+            attributes.push((name, value.as_str(parser.input).to_owned()));
         }
 
         // `tag.declared` is not used here. `scan_start_tag` has already

@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let Some(NodeKind::Element { name, .. }) = doc.kind(id) else {
             continue;
         };
-        let (name, prefix) = (*name, doc.prefix(*name));
+        let (name, prefix) = (name, doc.prefix(name));
         let expanded = doc.name(name).expect("interned");
         if expanded.namespace.is_some() {
             println!(

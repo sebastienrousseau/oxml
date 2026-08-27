@@ -161,14 +161,18 @@ fn corpus(elements: usize) -> String {
 
 #[test]
 fn a_parse_costs_a_bounded_number_of_allocations_per_node() {
-    // The README publishes 1.13. The ceiling sits just above the
+    // The README publishes 0.50. The ceiling sits just above the
     // measured figure: close enough that a regression trips it, loose
     // enough that allocator capacity growth does not. It has come down
     // from 4.5 as child and attribute lists were flattened, names
     // interned by borrowed parts, a dead resolve removed, and names
-    // made to borrow the input rather than be copied out of it. It
-    // comes down again when text and attribute values do the same.
-    const CEILING: f64 = 1.3;
+    // made to borrow the input rather than be copied out of it.
+    //
+    // The step from 1.13 to 0.50 is the document owning its input:
+    // text nodes, comments and attribute values are ranges into it
+    // rather than strings of their own, so a document that expands no
+    // entities allocates nothing for its character data at all.
+    const CEILING: f64 = 0.6;
 
     let source = corpus(2_000);
     let (doc, allocations) =

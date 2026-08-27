@@ -388,7 +388,14 @@ jobs:
       - run: cargo run -p oxml-conformance --bin download
       # Gates the merge. A regression fails; so does an unreviewed
       # improvement, which is the point of a ratchet.
+      # `OXML_REQUIRE_SUITE=1` so a missing or empty suite fails here
+      # rather than skipping. A skipped test is a passing test to
+      # `cargo test`, so without this the job could report success
+      # having run none of the 2,585 -- which is exactly what the
+      # Cloudflare challenge page described above would cause.
       - run: cargo test -p oxml-conformance
+        env:
+          OXML_REQUIRE_SUITE: "1"
       - name: Report
         if: always()
         run: cargo run -p oxml-conformance --bin report

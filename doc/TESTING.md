@@ -58,8 +58,8 @@ The XML Conformance Test Suite (`xmlts20130923`, 2,585 tests) is
 downloaded, verified against a pinned SHA-256, and run on every push.
 
 ```
-overall  2520 pass, 37 fail, 0 panic, 28 unsupported, 0 blocked
-         98.6% of 2557 decided (98.9% coverage of 2585)
+overall  2554 pass, 3 fail, 0 panic, 28 unsupported, 0 blocked
+         99.9% of 2557 decided (98.9% coverage of 2585)
 ```
 
 Both numbers are reported together, always. A pass rate on a thin
@@ -165,7 +165,7 @@ Miri, libm and the host disagreed by 2 ULP on `17.49`.
 ## Coverage
 
 ≥95% of lines, gated in CI, measured with `cargo-llvm-cov`. Currently
-**97.4%**.
+**97.2%**.
 
 Two exclusions, both narrow and deliberate: `conformance/src/bin/`,
 whose two `main()` functions shell out to the network and to `tar`.

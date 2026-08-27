@@ -43,7 +43,12 @@ step "feature powerset" \
   cargo "+$TOOLCHAIN" hack check -p oxml --feature-powerset --no-dev-deps --group-features xpath,libm
 
 step "no_std audit"   ./scripts/check-no-std.sh
-step "conformance"    cargo "+$TOOLCHAIN" test -p oxml-conformance --release
+# `OXML_REQUIRE_SUITE=1` turns a missing suite from a skip into a
+# failure. Without it this step printed `ok` on a fresh clone having
+# run zero of the 2,585 tests, because a skipped test is a passing
+# test as far as `cargo test` is concerned.
+step "conformance"    env OXML_REQUIRE_SUITE=1 \
+  cargo "+$TOOLCHAIN" test -p oxml-conformance --release
 step "rustdoc"        env RUSTDOCFLAGS="-D warnings" cargo "+$TOOLCHAIN" doc --no-deps -p oxml --all-features
 step "READMEs match"  ./scripts/check-readmes-match.sh
 step "doc links"      python3 ./scripts/check-doc-links.py
