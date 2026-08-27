@@ -1385,7 +1385,26 @@ fn validate_entity_value(
                      entity value in the internal subset",
                 ));
             }
-            rest = tail;
+            // `PEReference ::= '%' Name ';'`, and `EntityValue`
+            // excludes `%` from its literal characters. So a `%` that
+            // begins no reference is not data:
+            // `<!ENTITY e "100%">` is malformed, however innocent it
+            // looks. Skipping past the `%` accepted it.
+            let Some(semi) = tail.find(';') else {
+                return Err((
+                    offset,
+                    "a `%` in an entity value must begin a parameter \
+                     entity reference",
+                ));
+            };
+            if !is_reference_name(&tail[..semi]) {
+                return Err((
+                    offset,
+                    "a `%` in an entity value must begin a parameter \
+                     entity reference",
+                ));
+            }
+            rest = &tail[semi + 1..];
             continue;
         }
         let Some(semi) = tail.find(';') else {

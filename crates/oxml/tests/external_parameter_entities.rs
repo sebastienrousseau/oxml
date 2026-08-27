@@ -187,3 +187,30 @@ fn an_external_entity_is_content_not_characters() {
         "an entity may not close an element it did not open"
     );
 }
+
+/// A `%` in an entity value must begin a parameter entity reference.
+///
+/// `EntityValue ::= '"' ([^%&"] | PEReference | Reference)* '"'` —
+/// `%` is excluded from the literal characters, so one that starts no
+/// reference is not data. `<!ENTITY e "100%">` looks innocent and is
+/// malformed.
+#[test]
+fn a_percent_in_an_entity_value_must_start_a_reference() {
+    let doc = "<!DOCTYPE doc SYSTEM \"p.ent\">\n<doc></doc>";
+
+    for bad in [
+        "<!ELEMENT doc ANY>\n<!ENTITY e \"100%\">",
+        "<!ELEMENT doc ANY>\n<!ENTITY e \"50% off\">",
+        "<!ELEMENT doc ANY>\n<!ENTITY e \"%9;\">",
+    ] {
+        assert!(with_ent(doc, bad).is_err(), "{bad:?} has a stray `%`");
+    }
+
+    // A real reference is fine, and so is an entity value with none.
+    for good in [
+        "<!ELEMENT doc ANY>\n<!ENTITY % p \"x\">\n<!ENTITY e \"%p;\">",
+        "<!ELEMENT doc ANY>\n<!ENTITY e \"no percent here\">",
+    ] {
+        assert!(with_ent(doc, good).is_ok(), "{good:?} should be accepted");
+    }
+}

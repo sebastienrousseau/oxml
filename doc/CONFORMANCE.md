@@ -21,7 +21,7 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2546 pass, 11 fail, 0 panic, 28 unsupported, 0 blocked
+overall  2548 pass, 9 fail, 0 panic, 28 unsupported, 0 blocked
          99.6% of 2557 decided (98.9% coverage of 2585)
 ```
 
@@ -30,11 +30,11 @@ By submission:
 | Submission | Pass rate | Decided | Unsupported |
 |---|---|---|---|
 | japanese | 100.0% | 6 | 6 |
-| oasis | 99.7% | 345 | 3 |
+| oasis | 100.0% | 345 | 3 |
 | eduni | 99.6% | 552 | 13 |
 | ibm | 99.5% | 1,131 | 5 |
 | sun | 99.4% | 159 | 0 |
-| xmltest | 99.7% | 364 | 1 |
+| xmltest | 100.0% | 364 | 1 |
 
 **Zero panics.** No document in the suite makes the parser abort. That
 is the number to look at first: a wrong answer is a bug, but a panic on
@@ -60,7 +60,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-11 failures, and **every one of them is the parser being too
+9 failures, and **every one of them is the parser being too
 permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
@@ -78,10 +78,13 @@ conditional-section tests came to pass.
 
 | What the failure needs | Count |
 |---|---|
-| Standalone declarations against external content | 3 |
 | Remaining §4.3.4 version-agreement cases | 3 |
-| External identifier and entity-reference rules | 3 |
-| An external DTD (`eduni/rmt-*`, `oasis/o-p09fail1`) | 2 |
+| Standalone declarations against external content | 2 |
+| External identifier and entity-reference rules | 2 |
+| An external DTD (`eduni/rmt-*`) | 2 |
+
+Two submissions — `oasis` and `xmltest` — now pass every test they
+decide.
 
 No group is now a majority, which is itself the news: the failures
 that shared a cause have been fixed, and what is left is individual
