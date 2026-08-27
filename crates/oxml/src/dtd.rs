@@ -318,15 +318,16 @@ impl<'a> DtdParser<'a> {
             self.require_ws()?;
             let ids = if is_public {
                 let pubid = self.pubid_literal()?.to_owned();
-                self.skip_ws();
-                if matches!(self.peek(), Some(b'"' | b'\'')) {
-                    Some((self.quoted()?.to_owned(), Some(pubid)))
-                } else {
-                    // `PUBLIC` with no system literal is legal in a
-                    // `NotationDecl` and not here, but the grammar is
-                    // shared; nothing to fetch either way.
-                    None
-                }
+                // `ExternalID ::= 'PUBLIC' S PubidLiteral S
+                // SystemLiteral`. Both the separator and the system
+                // literal are required here. `PublicID ::= 'PUBLIC' S
+                // PubidLiteral`, without one, is a different
+                // production and legal only in a `NotationDecl` --
+                // sharing the code let a `DOCTYPE` borrow a rule that
+                // is not its own, so `PUBLIC "p""s"` and `PUBLIC "p"`
+                // both passed.
+                self.require_ws()?;
+                Some((self.quoted()?.to_owned(), Some(pubid)))
             } else {
                 Some((self.quoted()?.to_owned(), None))
             };

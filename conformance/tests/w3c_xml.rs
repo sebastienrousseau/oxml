@@ -120,9 +120,14 @@ fn the_published_conformance_figures_are_current() {
         counts.unsupported,
         counts.blocked,
     );
+    // `rate_text`, matching what the report prints. Formatting the
+    // rate here with `{:.1}` while the report used something else
+    // meant this check demanded a figure the tool would never
+    // produce -- and, worse, the one it demanded rounded 99.96% up to
+    // 100.0%.
     let rates = format!(
-        "{:.1}% of {} decided ({:.1}% coverage of {})",
-        counts.pass_rate(),
+        "{} of {} decided ({:.1}% coverage of {})",
+        counts.rate_text(),
         counts.decided(),
         counts.coverage(),
         counts.total(),
@@ -143,7 +148,7 @@ fn the_published_conformance_figures_are_current() {
     }
 
     // The pass rate appears in prose too, where it drifted before.
-    let prose = format!("{:.1}% of 2,557 decided", counts.pass_rate());
+    let prose = format!("{} of 2,557 decided", counts.rate_text());
     assert!(
         include_str!("../../doc/CONFORMANCE.md").contains(&prose),
         "doc/CONFORMANCE.md does not state `{prose}` in prose"

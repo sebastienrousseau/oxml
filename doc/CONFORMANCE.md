@@ -21,20 +21,20 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2554 pass, 3 fail, 0 panic, 28 unsupported, 0 blocked
-         99.9% of 2557 decided (98.9% coverage of 2585)
+overall  2556 pass, 1 fail, 0 panic, 28 unsupported, 0 blocked
+         99.96% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
 
 | Submission | Pass rate | Decided | Unsupported |
 |---|---|---|---|
-| japanese | 100.0% | 6 | 6 |
-| oasis | 100.0% | 345 | 3 |
-| eduni | 99.6% | 552 | 13 |
-| ibm | 99.9% | 1,131 | 5 |
-| sun | 100.0% | 159 | 0 |
-| xmltest | 100.0% | 364 | 1 |
+| japanese | 100% | 6 | 6 |
+| oasis | 100% | 345 | 3 |
+| eduni | 99.8% | 552 | 13 |
+| ibm | 100% | 1,131 | 5 |
+| sun | 100% | 159 | 0 |
+| xmltest | 100% | 364 | 1 |
 
 **Zero panics.** No document in the suite makes the parser abort. That
 is the number to look at first: a wrong answer is a bug, but a panic on
@@ -45,7 +45,7 @@ input from the network is a denial of service.
 The pass rate and the coverage figure are always reported together, and
 neither means much alone.
 
-- **99.9% of 2,557 decided** — of the tests where the parser gave a
+- **99.96% of 2,557 decided** — of the tests where the parser gave a
   definite answer, this many agreed with the suite.
 - **98.9% coverage of 2,585** — this many of the suite's tests produced
   a definite answer at all.
@@ -60,8 +60,7 @@ both raised the number without changing what the parser does.
 
 ## What the failures are
 
-3 failures, and **every one of them is the parser being too
-permissive** — accepting a document the suite says is not well-formed.
+1 failure, and it is the parser being too **permissive** — accepting a document the suite says is not well-formed.
 There is no longer a document the parser wrongly rejects.
 
 The previous count was 37. The thirteen that went were a single cause:
@@ -76,14 +75,23 @@ already supplies it: the conformance runner hands the parser every
 file sitting beside the document, which is how the two `sun`
 conditional-section tests came to pass.
 
-| What the failure needs | Count |
-|---|---|
-| `eduni/rmt-*`, external DTD and namespace rules | 2 |
-| An external identifier rule (`ibm` P75) | 1 |
+`eduni/rmt-ns10-012` needs **type-aware attribute-value
+normalisation**. `xmlns:b` is declared `NMTOKEN`, so
+`" urn:xyzzy "` normalises to `"urn:xyzzy"` — binding prefixes `a`
+and `b` to one namespace and making `a:attr` and `b:attr` the same
+attribute twice. Tokenized types are normalised further than `CDATA`,
+and oxml treats every value alike.
 
-**Four submissions pass every test they decide** — `japanese`,
-`oasis`, `sun` and `xmltest`. `ibm` is at 99.9% of 1,131 and `eduni`
-at 99.6% of 552.
+**Five submissions pass every test they decide** — `ibm`, `japanese`,
+`oasis`, `sun` and `xmltest`. `eduni` is at 99.8% of 552.
+
+### The rate does not round up
+
+`2556 of 2557` is 99.96%, which one decimal place renders as
+**100.0%** — a figure saying every test passed while one did not. The
+report prints `100%` only for a genuinely perfect run and adds
+decimals otherwise. A conformance number that flatters itself is worse
+than none, and the last place it can happen is the formatter.
 
 No group is now a majority, which is itself the news: the failures
 that shared a cause have been fixed, and what is left is individual

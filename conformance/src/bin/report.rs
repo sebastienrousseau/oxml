@@ -35,8 +35,11 @@ fn main() -> Result<(), String> {
     println!("\nby submission:");
     for (sub, c) in &by_sub {
         println!(
-            "  {sub:<10} {:>5.1}% of {:>4} decided   ({} unsupported)",
-            c.pass_rate(),
+            // `rate_text` rather than a format width, for the reason
+            // in `Counts::rate_text`: a submission one test short of
+            // perfect must not print as perfect.
+            "  {sub:<10} {:>6} of {:>4} decided   ({} unsupported)",
+            c.rate_text(),
             c.decided(),
             c.unsupported
         );
