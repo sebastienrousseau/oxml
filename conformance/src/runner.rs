@@ -58,9 +58,19 @@ fn sibling_files(path: &std::path::Path) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        // Only the kinds a document references. Reading every `.xml` in
-        // the directory would pull in unrelated test documents.
-        if !name.ends_with(".ent") && !name.ends_with(".dtd") {
+        // Only the kinds a document references. Reading every `.xml`
+        // in the directory would pull in unrelated test documents.
+        //
+        // `.pe` and `.txt` are here because leaving them out did not
+        // fail loudly: the referenced file simply never arrived, the
+        // subset stayed incomplete, and the parser relaxed exactly as
+        // it should when a caller supplies nothing. The test then
+        // reported the *parser* as too permissive. `eduni/rmt-002`
+        // spent this session in the failure list for that reason,
+        // while the parser had implemented the rule correctly all
+        // along.
+        const SUPPLIED: [&str; 4] = [".ent", ".dtd", ".pe", ".txt"];
+        if !SUPPLIED.iter().any(|ext| name.ends_with(ext)) {
             continue;
         }
         if let Ok(text) = std::fs::read_to_string(entry.path()) {

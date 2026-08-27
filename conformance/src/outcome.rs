@@ -103,6 +103,33 @@ impl Counts {
         self.pass as f64 * 100.0 / self.decided() as f64
     }
 
+    /// The pass rate as text, never rounded up to a clean 100%.
+    ///
+    /// `2556 of 2557` is 99.96%, which `{:.1}` renders as **100.0%**
+    /// -- a figure that says every test passed while one did not. The
+    /// whole point of publishing a rate beside a denominator is to
+    /// stop numbers flattering the thing they measure, so the last
+    /// place a rounding may lie is here.
+    ///
+    /// Below 100% the rate is shown with enough precision to stay
+    /// under it; only a genuinely perfect run prints `100%`.
+    #[must_use]
+    pub fn rate_text(&self) -> String {
+        let rate = self.pass_rate();
+        if self.pass == self.decided() {
+            return "100%".into();
+        }
+        // Enough decimals that a near-miss cannot round to 100.0.
+        let mut text = format!("{rate:.1}%");
+        if text == "100.0%" {
+            text = format!("{rate:.2}%");
+        }
+        if text == "100.00%" {
+            text = format!("{rate:.3}%");
+        }
+        text
+    }
+
     /// Share of all tests that produced a definite answer.
     #[must_use]
     pub fn coverage(&self) -> f64 {
@@ -118,13 +145,13 @@ impl fmt::Display for Counts {
         write!(
             f,
             "{} pass, {} fail, {} panic, {} unsupported, {} blocked \
-             — {:.1}% of {} decided ({:.1}% coverage of {})",
+             — {} of {} decided ({:.1}% coverage of {})",
             self.pass,
             self.fail,
             self.panic,
             self.unsupported,
             self.blocked,
-            self.pass_rate(),
+            self.rate_text(),
             self.decided(),
             self.coverage(),
             self.total(),
@@ -284,5 +311,37 @@ mod tests {
         ] {
             assert!(text.contains(part), "{part:?} missing from {text:?}");
         }
+    }
+
+    #[test]
+    fn a_near_miss_never_prints_as_perfect() {
+        // 2556 of 2557 is 99.96%, which `{:.1}` renders as 100.0% --
+        // a figure saying every test passed while one did not.
+        let c = Counts {
+            pass: 2556,
+            fail: 1,
+            ..Default::default()
+        };
+        assert_eq!(c.rate_text(), "99.96%");
+        assert_ne!(c.rate_text(), "100.0%");
+
+        // Closer still: more decimals rather than a rounded lie.
+        let c = Counts {
+            pass: 99_999,
+            fail: 1,
+            ..Default::default()
+        };
+        assert!(
+            c.rate_text().starts_with("99.99"),
+            "{} rounded up",
+            c.rate_text()
+        );
+
+        // And a genuinely perfect run says so plainly.
+        let c = Counts {
+            pass: 100,
+            ..Default::default()
+        };
+        assert_eq!(c.rate_text(), "100%");
     }
 }

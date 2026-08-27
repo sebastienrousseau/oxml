@@ -331,3 +331,33 @@ fn a_standalone_document_may_not_use_an_entity_it_did_not_declare() {
     let parsed = parse(complete).expect("declared internally");
     assert_eq!(parsed.text(parsed.root()), "7");
 }
+
+/// A `DOCTYPE`'s `PUBLIC` identifier needs both parts.
+///
+/// `ExternalID ::= 'SYSTEM' S SystemLiteral
+///               | 'PUBLIC' S PubidLiteral S SystemLiteral`
+///
+/// The separator and the system literal are both required.
+/// `PublicID ::= 'PUBLIC' S PubidLiteral`, without one, is a
+/// *different* production and legal only in a `NotationDecl` — sharing
+/// the code let a `DOCTYPE` borrow a rule that is not its own.
+#[test]
+fn a_doctype_public_identifier_needs_a_system_literal() {
+    for bad in [
+        // No whitespace between the two literals.
+        "<!DOCTYPE doc PUBLIC \"pub\"\"sys\"><doc/>",
+        // No system literal at all.
+        "<!DOCTYPE doc PUBLIC \"pub\"><doc/>",
+    ] {
+        assert!(parse(bad).is_err(), "{bad:?} is not a legal ExternalID");
+    }
+
+    // Both parts, properly separated, stay accepted.
+    for good in [
+        "<!DOCTYPE doc PUBLIC \"pub\" \"sys\"><doc/>",
+        "<!DOCTYPE doc SYSTEM \"sys\"><doc/>",
+        "<!DOCTYPE doc><doc/>",
+    ] {
+        assert!(parse(good).is_ok(), "{good:?} should be accepted");
+    }
+}
