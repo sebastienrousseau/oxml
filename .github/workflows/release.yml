@@ -40,9 +40,44 @@ jobs:
           fi
           echo "publishing oxml $tag"
 
-      - run: cargo test --all-features
+      # crates.io versions are immutable: publishing one that already
+      # exists fails. A tag can be pushed after the fact -- 0.0.7 was
+      # published from a laptop before this workflow existed, and
+      # tagging it afterwards should record the release, not attempt
+      # it again.
+      - name: Skip if this version is already published
+        id: published
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if curl -sf "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
+            echo "oxml $tag is already on crates.io; nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.published.outputs.skip == 'false'
+        run: cargo test --all-features
+
+      # Until CARGO_REGISTRY_TOKEN exists, this crate is published
+      # from a laptop with `scripts/publish.sh`. Say so plainly rather
+      # than letting `cargo publish` fail on an empty token, which
+      # reports as an authentication error and reads like a revoked
+      # credential.
+      - name: The publish token must be set
+        if: steps.published.outputs.skip == 'false'
+        env:
+          TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN is not set on this repository."
+            echo "Either add it, or publish with scripts/publish.sh and do"
+            echo "not push release tags."
+            exit 1
+          fi
 
       - name: Publish
+        if: steps.published.outputs.skip == 'false'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish -p oxml
@@ -51,6 +86,7 @@ jobs:
       # success is not yet a publish anyone can depend on. The next
       # crate in the suite waits on exactly this.
       - name: Confirm it is on crates.io
+        if: steps.published.outputs.skip == 'false'
         run: |
           tag="${GITHUB_REF_NAME#v}"
           for i in $(seq 1 30); do
