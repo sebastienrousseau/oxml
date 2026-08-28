@@ -323,6 +323,33 @@ impl Document {
     /// begins with `<`. Without this the arena reallocates and copies
     /// on the way to a million nodes, and each growth is an allocation
     /// plus a memcpy of everything so far.
+    /// A document that owns nothing, for swapping out of a borrow.
+    ///
+    /// [`Document::with_capacity`] allocates even for zero nodes: it
+    /// reserves room for the root and pushes it. The streaming reader
+    /// swaps a placeholder in and out of its state twice per event,
+    /// so that allocation was paid **per event** -- measured at 4.75
+    /// allocations per event against 0.50 per node for a parse, which
+    /// is why reading a document as events was twice as slow as
+    /// parsing it into a tree.
+    ///
+    /// This one allocates nothing. It has no root node either, so it
+    /// is only fit to be swapped straight back out again.
+    pub(crate) const fn placeholder() -> Self {
+        Self {
+            input: String::new(),
+            expanded: Vec::new(),
+            nodes: Vec::new(),
+            names: Vec::new(),
+            name_prefixes: Vec::new(),
+            attr_ids: Vec::new(),
+            child_ids: Vec::new(),
+            scratch: Vec::new(),
+            ids: BTreeMap::new(),
+            ns_ids: Vec::new(),
+        }
+    }
+
     pub(crate) fn with_capacity(nodes: usize) -> Self {
         let mut v = Vec::with_capacity(nodes.saturating_add(1));
         v.push(Node {

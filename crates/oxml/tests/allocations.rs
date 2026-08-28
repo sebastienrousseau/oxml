@@ -273,3 +273,34 @@ fn reading_events_holds_less_than_building_a_tree() {
          but held {stream_peak} against {tree_peak}"
     );
 }
+
+/// What reading events costs in allocations, against parsing.
+///
+/// Peak memory is not the only figure that matters. `oxml-wasm`'s
+/// benchmark found reading a document as events takes roughly twice
+/// as long as parsing it into a tree, which is the opposite of what
+/// "streaming" suggests, and this is where to look for why.
+#[test]
+fn reading_events_allocation_cost() {
+    use oxml::stream::Reader;
+
+    let source = corpus(2_000);
+
+    let (_, parse_allocs) =
+        measure(|| oxml::parse(&source).expect("well-formed"));
+
+    let (events, stream_allocs) = measure(|| {
+        let mut reader = Reader::new(&source).expect("well-formed");
+        let mut n = 0usize;
+        while reader.next_event().expect("well-formed").is_some() {
+            n += 1;
+        }
+        n
+    });
+
+    println!(
+        "parse: {parse_allocs} allocations; stream: {stream_allocs} for \
+         {events} events = {:.2} per event",
+        stream_allocs as f64 / events as f64
+    );
+}
