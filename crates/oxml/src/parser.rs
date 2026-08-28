@@ -218,12 +218,7 @@ pub(crate) fn prepare(
     let _ = limits;
     let text = normalize_line_endings(input, version).into_owned();
     check_prolog_shape(&text)?;
-    if let Some((offset, c)) = text
-        .char_indices()
-        .find(|(_, c)| !is_literal_char_for(*c, version))
-    {
-        return Err(Error::new(ErrorKind::IllegalCharacter(c), offset));
-    }
+    check_characters(&text, version, 0)?;
     Ok((text, version))
 }
 
@@ -307,9 +302,28 @@ impl Run {
     }
 }
 
+/// Every character in `text` must be one the version permits.
+///
+/// `base` is added to the reported offset, so a reader working
+/// through a document a buffer at a time can point at the document
+/// rather than at its window on it.
+pub(crate) fn check_characters(
+    text: &str,
+    version: Version,
+    base: usize,
+) -> Result<()> {
+    if let Some((offset, c)) = text
+        .char_indices()
+        .find(|(_, c)| !is_literal_char_for(*c, version))
+    {
+        return Err(Error::new(ErrorKind::IllegalCharacter(c), base + offset));
+    }
+    Ok(())
+}
+
 /// Whitespace before an XML declaration is a malformed document, not
 /// `Misc` appearing early.
-fn check_prolog_shape(input: &str) -> Result<()> {
+pub(crate) fn check_prolog_shape(input: &str) -> Result<()> {
     let trimmed = input.trim_start();
     if trimmed.len() != input.len() && trimmed.starts_with("<?xml") {
         let after = &trimmed["<?xml".len()..];
@@ -2546,7 +2560,7 @@ pub(crate) fn declared_standalone(input: &str) -> bool {
         .is_some_and(|close| &body[..close] == "yes")
 }
 
-fn declared_version(input: &str) -> Result<Version> {
+pub(crate) fn declared_version(input: &str) -> Result<Version> {
     let Some(rest) = input.strip_prefix("<?xml") else {
         return Ok(Version::V10);
     };

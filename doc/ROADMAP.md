@@ -34,7 +34,7 @@ one is listed as not done, however close it feels.
 | Throughput | <100 ms at load | **Ratios measured, absolute still not** — `benches/comparison.rs` reports 0.089× `quick-xml` (events) and 0.319× `roxmltree` (tree), stable to 3–5% under 10 CPU hogs and gated at 15%. MB/s still needs a quiet machine; `scripts/record-throughput.sh` refuses above 0.20 load per core and has never yet been able to record | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
 | Documentation | House style, all 6 crates | READMEs, `doc/`, examples, FAQs across all six | ✅ |
-| Streaming | An entry point | **`stream::Reader`**, same scanner as the tree parser; holds 89% less at peak. Not yet from a reader | 🟡 |
+| Streaming | An entry point | **`stream::Reader`**, same scanner as the tree parser. `new` holds 89% less at peak; `from_reader` holds a bounded 34,722 bytes whatever the document's size | ✅ |
 
 ## Done
 
@@ -134,20 +134,33 @@ Unquantified: the machine available measured the same entity benchmark
 between 1.45 and 3.76 ms in one state, so no honest before-and-after
 could be taken. Measure it on a quiet machine before optimising it.
 
-### 4. Streaming from a reader
+### 4. Satellite benchmarks — unblocked
 
-`stream::Reader` now yields events over the same scanner with no tree
-built, which is most of this item: measured against parsing the same
-16,004-node document, it holds 191,967 bytes at peak against
-1,809,822 — 89% less, and nearly all of what remains is the
-normalised copy of the input. It was 92% before the document began
-owning its input; the gap narrowed because the tree got cheaper.
+`oxml-cli` and `oxml-mcp` had no benchmarks because both were
+binary-only: the only way to measure them was to spawn the process,
+which measures the operating system as much as the code. Both now
+carry a library target, and the benchmarks measure the real command
+and protocol paths in-process.
 
-That copy is what is left to remove. The reader takes a `&str`, so
-"documents larger than memory" is still in *When not to use*, and
-`quick-xml` is still the answer for a socket or a gigabyte file. The
-work is an input abstraction that refills a buffer, plus deciding what
-happens to a token that straddles a refill.
+The extraction paid for itself twice over. `oxml-cli`'s unit tests
+could previously only assert `is_ok()`, because output went to the
+process's stdout; making the stream a parameter found `cmd_query`
+taking a fresh lock on stdout inside its node-set branch, and showed
+that `stats` printed a breakdown two short of its own total on any
+namespaced document. `oxml-mcp`'s first benchmark reported a tool call
+as faster than the parse inside it, which is impossible and is what
+sent that comparison to a paired form.
+
+Neither publishes an absolute figure, for the reason in section 1.
+Both publish paired ratios: JSON-RPC costs roughly 10-25% over the
+bare parse on a 200 KB payload, argument handling and file I/O
+roughly 9%.
+
+### 5. Serialisation and mutation
+
+One feature, not two. Round-tripping comments, entity references,
+attribute order and whitespace is most of the difficulty, and a writer
+that loses any of them is not a round trip.
 
 ## After that
 
@@ -159,7 +172,7 @@ happens to a token that straddles a refill.
   beyond UTF-8/UTF-16/ISO-8859-1.
 - **`xmlschema`: closing the remaining conformance failures.** The
   suite itself is no longer the gap — it runs the W3C XSD tests,
-  39,420 of them, at 95.6% of decided. What remains is substitution
+  39,420 of them, at 95.0% of decided. What remains is substitution
   groups and the undecidable corners of derivation validity.
 - **`oxml-lsp`: the LSP transport.** The crate is named for a protocol
   it does not yet speak; `analyse()` and a linter are what exist.

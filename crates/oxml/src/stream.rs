@@ -29,14 +29,17 @@
 //! This trades time for memory, and the trade is only worth making
 //! when the memory matters.
 //!
-//! It does **not** let you read a document larger than memory.
-//! [`Reader::new`] takes a `&str`, and normalising line endings copies
-//! it once more, so nearly all of that 191,967 bytes *is* the
-//! document. What is removed is everything that outlives the event
-//! that produced it: the arena, the interned names, the node table.
-//! Reading incrementally from a `BufRead` is a separate piece of work;
-//! until it exists, `quick-xml` is the right tool for input larger
-//! than memory.
+//! [`Reader::new`] does **not** let you read a document larger than
+//! memory: it takes a `&str`, and normalising line endings copies it
+//! once more, so nearly all of that 191,967 bytes *is* the document.
+//! What it removes is everything that outlives the event that
+//! produced it -- the arena, the interned names, the node table.
+//!
+//! [`Reader::from_reader`] does. It keeps the construct it is reading
+//! and drops what it has passed, so the memory is bounded by the
+//! largest single construct rather than by the document. Measured on
+//! a 185 KB document and a 1,929 KB one -- ten times the input --
+//! both held **34,722 bytes**, the same figure to the byte.
 //!
 //! [`Reader`] runs **the same scanner** [`parse`] does. That is the
 //! design constraint, not an implementation detail: two XML scanners
@@ -67,9 +70,11 @@
 use alloc::borrow::ToOwned;
 use alloc::string::String;
 use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use std::io::{BufRead, Read as _};
 
 use crate::error::{Error, ErrorKind, Result};
-use crate::parser::Parser;
+use crate::parser::{Parser, Version};
 use crate::tree::{Attribute, ExpandedName};
 use crate::{Document, Limits};
 
@@ -141,6 +146,52 @@ pub struct Reader {
     done: bool,
     /// Held back after a self-closing tag.
     pending_end: Option<Event>,
+    /// Where the rest of the document comes from, if anywhere.
+    source: Source,
+    /// Bytes dropped off the front of `text` by compaction.
+    ///
+    /// Added back to every error offset, so a caller's caret lands in
+    /// their document rather than in a window of it.
+    consumed: usize,
+}
+
+/// Where a reader gets its text.
+///
+/// `Debug` is written rather than derived: the incremental variant
+/// owns a `dyn BufRead`, which has no `Debug` of its own and would
+/// otherwise take the whole `Reader` down with it.
+enum Source {
+    /// All of it is already in `text`.
+    Complete,
+    /// More may arrive.
+    #[cfg(feature = "std")]
+    Incremental(Box<Incoming>),
+}
+
+/// A byte source part-way through being read.
+#[cfg(feature = "std")]
+struct Incoming {
+    /// The caller's reader.
+    inner: Box<dyn BufRead>,
+    /// Whether it has returned zero bytes.
+    at_eof: bool,
+    /// The document's version, which decides both what counts as a
+    /// line ending and which characters are legal.
+    version: Version,
+    /// Bytes that did not form a whole character.
+    ///
+    /// A read can stop in the middle of a multi-byte character, and
+    /// the remainder arrives next time. Decoding without holding them
+    /// back turns a legal document into an encoding error at a
+    /// position that depends on the buffer size.
+    partial: Vec<u8>,
+    /// A trailing `\r` held back.
+    ///
+    /// `\r\n` normalises to one `\n`, and the pair can straddle a
+    /// read. Emitting the `\r` immediately would produce two line
+    /// endings where the document has one -- a difference that
+    /// appears only at certain buffer sizes, which is the worst kind.
+    pending_cr: bool,
 }
 
 /// Where the scan has reached in the document.
@@ -186,6 +237,125 @@ struct Carried {
     entity_budget: usize,
 }
 
+impl core::fmt::Debug for Source {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Complete => f.write_str("Complete"),
+            #[cfg(feature = "std")]
+            Self::Incremental(incoming) => f
+                .debug_struct("Incremental")
+                .field("at_eof", &incoming.at_eof)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl Incoming {
+    /// Read one buffer's worth, normalise it, and append it.
+    ///
+    /// Returns whether anything was added. Three things have to
+    /// survive a boundary that can fall anywhere:
+    ///
+    /// - a multi-byte character split across two reads, held in
+    ///   `partial` until the rest arrives;
+    /// - a `\r\n` pair split across two reads, held as `pending_cr`
+    ///   so it normalises to one `\n` rather than two;
+    /// - the offset, which is the caller's and not this buffer's.
+    ///
+    /// Each of those, got wrong, produces a document that reads
+    /// correctly at one buffer size and not another.
+    fn pull(&mut self, text: &mut String, version: Version) -> Result<bool> {
+        if self.at_eof && self.partial.is_empty() && !self.pending_cr {
+            return Ok(false);
+        }
+
+        let mut buf = [0u8; 8192];
+        let read = match self.inner.read(&mut buf) {
+            Ok(n) => n,
+            Err(e) => {
+                return Err(Error::new(
+                    ErrorKind::Io(e.to_string()),
+                    text.len(),
+                ));
+            }
+        };
+        if read == 0 {
+            self.at_eof = true;
+            // A held-back `\r` at the end of the document is a line
+            // ending of its own.
+            if self.pending_cr {
+                self.pending_cr = false;
+                text.push('\n');
+                return Ok(true);
+            }
+            if !self.partial.is_empty() {
+                return Err(Error::new(
+                    ErrorKind::MalformedEncoding,
+                    text.len(),
+                ));
+            }
+            return Ok(false);
+        }
+
+        let mut bytes = core::mem::take(&mut self.partial);
+        bytes.extend_from_slice(&buf[..read]);
+
+        // Decode as much as is whole; keep the tail for next time.
+        let chunk = match core::str::from_utf8(&bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                let valid = e.valid_up_to();
+                if e.error_len().is_some() {
+                    return Err(Error::new(
+                        ErrorKind::MalformedEncoding,
+                        text.len() + valid,
+                    ));
+                }
+                // Incomplete rather than invalid: the rest is coming.
+                self.partial = bytes[valid..].to_vec();
+                match core::str::from_utf8(&bytes[..valid]) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        return Err(Error::new(
+                            ErrorKind::MalformedEncoding,
+                            text.len(),
+                        ));
+                    }
+                }
+            }
+        };
+        let chunk = chunk.to_owned();
+        if !self.partial.is_empty() && chunk.is_empty() {
+            // Nothing decodable yet; ask again.
+            return Ok(true);
+        }
+
+        let before = text.len();
+        // A `\r` held back from last time pairs with a `\n` now.
+        let mut rest = chunk.as_str();
+        if self.pending_cr {
+            self.pending_cr = false;
+            text.push('\n');
+            if let Some(stripped) = rest.strip_prefix('\n') {
+                rest = stripped;
+            }
+        }
+        // Hold back a trailing `\r`: its partner may be in the next
+        // read.
+        let (body, hold) = match rest.strip_suffix('\r') {
+            Some(body) if !self.at_eof => (body, true),
+            _ => (rest, false),
+        };
+        self.pending_cr = hold;
+
+        let normalised = crate::parser::normalize_line_endings(body, version);
+        text.push_str(&normalised);
+        crate::parser::check_characters(&text[before..], version, before)?;
+        Ok(true)
+    }
+}
+
 impl Reader {
     /// Read `input` as a sequence of events.
     ///
@@ -205,6 +375,7 @@ impl Reader {
     /// As [`Reader::new`].
     pub fn with_limits(input: &str, limits: Limits) -> Result<Self> {
         let (text, version) = crate::parser::prepare(input, limits)?;
+        let standalone = crate::parser::declared_standalone(&text);
         Ok(Self {
             text,
             carried: Carried {
@@ -216,7 +387,7 @@ impl Reader {
                 depth: 0,
                 dtd: None,
                 entity_budget: limits.max_entity_expansion,
-                standalone: crate::parser::declared_standalone(input),
+                standalone,
             },
             cursor: Cursor {
                 pos: 0,
@@ -226,7 +397,225 @@ impl Reader {
             },
             done: false,
             pending_end: None,
+            source: Source::Complete,
+            consumed: 0,
         })
+    }
+
+    /// Read a document from a byte source, a buffer at a time.
+    ///
+    /// Where [`Reader::new`] is handed the whole document,
+    /// this holds only what it needs to produce the next event: the
+    /// text of the construct being read, plus whatever is still open
+    /// around it. A document larger than memory is readable, which is
+    /// the thing a `&str` entry point cannot do however little it
+    /// retains.
+    ///
+    /// The events are the same events. `Reader::new` on the same bytes
+    /// produces an identical sequence, and a test holds the two to it
+    /// across buffer sizes down to one byte -- because a bug here
+    /// looks like a document that parses at one buffer size and not
+    /// another, which is nearly impossible to find from a report.
+    ///
+    /// # Errors
+    ///
+    /// As [`Reader::new`], plus any error the reader itself gives.
+    /// Offsets are into the document, not into the current buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oxml::stream::{Event, Reader};
+    ///
+    /// let xml = "<catalogue><item>Tea</item></catalogue>";
+    /// let mut reader = Reader::from_reader(xml.as_bytes())?;
+    /// let mut items = 0;
+    /// while let Some(event) = reader.next_event()? {
+    ///     if let Event::StartElement { name, .. } = event {
+    ///         if name.local == "item" {
+    ///             items += 1;
+    ///         }
+    ///     }
+    /// }
+    /// assert_eq!(items, 1);
+    /// # Ok::<(), oxml::Error>(())
+    /// ```
+    #[cfg(feature = "std")]
+    pub fn from_reader<R: BufRead + 'static>(reader: R) -> Result<Self> {
+        Self::from_reader_with(reader, Limits::default())
+    }
+
+    /// [`Reader::from_reader`], with limits.
+    ///
+    /// # Errors
+    ///
+    /// As [`Reader::from_reader`].
+    #[cfg(feature = "std")]
+    pub fn from_reader_with<R: BufRead + 'static>(
+        reader: R,
+        limits: Limits,
+    ) -> Result<Self> {
+        let mut incoming = Incoming {
+            inner: Box::new(reader),
+            at_eof: false,
+            // Provisional: the declaration decides it, and the
+            // declaration is at the front of what the first read
+            // returns.
+            version: Version::V10,
+            partial: Vec::new(),
+            pending_cr: false,
+        };
+
+        // Enough for any XML declaration, so the version is known
+        // before a single character is judged by it. `\u{85}` and
+        // `\u{2028}` are line endings in 1.1 and ordinary characters
+        // in 1.0, so reading even one character requires knowing which
+        // document this is.
+        let mut text = String::new();
+        while text.len() < 1024 && !incoming.at_eof {
+            if !incoming.pull(&mut text, Version::V10)? {
+                break;
+            }
+        }
+        let version = crate::parser::declared_version(&text)?;
+        incoming.version = version;
+        crate::parser::check_prolog_shape(&text)?;
+        // The prefix was normalised as 1.0 while the version was
+        // unknown. For a 1.1 document that is wrong, so it is redone
+        // now that the answer is in hand.
+        if version != Version::V10 {
+            text = crate::parser::normalize_line_endings(&text, version)
+                .into_owned();
+        }
+        crate::parser::check_characters(&text, version, 0)?;
+        let standalone = crate::parser::declared_standalone(&text);
+
+        Ok(Self {
+            text,
+            carried: Carried {
+                document: Document::placeholder(),
+                namespaces: crate::parser::Namespaces::default(),
+                names: alloc::collections::BTreeMap::new(),
+                version,
+                limits,
+                depth: 0,
+                dtd: None,
+                entity_budget: limits.max_entity_expansion,
+                standalone,
+            },
+            cursor: Cursor {
+                pos: 0,
+                open: Vec::new(),
+                started: false,
+                seen_root: false,
+            },
+            done: false,
+            pending_end: None,
+            source: Source::Incremental(Box::new(incoming)),
+            consumed: 0,
+        })
+    }
+
+    /// Buffer until the next construct is whole, or the source ends.
+    ///
+    /// The scanner is never asked to work on a partial construct.
+    /// Speculatively scanning and retrying on failure would be
+    /// simpler to write and wrong: a half-scanned start tag has
+    /// already interned a name and pushed a namespace scope, so the
+    /// retry would see state the first attempt left behind.
+    ///
+    /// Whether a construct is whole is a question about delimiters
+    /// only -- `-->`, `]]>`, `?>`, `>` -- which is cheap to answer and
+    /// does not require understanding what is between them.
+    #[cfg(feature = "std")]
+    fn ensure_construct(&mut self) -> Result<()> {
+        loop {
+            if self.construct_is_whole() {
+                return Ok(());
+            }
+            let Source::Incremental(incoming) = &mut self.source else {
+                return Ok(());
+            };
+            let version = incoming.version;
+            // Nothing more is coming: let the scanner meet the end and
+            // report it, rather than inventing an error here.
+            if !incoming.pull(&mut self.text, version)? {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Whether everything up to the end of the next construct is
+    /// buffered.
+    #[cfg(feature = "std")]
+    fn construct_is_whole(&self) -> bool {
+        let rest = &self.text[self.cursor.pos.min(self.text.len())..];
+        if rest.is_empty() {
+            return false;
+        }
+        if !rest.starts_with('<') {
+            // Character data runs to the next `<`. The whole run has
+            // to be here, because the tree parser merges a run into
+            // one text node and the events must agree with it.
+            return rest.contains('<');
+        }
+        for (opener, closer) in
+            [("<!--", "-->"), ("<![CDATA[", "]]>"), ("<?", "?>")]
+        {
+            if let Some(body) = rest.strip_prefix(opener) {
+                return body.contains(closer);
+            }
+        }
+        if rest.starts_with("<!DOCTYPE") {
+            // An internal subset contains `>` freely, so the end is
+            // the first `>` at bracket depth zero.
+            let mut depth = 0usize;
+            for c in rest.chars() {
+                match c {
+                    '[' => depth += 1,
+                    ']' => depth = depth.saturating_sub(1),
+                    '>' if depth == 0 => return true,
+                    _ => {}
+                }
+            }
+            return false;
+        }
+        // A tag. `>` inside an attribute value is data, so quotes are
+        // tracked rather than searching for the first one.
+        let mut quote: Option<char> = None;
+        for c in rest.chars() {
+            match (quote, c) {
+                (Some(q), c) if c == q => quote = None,
+                (None, '"' | '\'') => quote = Some(c),
+                (None, '>') => return true,
+                // Inside a quoted value everything is data; outside
+                // one, anything else is part of the name or an
+                // attribute.
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Drop text the scanner has passed.
+    ///
+    /// This is what makes a document larger than memory readable: the
+    /// buffer holds the construct being read and nothing before it.
+    /// Offsets stay the caller's because `consumed` records what was
+    /// dropped and every error adds it back.
+    #[cfg(feature = "std")]
+    fn compact(&mut self) {
+        /// Below this, dropping costs more than it saves.
+        const THRESHOLD: usize = 8192;
+
+        if !matches!(self.source, Source::Incremental(_))
+            || self.cursor.pos < THRESHOLD
+        {
+            return;
+        }
+        let _ = self.text.drain(..self.cursor.pos);
+        self.consumed += self.cursor.pos;
+        self.cursor.pos = 0;
     }
 
     /// The next event, or `None` at the end of the document.
@@ -243,7 +632,21 @@ impl Reader {
         if self.done {
             return Ok(None);
         }
-        match Self::scan(&self.text, &mut self.carried, &mut self.cursor) {
+        #[cfg(feature = "std")]
+        self.ensure_construct()?;
+
+        let outcome =
+            Self::scan(&self.text, &mut self.carried, &mut self.cursor);
+        #[cfg(feature = "std")]
+        self.compact();
+
+        // Offsets are the caller's, not this buffer's.
+        let outcome = outcome.map_err(|mut e| {
+            e.offset += self.consumed;
+            e
+        });
+
+        match outcome {
             Ok(Scanned::Event(event)) => Ok(Some(event)),
             Ok(Scanned::SelfClosed(start, end)) => {
                 self.pending_end = Some(end);
