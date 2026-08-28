@@ -1,0 +1,63 @@
+name: Release
+
+# Publishing is done by CI, not from a laptop. A local `cargo publish`
+# depends on whatever that machine happened to have checked out, and
+# crates.io cannot be un-published -- only yanked.
+#
+# The trigger is a tag. Pushing `v0.0.7` publishes 0.0.7 and nothing
+# else: the first job refuses to run if the tag disagrees with
+# Cargo.toml.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # A tag that disagrees with Cargo.toml publishes the wrong
+      # version under the right name, and that cannot be taken back.
+      - name: The tag must match the version in Cargo.toml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          have="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="oxml") | .version')"
+          if [ "$tag" != "$have" ]; then
+            echo "::error::tag $tag does not match Cargo.toml $have"
+            exit 1
+          fi
+          echo "publishing oxml $tag"
+
+      - run: cargo test --all-features
+
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p oxml
+
+      # crates.io indexes asynchronously, so a publish that returned
+      # success is not yet a publish anyone can depend on. The next
+      # crate in the suite waits on exactly this.
+      - name: Confirm it is on crates.io
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 30); do
+            if curl -sf "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
+              echo "oxml $tag is live"; exit 0
+            fi
+            echo "not indexed yet ($i/30)"; sleep 10
+          done
+          echo "::error::oxml $tag did not appear within five minutes"
+          exit 1

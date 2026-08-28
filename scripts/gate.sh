@@ -11,7 +11,11 @@
 # Run this before pushing. It is slower than `cargo test`; it is much
 # faster than a round-trip through CI.
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)"
+# Resolve the repository from this script's own location, not from
+# the caller's. `git rev-parse` reads the *current* directory, so
+# running this by absolute path from anywhere else failed with
+# "fatal: not a git repository".
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 TOOLCHAIN="${OXML_TOOLCHAIN:-1.98.0}"
 MSRV="${OXML_MSRV:-1.86.0}"

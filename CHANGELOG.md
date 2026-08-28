@@ -10,7 +10,7 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
-## [Unreleased]
+## [0.0.7] - 2026-08-28
 
 ### Added
 

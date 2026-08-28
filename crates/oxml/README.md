@@ -32,7 +32,7 @@
 
 - [One-minute migration](#one-minute-migration) — name-for-name mapping from `sxd-xpath`, `roxmltree`, `quick-xml`, `libxml`
 - [Why this approach?](#why-this-approach) — design rationale
-- [Capabilities in 0.0.6](#capabilities-in-006) — release inventory
+- [Capabilities in 0.0.7](#capabilities-in-007) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — what each crate does and does not do
 - [Benchmarks](#benchmarks) — measured, with the method stated
 - [Features](#features) — cargo feature flags
@@ -72,14 +72,14 @@
 
 ```toml
 [dependencies]
-oxml = "0.0.6"
+oxml = "0.0.7"
 ```
 
 Parsing only, without the XPath engine:
 
 ```toml
 [dependencies]
-oxml = { version = "0.0.6", default-features = false, features = ["std"] }
+oxml = { version = "0.0.7", default-features = false, features = ["std"] }
 ```
 
 From source:
@@ -238,7 +238,7 @@ Two architectural choices motivate the design:
    are usually well-vetted, but their existence makes a
    security-conscious downstream audit meaningfully harder.
 
-## Capabilities in 0.0.6
+## Capabilities in 0.0.7
 
 **Parsing**
 
@@ -268,6 +268,15 @@ Two architectural choices motivate the design:
 - Parent, children, descendants, text (XPath `string-value` semantics)
 - Attributes and namespace declarations as first-class nodes
 - `Send + Sync`, so one document serves any number of threads
+
+**Streaming**
+
+- `stream::Reader` yields events without building a tree, over the
+  same scanner the tree parser uses, so the two agree by construction
+- `Reader::from_reader` reads from any `BufRead`, so a document larger
+  than memory is readable; memory stays bounded regardless of size
+- Characters and `\r\n` pairs split across a read are held back until
+  whole, so the buffer size cannot change what a document means
 
 **XPath 1.0**
 
@@ -300,7 +309,7 @@ Two architectural choices motivate the design:
 
 - **All 2,557** decided W3C conformance tests pass, with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 389 tests and 24 doctests; 97.2% line coverage, gated in CI
+- 403 tests and 26 doctests; 96.8% line coverage, gated in CI
 - Six fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not yet:** serialisation, mutation, XSD validation and XSLT. The
