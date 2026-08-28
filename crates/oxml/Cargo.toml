@@ -48,7 +48,7 @@ libm = { version = "0.2", optional = true }
 
 [dev-dependencies]
 proptest = "1"
-criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 quick-xml = "0.42"
 roxmltree = "0.21"
 
