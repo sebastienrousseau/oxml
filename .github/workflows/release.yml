@@ -45,11 +45,15 @@ jobs:
       # published from a laptop before this workflow existed, and
       # tagging it afterwards should record the release, not attempt
       # it again.
+      # crates.io rejects requests without a User-Agent identifying the
+      # client. curl sends none, so from a runner every one of these
+      # calls failed -- and a failed lookup reads as "not published",
+      # which is the answer that makes the workflow do the wrong thing.
       - name: Skip if this version is already published
         id: published
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          if curl -sf "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
+          if curl -sf -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
             echo "oxml $tag is already on crates.io; nothing to do"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -90,7 +94,7 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME#v}"
           for i in $(seq 1 30); do
-            if curl -sf "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
+            if curl -sf -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
               echo "oxml $tag is live"; exit 0
             fi
             echo "not indexed yet ($i/30)"; sleep 10
