@@ -14,6 +14,8 @@ one is listed as not done, however close it feels.
 - [Done](#done)
 - [Next](#next)
 - [After that](#after-that)
+- [Suite audit, 2026-08-28](#suite-audit-2026-08-28)
+- [Candidates for 0.0.7](#candidates-for-007)
 - [Not planned](#not-planned)
 - [How to tell when something is finished](#how-to-tell-when-something-is-finished)
 
@@ -195,38 +197,104 @@ happens to a token that straddles a refill.
 - **`oxml-mcp`: a handle-based flow**, so a large document need not
   cross the boundary on every call.
 
-## Releasing 0.0.4 — the ordering matters
+## Suite audit, 2026-08-28
 
-The suite ships one version across six crates, and this release
-contains a change that makes the order load-bearing.
+Measured across all six repositories rather than estimated. Every
+figure below came from running something.
 
-**oxml 0.0.4 resolves namespace prefixes in XPath name tests**, and an
-unbound prefix is now a compile error. The satellites pass expressions
-straight through and none of them can supply bindings:
+| Repo | Src | Tests | Coverage | Benches | Examples | Fuzz | CI jobs |
+|---|---|---|---|---|---|---|---|
+| `oxml` | 10,637 | 389 | 97.2% | 7 | 10 | 6 | 15 |
+| `xmlschema` | 6,790 | 238 | ≥95% | 3 | 1 | **0** | 6 |
+| `oxml-mcp` | 1,439 | — | 99.2% | **0** | **0** | 0 | 5 |
+| `oxml-cli` | 729 | — | 99.2% | **0** | **0** | 0 | 5 |
+| `oxml-wasm` | 517 | — | 100% core | **0** | **0** | 0 | 6 |
+| `oxml-lsp` | 256 | — | 97.8% | **0** | 1 | 0 | 5 |
 
-| Crate | Needs |
-|---|---|
-| `oxml-cli` | a `-n, --ns PREFIX=URI` flag — specified in its `doc/NAMESPACES.md`, not implemented |
-| `oxml-wasm` | a second argument on the query methods |
-| `oxml-mcp` | an optional `namespaces` argument on `xml_query`, and namespaces reported by `xml_inspect` |
+`oxml-wasm` reads 80.2% to `llvm-cov` because `src/lib.rs` holds the
+`wasm-bindgen` exports, which cannot be instrumented natively. They
+are covered by eleven `wasm_bindgen_test` cases run under
+`wasm-pack test --node`, and `core.rs` is at 100%. The exclusion is
+sound; the native figure is the misleading one.
 
-Bump a satellite's dependency without adding its binding mechanism and
-namespaced queries become **impossible** in that tool: a
-previously-wrong answer turns into an error with no remedy, which is
-worse than either.
+### The gap that matters most
 
-So for each satellite, **the dependency bump and the binding mechanism
-are one change**, not two commits:
+**`xmlschema` publishes 95.6% of 39,420 conformance tests and nothing
+protects it.** Its `conformance/` crate has a runner and a downloader,
+an **empty** `baselines/` directory, **no** `tests/` directory, and no
+CI job that runs the suite. The headline figure is produced by
+invoking a binary by hand.
 
-1. Merge and publish `oxml` 0.0.4.
-2. Per satellite: bump the dependency *and* add its bindings API,
-   together.
-3. Publish the satellites.
+`oxml` has exactly this in working order — a baseline that ratchets,
+a test that fails on regression *and* on unreviewed improvement, and a
+check that the published figures match what the harness prints. That
+machinery already exists and needs porting, not inventing.
 
-`namespace-uri()` selects on a namespace without naming a prefix and
-works in every version, so it is the answer for anyone caught between
-the two — and it stays useful afterwards, for when the URI is known and
-the prefix is not.
+This is the same shape as the defects found in `oxml` this cycle: a
+number that looks measured and is not checked.
+
+### Documentation that contradicts the code
+
+Both verified by running the thing, not by reading it.
+
+- **`oxml-cli`**'s README says namespace prefixes on the command line
+  are "Not yet". `--ns` exists, is in `--help`, works
+  (`oxml query --ns m=urn:x '//m:a'` returns the node), and the error
+  message for an unbound prefix *tells you to use it*.
+- **`xmlschema`**'s ecosystem table lists `oxml-cli`, `oxml-lsp`,
+  `oxml-mcp` and `oxml-wasm` as **Planned**. All four are published.
+
+### Verified, so not a gap
+
+The breaking change in 0.0.7 -- `Document::kind` returning a borrowed
+view -- **breaks none of the five satellites**. All build and pass
+against `main`: 209 tests, zero failures. The view was shaped so that
+`Some(NodeKind::Text(t)) => t.trim()` and `a.value` keep compiling,
+and they do. Earlier notes in this file warned they would break; that
+warning was wrong and is withdrawn.
+
+## Candidates for 0.0.7
+
+In the order that buys the most, with the reason each is worth doing.
+
+1. **Port the conformance ratchet to `xmlschema`.** A baseline file, a
+   test that fails on drift in either direction, a figures check, and
+   a CI job. Its largest claim is currently unguarded, and the code to
+   guard it is written and working next door.
+
+2. **Fuzz `xmlschema`.** It parses untrusted XSD -- the same threat
+   model as `oxml`, which has six targets and found real defects with
+   them. `xmlschema` has none. A schema is an input a caller did not
+   write.
+
+3. **Correct the two stale claims** above. Small, and exactly the kind
+   of drift this suite keeps finding in itself.
+
+4. **Type-aware attribute-value normalisation** in `oxml`. The last
+   conformance failure: a tokenized `ATTLIST` type is stripped and
+   collapsed where `CDATA` is not, so `xmlns:b=" urn:xyzzy "` declared
+   `NMTOKEN` binds two prefixes to one namespace.
+
+5. **Examples for `oxml-cli`, `oxml-mcp` and `oxml-wasm`.** `oxml`
+   gates on every public function being executed by an example; the
+   satellites have none at all. The gate is what keeps that true, so
+   port it with them.
+
+6. **Benchmarks for the four satellites.** None has any. `oxml-mcp` at
+   1,439 lines does per-call document work that nothing measures.
+
+7. **Streaming from a reader** in `oxml`. The remaining ❌: `Reader`
+   takes a `&str`, so a document larger than memory is still out of
+   reach.
+
+8. **The absolute throughput figure.** Not code -- it needs a quiet
+   machine, which is now a demonstrated conclusion rather than an
+   excuse. See [BENCHMARKS.md](BENCHMARKS.md).
+
+Deliberately *not* on this list: an LSP transport for `oxml-lsp`. It
+is the crate's whole reason to exist and too large for a patch
+release, and its README already says plainly that it is not yet a
+language server.
 
 ## Not planned
 
