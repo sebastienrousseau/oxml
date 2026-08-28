@@ -304,3 +304,64 @@ fn reading_events_allocation_cost() {
         stream_allocs as f64 / events as f64
     );
 }
+
+/// Reading from a byte source holds a bounded amount, whatever the
+/// document's size.
+///
+/// This is the difference between `Reader::new` and
+/// `Reader::from_reader`. Both build no tree, but `new` is handed the
+/// whole document and keeps it; `from_reader` keeps the construct it
+/// is reading and drops what it has passed. A document larger than
+/// memory is readable only by the second.
+#[test]
+fn reading_from_a_source_does_not_hold_the_document() {
+    use oxml::stream::{Event, Reader};
+    use std::io::Cursor;
+
+    let small = corpus(2_000);
+    let large = corpus(20_000);
+    assert!(
+        large.len() > small.len() * 5,
+        "the two sizes must differ enough to tell a bound from a slope"
+    );
+
+    let peak_of = |source: &str| {
+        let owned = source.as_bytes().to_vec();
+        let (events, peak) = measure_peak(move || {
+            let mut reader =
+                Reader::from_reader(Cursor::new(owned)).expect("well-formed");
+            let mut n = 0usize;
+            while let Some(event) = reader.next_event().expect("valid") {
+                if matches!(event, Event::StartElement { .. }) {
+                    n += 1;
+                }
+            }
+            n
+        });
+        assert!(events > 0);
+        peak
+    };
+
+    let small_peak = peak_of(&small);
+    let large_peak = peak_of(&large);
+
+    println!(
+        "{} KB held {small_peak} bytes; {} KB held {large_peak}",
+        small.len() / 1024,
+        large.len() / 1024
+    );
+
+    // Ten times the document, nothing like ten times the memory. The
+    // bound is the buffer and the open-element stack, not the input.
+    assert!(
+        large_peak < small_peak * 2,
+        "holding {large_peak} for a document ten times the size of one \
+         that held {small_peak} is not a bound, it is a slope"
+    );
+    assert!(
+        large_peak < large.len(),
+        "held {large_peak} bytes of a {} byte document; the point of \
+         reading from a source is not to keep it",
+        large.len()
+    );
+}

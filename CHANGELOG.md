@@ -10,6 +10,41 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [Unreleased]
+
+### Added
+
+- **Streaming from a reader.** `Reader::from_reader` and
+  `from_reader_with` take any `BufRead`, so a document larger than
+  memory can now be read; previously `Reader` took a `&str` and the
+  whole document had to be resident. Memory stays bounded regardless
+  of document size -- `tests/allocations.rs` reads a 185 KB and a
+  1,929 KB document and finds both holding 34,722 bytes.
+
+  Tokens straddling a refill are handled rather than avoided: a
+  multi-byte character split across a read is held back until it is
+  whole, a `\r\n` pair split across one normalises to a single line
+  ending, and a construct that is not yet complete is not scanned at
+  all. Speculative scanning was rejected because a half-scanned start
+  tag has already interned a name and pushed a namespace scope, so a
+  retry would see state the first attempt left behind.
+
+  `tests/stream_from_reader.rs` compares streamed against in-memory
+  events over twelve documents at chunk sizes 1, 2, 3, 7, 64 and 8192,
+  and requires identical error *kinds and offsets*, not merely
+  identical failures.
+
+### Fixed
+
+- **`Reader` read `standalone` from the raw input** rather than from
+  the text with line endings normalised, disagreeing with the tree
+  parser and with `from_reader`. In XML 1.1 a NEL or U+2028 between
+  `standalone` and its `=` is whitespace only after normalisation, so
+  `standalone="yes"` went unseen -- and the flag is what withdraws the
+  excuse for an entity an unread external subset might have declared.
+  A document referencing an undeclared entity therefore parsed
+  successfully, substituting empty text for content it had asked for.
+
 ## [0.0.6] - 2026-08-26
 
 ### Changed

@@ -92,6 +92,14 @@ pub enum ErrorKind {
     /// legal, the document may be perfectly well-formed, and a caller
     /// can decode it themselves and use [`crate::parse`].
     UnsupportedEncoding,
+    /// The byte source failed while the document was being read.
+    ///
+    /// Only [`crate::stream::Reader::from_reader`] can produce this:
+    /// every other entry point is handed text that has already been
+    /// read. It carries the reader's own message, because a caller
+    /// debugging a truncated file needs to know whether the file was
+    /// truncated or the disk was busy.
+    Io(alloc::string::String),
     /// The document type declaration is syntactically malformed.
     ///
     /// This is a well-formedness error, not a validity error: the
@@ -237,6 +245,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::UnsupportedEncoding => {
                 f.write_str("declared encoding is not supported")
             }
+            ErrorKind::Io(why) => write!(f, "reading the document: {why}"),
             ErrorKind::MalformedDtd(why) => {
                 write!(f, "malformed doctype: {why}")
             }

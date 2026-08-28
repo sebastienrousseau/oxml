@@ -617,12 +617,33 @@ for memory, and the trade is only worth making when the memory
 matters — which is the opposite of what "streaming" usually
 suggests.
 
-**What it does not.** `Reader::new` takes a `&str`, and normalising
-line endings copies it once more, so almost all of that 191,967 bytes
-*is* the document. A file larger than memory is still a file oxml
-cannot read; `quick-xml` reads from any `BufRead` and remains the
-right tool for that. Reading from a reader is
-[on the roadmap](https://github.com/sebastienrousseau/oxml/blob/main/doc/ROADMAP.md).
+**Reading from a byte source.** `Reader::new` takes a `&str`, so the
+document is resident either way. `Reader::from_reader` takes anything
+implementing `BufRead` and keeps only the construct it is reading,
+dropping what it has passed — so a file larger than memory is
+readable. Measured on a 185 KB document and a 1,929 KB one, ten times
+the input, both held **34,722 bytes**: the same figure to the byte.
+
+```rust
+use oxml::stream::{Event, Reader};
+
+let mut reader = Reader::from_reader(std::io::Cursor::new(
+    b"<catalogue><item>Tea</item></catalogue>".to_vec(),
+))?;
+let mut items = 0;
+while let Some(event) = reader.next_event()? {
+    if let Event::StartElement { name, .. } = event {
+        if name.local == "item" { items += 1; }
+    }
+}
+assert_eq!(items, 1);
+# Ok::<(), oxml::Error>(())
+```
+
+The events are the same events: a test holds `from_reader` and
+`Reader::new` to an identical sequence at buffer sizes down to one
+byte, because a bug here looks like a document that parses at one
+buffer size and not another.
 
 Events carry resolved names, so a prefix is looked up in the scopes
 open at that point exactly as in the tree, and `Limits` apply
@@ -871,10 +892,12 @@ Honestly:
 - **You need complete XSD validation today.** `xmlschema` is
   published, but it is early: check its own README for what is
   implemented before depending on it.
-- **You are streaming gigabytes, or reading from a socket.**
-  `stream::Reader` skips the tree, but it is handed a `&str`, so the
-  document is resident either way. `quick-xml` reads from any
-  `BufRead` and is the right tool for input larger than memory.
+- **Raw streaming speed is what you are buying.**
+  `stream::Reader::from_reader` reads from any `BufRead` and holds a
+  bounded amount, so size is no longer the obstacle — but reading a
+  document as events is about 1.9 times *slower* than parsing it into
+  a tree here, because an event owns its text. `quick-xml` is faster
+  at this and stays the right tool when throughput is the point.
 - **You need XPath 2.0 or 3.1.** oxml implements 1.0.
 - **Raw parse throughput is your only metric.** `quick-xml` is
   extremely well optimised and years ahead on that axis. oxml's
@@ -916,13 +939,20 @@ and 5%, while a median-based estimate of the same data halved. See
 
 ### Can it stream?
 
-It can read a document as events without building a tree — see
-[Reading without a tree](#reading-without-a-tree) — which is 89% less
-held at peak on a 16,000-node document.
+Yes, both senses of the word.
 
-It cannot read from a `Read` or a `BufRead`, so it cannot handle a
-document larger than memory. If that is what "stream" means to you,
-the answer is no, and `quick-xml` is the tool.
+`stream::Reader::new` reads a document as events without building a
+tree — 89% less held at peak on a 16,000-node document — and
+`stream::Reader::from_reader` reads from any `BufRead`, keeping only
+the construct in hand. A 185 KB document and a 1,929 KB one both held
+34,722 bytes, so size is bounded by the largest single construct
+rather than by the file.
+
+What it is not is *faster*. Reading as events costs about 1.9 times
+what parsing into a tree costs, because an event owns its text where
+the tree keeps ranges into input it already holds. Streaming here
+trades time for memory. If throughput is what you mean by streaming,
+`quick-xml` is the tool.
 
 ### How conformant is it?
 

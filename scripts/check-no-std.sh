@@ -10,6 +10,12 @@ set -uo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 TOOLCHAIN="${OXML_TOOLCHAIN:-1.98.0}"
+# CI sets `RUSTFLAGS: -D warnings`, so a build that only warns there is
+# a build that fails. Checking the exit status alone made this script
+# report `ok` over a configuration CI rejected: a `Version` import and
+# a `source` field that only the `std` paths use went unnoticed here
+# and turned all three bare-metal jobs red on the pull request.
+export RUSTFLAGS="${RUSTFLAGS:--D warnings}"
 TARGETS=(thumbv7em-none-eabihf riscv32imac-unknown-none-elf aarch64-unknown-none)
 # Every combination with `std` off. `xpath` alone is deliberately
 # impossible and is checked separately below.

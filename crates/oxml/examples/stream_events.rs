@@ -93,6 +93,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     );
 
+    // From a byte source, which is what makes a document larger than
+    // memory readable: only the construct in hand is kept, and what
+    // has been passed is dropped. A 185 KB document and a 1,929 KB one
+    // both hold 34,722 bytes.
+    //
+    // `from_reader` takes `R: BufRead + 'static`, so the reader owns
+    // its bytes -- a `File` does already, and a `String` becomes one
+    // through `Cursor`.
+    let mut reader =
+        Reader::from_reader(std::io::Cursor::new(DOC.as_bytes().to_vec()))?;
+    let mut from_source = 0usize;
+    while let Some(event) = reader.next_event()? {
+        if matches!(event, Event::StartElement { .. }) {
+            from_source += 1;
+        }
+    }
+    println!("\nfrom a byte source: {from_source} elements");
+
+    // The same, with limits.
+    let mut reader = Reader::from_reader_with(
+        std::io::Cursor::new(DOC.as_bytes().to_vec()),
+        Limits::default(),
+    )?;
+    let mut counted = 0usize;
+    while reader.next_event()?.is_some() {
+        counted += 1;
+    }
+    println!("from a byte source with limits: {counted} events");
+
     // Streaming and parsing accept exactly the same documents, because
     // they run the same scanner -- only the arena differs.
     let malformed = "<a><b></a>";
