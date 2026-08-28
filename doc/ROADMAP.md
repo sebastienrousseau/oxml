@@ -27,7 +27,7 @@ one is listed as not done, however close it feels.
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
 | Line coverage | ≥95% | **97.2%**, gated | ✅ |
-| Conformance | Published with denominator | **99.96% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
+| Conformance | Published with denominator | **100% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **0.50** | ✅ |
 | Throughput | <100 ms at load | **Ratios measured, absolute still not** — `benches/comparison.rs` reports 0.089× `quick-xml` (events) and 0.319× `roxmltree` (tree), stable to 3–5% under 10 CPU hogs and gated at 15%. MB/s still needs a quiet machine; `scripts/record-throughput.sh` refuses above 0.20 load per core and has never yet been able to record | 🟡 |
 | XPath 1.0 | Complete | **All 13 axes and all 27 functions**, namespaces resolved | ✅ |
@@ -105,49 +105,18 @@ claim rests entirely on the allocation count, which is a proxy.
 `doc/BENCHMARKS.md` states the method and the conditions a figure must
 carry.
 
-### 2. Conformance — one failure left
+### 2. Conformance — done
 
-Every remaining failure is the parser being **too permissive**; there
-is no document in the suite it wrongly rejects.
+**2,557 of 2,557 decided tests pass, with zero panics.** The count was
+37 at the start of this cycle.
 
-The count was 37. Two more went when conditional sections in an
-external subset stopped being swallowed: a section saying `CDATA`
-where only `INCLUDE` or `IGNORE` is legal was accepted in silence,
-because a declaration containing a parameter entity took a path that
-reports anything unparseable as merely *incomplete*.
+What remains is not a failure list but a coverage one: 28 tests reach
+no decision — 14 want namespace processing switched off, 8 want
+Namespaces 1.1, 6 want encodings beyond UTF-8, UTF-16 and ISO-8859-1.
+Supporting any of them is a feature, not a fix, and the coverage
+figure is published beside the rate so the distinction stays visible.
 
-The thirteen before them shared one cause — an
-entity's replacement text substituted as characters where XML 1.0
-§4.4.2 requires it to be *included*, that is parsed as content — and
-were fixed as one change. `crates/oxml/tests/entity_markup.rs` keeps
-them fixed and records the distinction that makes the rule subtle: a
-character reference in an entity's declaration is *included* there and
-then, while a general entity reference is *bypassed*, so
-`<!ENTITY e "&#38;">` is a trap and `<!ENTITY e "&amp;">` is not.
-
-What is left all turns on a file oxml never reads:
-
-`eduni/rmt-ns10-012` needs **type-aware attribute-value
-normalisation**: a value whose `ATTLIST` type is tokenized
-(`NMTOKEN`, `ID`, `IDREF`, …) is stripped and collapsed, where a
-`CDATA` value is not. There, `xmlns:b=" urn:xyzzy "` becomes
-`"urn:xyzzy"`, which binds two prefixes to one namespace and turns
-`a:attr` and `b:attr` into the same attribute declared twice. oxml
-normalises every value as if it were `CDATA`.
-
-No group is a majority any more, which is the news: every failure
-that shared a cause with others has been fixed, and the eleven left
-are individual rules rather than one missing mechanism. Expect each to
-cost about what it is worth.
-
-The design constraint is fixed: the parser must never perform I/O. The
-shape is a caller-supplied map from identifier to content, so the
-caller decides what may be read. See
-[adr/0003-no-external-entities.md](adr/0003-no-external-entities.md).
-
-Regenerate the list with
-`cargo run --release -p oxml-conformance --bin report` rather than
-trusting these counts once the code has moved.
+See [CONFORMANCE.md](CONFORMANCE.md) for what each change was.
 
 ### 3. Memoise entity validation
 

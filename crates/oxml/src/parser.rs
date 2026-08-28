@@ -386,6 +386,30 @@ fn next_reference(text: &str) -> Option<usize> {
     None
 }
 
+/// The further normalisation XML 1.0 section 3.3.3 gives a value whose
+/// declared type is not `CDATA`.
+///
+/// Leading and trailing spaces are discarded and runs of spaces
+/// collapse to one. Only `#x20` counts here: tabs and line breaks
+/// became spaces in the first pass, so by this point there is nothing
+/// else left to collapse.
+///
+/// This is not cosmetic. `xmlns:b=" urn:x "` declared `NMTOKEN`
+/// normalises to `urn:x` and binds that prefix to the same namespace
+/// as one declared without the spaces; two attributes whose expanded
+/// names then collide make the document not well-formed. Skipping this
+/// pass hides the collision entirely.
+fn collapse(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for part in text.split(' ').filter(|p| !p.is_empty()) {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(part);
+    }
+    out
+}
+
 fn push_attribute_normalized(out: &mut String, text: &str) {
     // The overwhelmingly common case is a value with no whitespace to
     // replace, which copies in one go.
@@ -731,6 +755,7 @@ impl<'a> Parser<'a> {
     /// here would leave the ancestor's binding in scope.
     pub(crate) fn bind_namespaces(
         &mut self,
+        element: &str,
         raw_attrs: &[(&'a str, Run)],
     ) -> Result<Vec<(String, String)>> {
         let mut declared = Vec::new();
@@ -738,7 +763,24 @@ impl<'a> Parser<'a> {
         // the loop binds into `self.ns`.
         let input = self.input;
         for (name, run) in raw_attrs {
-            let value = run.as_str(input);
+            // An `xmlns` attribute is an attribute, so a declaration
+            // giving it a non-`CDATA` type normalises its value like
+            // any other -- and the *binding* must use the normalised
+            // form. `xmlns:b=" urn:x "` declared `NMTOKEN` binds
+            // `urn:x`, the same namespace as an unspaced declaration
+            // elsewhere, which is how two attributes come to share one
+            // expanded name. Binding the raw value hid that.
+            let tokenized = self
+                .dtd
+                .as_ref()
+                .is_some_and(|d| d.is_tokenized_attribute(element, name));
+            let collapsed;
+            let value = if tokenized {
+                collapsed = collapse(run.as_str(input));
+                collapsed.as_str()
+            } else {
+                run.as_str(input)
+            };
             if let Some(prefix) = name.strip_prefix("xmlns:") {
                 // Namespaces in XML, section 3: `xml` may be bound only
                 // to the XML namespace and nothing else may be bound to
@@ -817,7 +859,7 @@ impl<'a> Parser<'a> {
         // element's *own* name to resolve.
         self.ns.push_scope();
         let raw_attrs = self.parse_attributes()?;
-        let declared = self.bind_namespaces(&raw_attrs)?;
+        let declared = self.bind_namespaces(qname, &raw_attrs)?;
         let self_closing = if self.starts_with("/>") {
             self.pos += 2;
             true
@@ -888,12 +930,32 @@ impl<'a> Parser<'a> {
             {
                 id_values.push(run.as_str(input).to_owned());
             }
+            // XML 1.0 section 3.3.3: a value whose declared type is
+            // not `CDATA` gets a second pass -- leading and trailing
+            // spaces discarded, runs of spaces collapsed to one. Only
+            // the declaration says which values those are, so this
+            // cannot be decided by looking at the value.
+            let tokenized = self
+                .dtd
+                .as_ref()
+                .is_some_and(|d| d.is_tokenized_attribute(qname, raw));
+            let collapsed = tokenized.then(|| collapse(run.as_str(input)));
+
             // A value that survived scanning as a slice becomes a
             // range into the document's own input; one that entity
             // expansion or normalisation rewrote joins the side table.
-            let value = match run.as_span() {
-                Some((start, len)) => self.verbatim(start, len),
-                None => self.doc.push_expanded(run.as_str(input)),
+            let value = match (&collapsed, run.as_span()) {
+                // Collapsing changed nothing, so the slice still says
+                // it: the common case, and it stays free.
+                (Some(text), Some((start, len)))
+                    if text == run.as_str(input) =>
+                {
+                    let _ = (start, len);
+                    self.verbatim(start, len)
+                }
+                (Some(text), _) => self.doc.push_expanded(text),
+                (None, Some((start, len))) => self.verbatim(start, len),
+                (None, None) => self.doc.push_expanded(run.as_str(input)),
             };
             resolved.push((an, value));
         }

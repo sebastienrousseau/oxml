@@ -9,7 +9,7 @@ are, and how the numbers are produced.
 
 - [Current results](#current-results)
 - [How to read these numbers](#how-to-read-these-numbers)
-- [What the failures are](#what-the-failures-are)
+- [What the failures were](#what-the-failures-were)
 - [The document that was rejected wrongly, and is not any
   more](#the-document-that-was-rejected-wrongly-and-is-not-any-more)
 - [What is unsupported, and why](#what-is-unsupported-and-why)
@@ -21,8 +21,8 @@ are, and how the numbers are produced.
 Suite: `xmlts20130923`, 2,585 tests, pinned by SHA-256.
 
 ```
-overall  2556 pass, 1 fail, 0 panic, 28 unsupported, 0 blocked
-         99.96% of 2557 decided (98.9% coverage of 2585)
+overall  2557 pass, 0 fail, 0 panic, 28 unsupported, 0 blocked
+         100% of 2557 decided (98.9% coverage of 2585)
 ```
 
 By submission:
@@ -31,7 +31,7 @@ By submission:
 |---|---|---|---|
 | japanese | 100% | 6 | 6 |
 | oasis | 100% | 345 | 3 |
-| eduni | 99.8% | 552 | 13 |
+| eduni | 100% | 552 | 13 |
 | ibm | 100% | 1,131 | 5 |
 | sun | 100% | 159 | 0 |
 | xmltest | 100% | 364 | 1 |
@@ -45,7 +45,7 @@ input from the network is a denial of service.
 The pass rate and the coverage figure are always reported together, and
 neither means much alone.
 
-- **99.96% of 2,557 decided** — of the tests where the parser gave a
+- **100% of 2,557 decided** — of the tests where the parser gave a
   definite answer, this many agreed with the suite.
 - **98.9% coverage of 2,585** — this many of the suite's tests produced
   a definite answer at all.
@@ -58,32 +58,44 @@ Twice during development a way was found to reclassify failures that
 would have pushed the headline past 95%. Both were reverted, because
 both raised the number without changing what the parser does.
 
-## What the failures are
+## What the failures were
 
-1 failure, and it is the parser being too **permissive** — accepting a document the suite says is not well-formed.
-There is no longer a document the parser wrongly rejects.
+**None remain.** Every test the suite decides, this parser answers
+correctly: 2,557 of 2,557, with zero panics.
 
-The previous count was 37. The thirteen that went were a single cause:
-an entity's replacement text being substituted as characters where
-XML 1.0 §4.4.2 requires it to be *included* — parsed as content. They
-are listed in `crates/oxml/tests/entity_markup.rs`, which keeps them
-fixed.
+The count was 37 at the start of the 0.0.7 cycle and reached zero in
+ten changes. Every one was found by reading the suite's own stated
+reason for a test and checking it against the specification, rather
+than by guessing what a group of failures probably needed.
 
-What remains needs content oxml never reads — and, in every case,
-rules *about* that content rather than the content itself. The caller
-already supplies it: the conformance runner hands the parser every
-file sitting beside the document, which is how the two `sun`
-conditional-section tests came to pass.
+| What was fixed | Tests |
+|---|---|
+| Entity replacement text included as markup (§4.4.2) | 13 |
+| External parameter entities read at all | 5 |
+| External entity content included as markup | 3 |
+| Version agreement between document and entity (§4.3.4) | 3 |
+| `standalone="yes"` as a well-formedness constraint (§2.9) | 3 |
+| XML whitespace in a text declaration, not Unicode's | 2 |
+| Conditional section keywords in an external subset | 2 |
+| A `%` in an entity value must begin a reference | 2 |
+| A full `ExternalID` after `PUBLIC` | 1 |
+| Characters in an external parameter entity | 1 |
+| Attribute-value normalisation by declared type (§3.3.3) | 1 |
 
-`eduni/rmt-ns10-012` needs **type-aware attribute-value
-normalisation**. `xmlns:b` is declared `NMTOKEN`, so
-`" urn:xyzzy "` normalises to `"urn:xyzzy"` — binding prefixes `a`
-and `b` to one namespace and making `a:attr` and `b:attr` the same
-attribute twice. Tokenized types are normalised further than `CDATA`,
-and oxml treats every value alike.
+Two of those thirty-seven were never parser defects. `eduni/rmt-002`
+sat in the failure list while the rule was implemented correctly the
+whole time: the runner supplied only `.ent` and `.dtd` files beside a
+document, and that test's entity is `002.pe`. The file never arrived,
+the parser relaxed exactly as it should when a caller supplies
+nothing, and the test reported the *parser* as too permissive.
 
-**Five submissions pass every test they decide** — `ibm`, `japanese`,
-`oasis`, `sun` and `xmltest`. `eduni` is at 99.8% of 552.
+### What 100% does not mean
+
+28 tests reach no decision, and the coverage figure is published
+beside the rate for that reason. 14 want namespace processing switched
+off, 8 want Namespaces 1.1, and 6 want encodings beyond UTF-8, UTF-16
+and ISO-8859-1. A pass rate over a shrinking denominator is the oldest
+way to flatter a parser, so both numbers appear together everywhere.
 
 ### The rate does not round up
 
