@@ -35,9 +35,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Test
         run: cargo test --all-features
       - name: Test without default features
@@ -49,11 +49,11 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -67,7 +67,7 @@ jobs:
     name: MSRV
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Read rust-version from Cargo.toml
         id: msrv
         run: |
@@ -76,7 +76,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Build at the declared MSRV
         # `rust-toolchain.toml` pins 1.98.0 and would override the MSRV
         # toolchain this job just installed, quietly turning the check
@@ -90,7 +90,7 @@ jobs:
     name: Forbid unsafe
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # `#![forbid(unsafe_code)]` already fails the build, but grepping
       # for the attribute catches its removal in a diff, which is the
       # change that would silently drop the guarantee.
@@ -106,9 +106,9 @@ jobs:
     name: Benchmarks compile and run
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # A short measurement: this proves the benchmarks still run and
       # produce numbers, without pretending a shared runner gives
       # trustworthy timings.
@@ -129,9 +129,9 @@ jobs:
     name: Examples run
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Every example must run
         run: |
           for f in crates/oxml/examples/*.rs; do
@@ -144,14 +144,14 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Cache the conformance suite
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: conformance/data
           key: xmlconf-xmlts20130923-v1
@@ -178,12 +178,12 @@ jobs:
     name: Examples cover the public API
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # The README says the examples cover the public API. Left to
       # itself that claim decays quietly -- a function added in one
       # commit and documented in none looks, from outside, exactly like
@@ -223,11 +223,11 @@ jobs:
           - riscv32imac-unknown-none-elf
           - aarch64-unknown-none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # `cargo check --no-default-features` on the host proves nothing:
       # the host target still has std, so std-only calls compile. Only a
       # target without std catches them. This is how `xpath` silently
@@ -263,10 +263,10 @@ jobs:
     name: Feature powerset
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
       - uses: taiki-e/install-action@cargo-hack
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Every combination, so a new feature cannot rot a configuration
       # nobody builds by hand.
       #
@@ -283,11 +283,11 @@ jobs:
     name: no_std audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf,aarch64-unknown-none
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Every no_std feature combination on every bare-metal target,
       # plus a grep for `std::` that is not behind its feature gate.
       # The builds above catch a std-only call in code they compile;
@@ -306,14 +306,14 @@ jobs:
       matrix:
         target: [parse, stream, tree_walk, parse_limits, xpath_compile, xpath_eval]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@nightly
       # `cargo install` rather than a prebuilt: the prebuilt landed
       # somewhere `cargo fuzz` could not find it under the pinned
       # toolchain, giving `error: no such command: fuzz`. Installing
       # with the same cargo that runs it removes the question.
       - run: cargo install cargo-fuzz --locked
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Seeds matter more than run time. Starting cold, libFuzzer spends
       # almost the whole budget on inputs that are not valid XML — a run
       # from an empty corpus reached essentially no coverage, while the
@@ -334,7 +334,7 @@ jobs:
           -print_final_stats=1
       - name: Upload any crash
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fuzz-artifacts-${{ matrix.target }}
           path: fuzz/artifacts/
@@ -348,11 +348,11 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: nightly
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # This crate is `#![forbid(unsafe_code)]`, so Miri will not find
       # undefined behaviour — safe Rust cannot express it. It is kept
       # for three things it *does* catch: arithmetic overflow under
@@ -372,11 +372,11 @@ jobs:
     name: W3C conformance
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@1.98.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Cache the suite
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: conformance/data
           key: xmlconf-xmlts20130923-v1
