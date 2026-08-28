@@ -609,6 +609,14 @@ allocation tests holds 191,967 bytes at peak against the tree's
 input: the gap narrowed because the *tree* got cheaper, not because
 reading got dearer.
 
+**What it costs.** Time. Reading a document as events takes about 1.9
+times as long as parsing it into a tree, because an event owns its
+text: a name and an attribute value are copied out, where the tree
+keeps a range into the input it already holds. Streaming trades time
+for memory, and the trade is only worth making when the memory
+matters — which is the opposite of what "streaming" usually
+suggests.
+
 **What it does not.** `Reader::new` takes a `&str`, and normalising
 line endings copies it once more, so almost all of that 191,967 bytes
 *is* the document. A file larger than memory is still a file oxml

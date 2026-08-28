@@ -21,6 +21,14 @@
 //! dearer: text nodes and attribute values are now ranges into the
 //! input rather than strings of their own.
 //!
+//! It is **not faster**. Reading a 129 KB document as events takes
+//! about 1.9 times as long as parsing it into a tree: an event owns
+//! its text, so a name and an attribute value are copied out where
+//! the tree keeps a range into the input it already holds. Measured
+//! at 2.75 allocations per event against 0.50 per *node* for a parse.
+//! This trades time for memory, and the trade is only worth making
+//! when the memory matters.
+//!
 //! It does **not** let you read a document larger than memory.
 //! [`Reader::new`] takes a `&str`, and normalising line endings copies
 //! it once more, so nearly all of that 191,967 bytes *is* the
@@ -200,7 +208,7 @@ impl Reader {
         Ok(Self {
             text,
             carried: Carried {
-                document: Document::with_capacity(0),
+                document: Document::placeholder(),
                 namespaces: crate::parser::Namespaces::default(),
                 names: alloc::collections::BTreeMap::new(),
                 version,
@@ -266,7 +274,7 @@ impl Reader {
             pos: cursor.pos,
             doc: core::mem::replace(
                 &mut carried.document,
-                Document::with_capacity(0),
+                Document::placeholder(),
             ),
             name_index: core::mem::take(&mut carried.names),
             external: &crate::external::NoExternal,
@@ -290,7 +298,7 @@ impl Reader {
         cursor.pos = parser.pos;
         carried.depth = parser.depth;
         carried.document =
-            core::mem::replace(&mut parser.doc, Document::with_capacity(0));
+            core::mem::replace(&mut parser.doc, Document::placeholder());
         carried.names = core::mem::take(&mut parser.name_index);
         carried.namespaces = core::mem::take(&mut parser.ns);
         carried.dtd = parser.dtd.take();
