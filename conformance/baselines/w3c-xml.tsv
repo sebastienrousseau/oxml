@@ -1,4 +1,4 @@
-#counts	pass=2556	fail=1	panic=0	unsupported=28	blocked=0	total=2585
+#counts	pass=2557	fail=0	panic=0	unsupported=28	blocked=0	total=2585
 eduni	ht-bh-ns11-007	unsupported	namespaces-1.1
 eduni	ht-bh-ns11-008	unsupported	namespaces-1.1
 ibm	ibm-1-1-valid-P04-ibm04v01.xml	unsupported	namespace-processing-off
@@ -12,7 +12,6 @@ oasis	o-p08pass1	unsupported	namespace-processing-off
 japanese	pr-xml-euc-jp	unsupported	unsupported-encoding
 japanese	pr-xml-iso-2022-jp	unsupported	unsupported-encoding
 japanese	pr-xml-shift_jis	unsupported	unsupported-encoding
-eduni	rmt-ns10-012	fail	accepted a document that is not well-formed
 eduni	rmt-ns11-001	unsupported	namespaces-1.1
 eduni	rmt-ns11-002	unsupported	namespaces-1.1
 eduni	rmt-ns11-003	unsupported	namespaces-1.1

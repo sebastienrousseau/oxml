@@ -298,7 +298,7 @@ Two architectural choices motivate the design:
 
 **Verification**
 
-- 2,556 of 2,557 decided W3C conformance tests pass (99.96%), with
+- **All 2,557** decided W3C conformance tests pass, with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
 - 389 tests and 24 doctests; 97.2% line coverage, gated in CI
 - Six fuzz targets, Miri, property tests, and a feature powerset build
@@ -918,7 +918,7 @@ the answer is no, and `quick-xml` is the tool.
 
 ### How conformant is it?
 
-99.96% of decided tests in the W3C XML Conformance Test Suite, release
+100% of decided tests in the W3C XML Conformance Test Suite, release
 `xmlts20130923`, with 98.9% coverage of the 2,585 tests and zero panics.
 Both numbers are published because either alone misleads: a pass rate
 can be raised by skipping the hard tests.

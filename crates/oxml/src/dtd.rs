@@ -127,12 +127,39 @@ pub(crate) struct Dtd {
     /// document body will present too; neither side is namespace
     /// resolved at this point.
     pub(crate) id_attributes: BTreeMap<String, Vec<String>>,
+    /// Attributes whose declared type is **not** `CDATA`.
+    ///
+    /// XML 1.0 section 3.3.3 gives those a second normalisation pass:
+    /// leading and trailing spaces are discarded and runs of spaces
+    /// collapse to one. A `CDATA` value keeps its spaces exactly.
+    ///
+    /// The distinction is not cosmetic. `xmlns:b=" urn:x "` declared
+    /// `NMTOKEN` normalises to `urn:x`, which binds that prefix to the
+    /// same namespace as one declared without the spaces -- and two
+    /// attributes whose expanded names then collide make the document
+    /// not well-formed. Without this the collision is invisible.
+    ///
+    /// Keyed by the names as *written*, like `id_attributes`.
+    pub(crate) tokenized_attributes: BTreeMap<String, Vec<String>>,
 }
 
 impl Dtd {
     /// The replacement text of a general entity, if it has one.
     pub(crate) fn entity(&self, name: &str) -> Option<&EntityValue> {
         self.general.get(name)
+    }
+
+    /// Whether `attribute` on `element` was declared with a type
+    /// other than `CDATA`, and so takes the further normalisation of
+    /// XML 1.0 section 3.3.3.
+    pub(crate) fn is_tokenized_attribute(
+        &self,
+        element: &str,
+        attribute: &str,
+    ) -> bool {
+        self.tokenized_attributes
+            .get(element)
+            .is_some_and(|names| names.iter().any(|n| n == attribute))
     }
 
     /// Whether `attribute` on `element` was declared with type `ID`.
@@ -828,9 +855,18 @@ impl<'a> DtdParser<'a> {
             // AttDef: Name AttType DefaultDecl
             let attribute = self.name()?;
             self.require_ws()?;
-            let is_id = self.parse_att_type()?;
+            let (is_id, is_cdata) = self.parse_att_type()?;
             self.require_ws()?;
             let _ = self.parse_default_decl(dtd)?;
+            if !is_cdata {
+                let names = dtd
+                    .tokenized_attributes
+                    .entry(element.to_owned())
+                    .or_default();
+                if !names.iter().any(|n| n == attribute) {
+                    names.push(attribute.to_owned());
+                }
+            }
             if is_id {
                 let names =
                     dtd.id_attributes.entry(element.to_owned()).or_default();
@@ -844,22 +880,30 @@ impl<'a> DtdParser<'a> {
         }
     }
 
-    /// Parse an `AttType`, reporting whether it was `ID`.
-    fn parse_att_type(&mut self) -> Result<bool, DtdError> {
+    /// Parse an `AttType`, reporting `(is_id, is_cdata)`.
+    ///
+    /// Both matter and they are not opposites. `ID` decides what
+    /// `XPath`'s `id()` can find; `CDATA` decides whether the value
+    /// keeps its spaces. An enumeration and `NOTATION` are neither
+    /// `ID` nor `CDATA`, so they are tokenized too -- which is easy to
+    /// miss, because they are the two forms written with parentheses
+    /// rather than a keyword.
+    fn parse_att_type(&mut self) -> Result<(bool, bool), DtdError> {
         if self.peek() == Some(b'(') {
-            return self.parse_enumeration(false).map(|()| false);
+            return self.parse_enumeration(false).map(|()| (false, false));
         }
         let kw = self.name()?;
         match kw {
-            "ID" => Ok(true),
-            "CDATA" | "IDREF" | "IDREFS" | "ENTITY" | "ENTITIES"
-            | "NMTOKEN" | "NMTOKENS" => Ok(false),
+            "ID" => Ok((true, false)),
+            "CDATA" => Ok((false, true)),
+            "IDREF" | "IDREFS" | "ENTITY" | "ENTITIES" | "NMTOKEN"
+            | "NMTOKENS" => Ok((false, false)),
             "NOTATION" => {
                 self.require_ws()?;
                 if self.peek() != Some(b'(') {
                     return Err((self.pos, "NOTATION needs a name list"));
                 }
-                self.parse_enumeration(true).map(|()| false)
+                self.parse_enumeration(true).map(|()| (false, false))
             }
             _ => Err((self.pos, "unknown attribute type")),
         }
