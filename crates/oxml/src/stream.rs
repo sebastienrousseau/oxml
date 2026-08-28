@@ -74,7 +74,9 @@ use alloc::vec::Vec;
 use std::io::{BufRead, Read as _};
 
 use crate::error::{Error, ErrorKind, Result};
-use crate::parser::{Parser, Version};
+use crate::parser::Parser;
+#[cfg(feature = "std")]
+use crate::parser::Version;
 use crate::tree::{Attribute, ExpandedName};
 use crate::{Document, Limits};
 
@@ -147,6 +149,11 @@ pub struct Reader {
     /// Held back after a self-closing tag.
     pending_end: Option<Event>,
     /// Where the rest of the document comes from, if anywhere.
+    ///
+    /// Only meaningful with `std`: without a reader to refill from,
+    /// the input is always complete and there is nothing to
+    /// distinguish.
+    #[cfg(feature = "std")]
     source: Source,
     /// Bytes dropped off the front of `text` by compaction.
     ///
@@ -160,11 +167,11 @@ pub struct Reader {
 /// `Debug` is written rather than derived: the incremental variant
 /// owns a `dyn BufRead`, which has no `Debug` of its own and would
 /// otherwise take the whole `Reader` down with it.
+#[cfg(feature = "std")]
 enum Source {
     /// All of it is already in `text`.
     Complete,
     /// More may arrive.
-    #[cfg(feature = "std")]
     Incremental(Box<Incoming>),
 }
 
@@ -237,6 +244,7 @@ struct Carried {
     entity_budget: usize,
 }
 
+#[cfg(feature = "std")]
 impl core::fmt::Debug for Source {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -397,6 +405,7 @@ impl Reader {
             },
             done: false,
             pending_end: None,
+            #[cfg(feature = "std")]
             source: Source::Complete,
             consumed: 0,
         })

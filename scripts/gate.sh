@@ -15,6 +15,12 @@ cd "$(git rev-parse --show-toplevel)"
 
 TOOLCHAIN="${OXML_TOOLCHAIN:-1.98.0}"
 MSRV="${OXML_MSRV:-1.86.0}"
+# CI sets this for every job. This script did not, so it was weaker
+# than the thing it exists to predict: a `no_std` build that only
+# warned passed here and turned all three bare-metal jobs red on the
+# pull request. A subset gate is the failure mode this file was
+# written for; leaving one flag out reintroduced it.
+export RUSTFLAGS="${RUSTFLAGS:--D warnings}"
 FAILED=()
 
 step() {
