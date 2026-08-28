@@ -199,21 +199,28 @@ are covered by eleven `wasm_bindgen_test` cases run under
 `wasm-pack test --node`, and `core.rs` is at 100%. The exclusion is
 sound; the native figure is the misleading one.
 
-### The gap that matters most
+### The gap that mattered most — now closed
 
-**`xmlschema` publishes 95.6% of 39,420 conformance tests and nothing
-protects it.** Its `conformance/` crate has a runner and a downloader,
-an **empty** `baselines/` directory, **no** `tests/` directory, and no
-CI job that runs the suite. The headline figure is produced by
-invoking a binary by hand.
+**`xmlschema` published a conformance figure that nothing protected.**
+Its `conformance/` crate had a runner and a downloader, an **empty**
+`baselines/` directory, **no** `tests/` directory, and no CI job that
+ran the suite. The headline figure was produced by invoking a binary
+by hand.
 
-`oxml` has exactly this in working order — a baseline that ratchets,
-a test that fails on regression *and* on unreviewed improvement, and a
-check that the published figures match what the harness prints. That
-machinery already exists and needs porting, not inventing.
+`oxml`'s machinery was ported rather than reinvented: a baseline that
+ratchets, a test that fails on regression *and* on unreviewed
+improvement, and a check that the published figures match what the
+harness prints. The suite now runs in CI, gated at **95.0% of 35,942
+decided (91.2% coverage of 39,420)**.
 
-This is the same shape as the defects found in `oxml` this cycle: a
-number that looks measured and is not checked.
+The figure this section originally quoted — 95.6% — was itself wrong,
+which is the point. So was the coverage, and so was the stated test
+count. The check that was meant to catch exactly this read `README.md`
+alone and never opened `doc/TESTING.md`, where all three sat stale.
+
+This was the same shape as the defects found in `oxml` this cycle: a
+number that looks measured and is not checked. Twice over — the check
+was there and was reading the wrong file.
 
 ### Documentation that contradicts the code
 
@@ -237,41 +244,38 @@ warning was wrong and is withdrawn.
 
 ## Candidates for 0.0.7
 
-In the order that buys the most, with the reason each is worth doing.
+**Seven of the eight are done.** Each was checked by running it, not by
+reading the diff.
 
-1. **Port the conformance ratchet to `xmlschema`.** A baseline file, a
-   test that fails on drift in either direction, a figures check, and
-   a CI job. Its largest claim is currently unguarded, and the code to
-   guard it is written and working next door.
+| # | Candidate | Status |
+|---|---|---|
+| 1 | Port the conformance ratchet to `xmlschema` | ✅ baseline, drift test both directions, figures check, CI job — gated at 95.0% of 35,942 decided |
+| 2 | Fuzz `xmlschema` | ✅ two targets: `parse_schema` and `validate` |
+| 3 | Correct the two stale claims | ✅ and five more found in the same sweep |
+| 4 | Type-aware attribute-value normalisation | ✅ merged as #13; the last conformance failure, so `oxml` is at 100% of 2,557 decided |
+| 5 | Examples for the satellites | ✅ all five carry them: 11, 4, 7, 9 and 1 |
+| 6 | Benchmarks for the four satellites | ✅ all four, which needed library targets for `oxml-cli` and `oxml-mcp` |
+| 7 | Streaming from a reader | ✅ `from_reader` takes any `BufRead`; memory bounded regardless of size |
+| 8 | The absolute throughput figure | ❌ **the one that remains** — not code, it needs a quiet machine |
 
-2. **Fuzz `xmlschema`.** It parses untrusted XSD -- the same threat
-   model as `oxml`, which has six targets and found real defects with
-   them. `xmlschema` has none. A schema is an input a caller did not
-   write.
+Item 8 is the only ❌ left in this document. `scripts/record-throughput.sh`
+refuses above 0.20 load per core and has never yet been able to record;
+attempts have found between 0.7 and 1.5. A figure obtained by
+overriding that check would not be a measurement.
 
-3. **Correct the two stale claims** above. Small, and exactly the kind
-   of drift this suite keeps finding in itself.
+Items 5 and 6 turned out to be worth more than their placement here
+suggested. Extracting a library target from `oxml-cli` so it could be
+benchmarked found `cmd_query` taking a fresh lock on stdout inside its
+node-set branch, and showed `stats` printing a breakdown two short of
+its own total on any namespaced document. Neither was reachable while
+the crate was binary-only: its tests could assert only `is_ok()`,
+because output went straight to the process's stdout.
 
-4. **Type-aware attribute-value normalisation** in `oxml`. The last
-   conformance failure: a tokenized `ATTLIST` type is stripped and
-   collapsed where `CDATA` is not, so `xmlns:b=" urn:xyzzy "` declared
-   `NMTOKEN` binds two prefixes to one namespace.
-
-5. **Examples for `oxml-cli`, `oxml-mcp` and `oxml-wasm`.** `oxml`
-   gates on every public function being executed by an example; the
-   satellites have none at all. The gate is what keeps that true, so
-   port it with them.
-
-6. **Benchmarks for the four satellites.** None has any. `oxml-mcp` at
-   1,439 lines does per-call document work that nothing measures.
-
-7. **Streaming from a reader** in `oxml`. The remaining ❌: `Reader`
-   takes a `&str`, so a document larger than memory is still out of
-   reach.
-
-8. **The absolute throughput figure.** Not code -- it needs a quiet
-   machine, which is now a demonstrated conclusion rather than an
-   excuse. See [BENCHMARKS.md](BENCHMARKS.md).
+The benchmarks also had to be rewritten before they could be believed.
+Timing two things in separate loops and dividing reported an
+`oxml-mcp` tool call as *faster than the parse inside it* — impossible,
+and a sign that runs on a busy machine disagree by more than the
+effect. Both satellite benchmarks now measure in paired form.
 
 Deliberately *not* on this list: an LSP transport for `oxml-lsp`. It
 is the crate's whole reason to exist and too large for a patch
