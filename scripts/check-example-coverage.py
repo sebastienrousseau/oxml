@@ -98,6 +98,21 @@ def main() -> int:
             count = counts[keys[0]].get(number)
             if count is None:
                 unexercised.append(f"{rel}:{number} (no coverage data) {stripped}")
+            elif count == "":
+                # A blank count means llvm-cov generated no region for
+                # the line. For a *generic* function that is what an
+                # uninstantiated one looks like: no caller, so no code,
+                # so nothing to count.
+                #
+                # Testing only for "0" read blank as covered, which let
+                # a generic public function pass this check while no
+                # example called it -- the failure this check exists to
+                # prevent, inside the check. Found when the script was
+                # ported to `oxml-lsp`, whose `serve` is generic.
+                unexercised.append(
+                    f"{rel}:{number} (never instantiated) "
+                    f"{stripped.rstrip(' {')}"
+                )
             elif count == "0":
                 unexercised.append(f"{rel}:{number} {stripped.rstrip(' {')}")
 
