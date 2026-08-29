@@ -33,7 +33,7 @@
 
 - [One-minute migration](#one-minute-migration) — name-for-name mapping from `sxd-xpath`, `roxmltree`, `quick-xml`, `libxml`
 - [Why this approach?](#why-this-approach) — design rationale
-- [Capabilities in 0.0.7](#capabilities-in-007) — release inventory
+- [Capabilities in 0.0.8](#capabilities-in-008) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — what each crate does and does not do
 - [Benchmarks](#benchmarks) — measured, with the method stated
 - [Features](#features) — cargo feature flags
@@ -73,14 +73,14 @@
 
 ```toml
 [dependencies]
-oxml = "0.0.7"
+oxml = "0.0.8"
 ```
 
 Parsing only, without the XPath engine:
 
 ```toml
 [dependencies]
-oxml = { version = "0.0.7", default-features = false, features = ["std"] }
+oxml = { version = "0.0.8", default-features = false, features = ["std"] }
 ```
 
 From source:
@@ -239,7 +239,7 @@ Two architectural choices motivate the design:
    are usually well-vetted, but their existence makes a
    security-conscious downstream audit meaningfully harder.
 
-## Capabilities in 0.0.7
+## Capabilities in 0.0.8
 
 **Parsing**
 
@@ -269,6 +269,19 @@ Two architectural choices motivate the design:
 - Parent, children, descendants, text (XPath `string-value` semantics)
 - Attributes and namespace declarations as first-class nodes
 - `Send + Sync`, so one document serves any number of threads
+
+**Serialisation**
+
+- `Document::to_xml()` returns a document as XML;
+  `write_xml<W: Write>()` writes it to any writer
+- Escaping is applied where it changes meaning: `&`, `<` and `>` in
+  text, plus `"`, tab, newline and carriage return in attribute
+  values, where an unescaped newline would normalise to a space on the
+  way back in
+- `<?xml version="1.1"?>` is emitted only when the document needs it --
+  a control character, or a prefix unbound with `xmlns:p=""`
+- Every document in the conformance corpus is a fixed point: parse,
+  serialise, parse again, and the trees agree
 
 **Streaming**
 
