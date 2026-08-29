@@ -16,6 +16,8 @@ one is listed as not done, however close it feels.
 - [After that](#after-that)
 - [Suite audit, 2026-08-28](#suite-audit-2026-08-28)
 - [Candidates for 0.0.7](#candidates-for-007)
+- [After 0.0.7](#after-007)
+- [Candidates for 0.0.8](#candidates-for-008)
 - [Not planned](#not-planned)
 - [How to tell when something is finished](#how-to-tell-when-something-is-finished)
 
@@ -28,7 +30,7 @@ one is listed as not done, however close it feels.
 | Panics on hostile input | Zero | 0 across 2,585 conformance documents, 6 fuzz targets, Miri | ✅ |
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
-| Line coverage | ≥95% | **97.2%**, gated | ✅ |
+| Line coverage | ≥95% | **96.7%**, gated | ✅ |
 | Conformance | Published with denominator | **100% of 2,557 decided; 98.9% of 2,585 reach a decision** | ✅ |
 | Allocations per node | ≤2 | **0.50** | ✅ |
 | Throughput | <100 ms at load | **Ratios measured, absolute still not** — `benches/comparison.rs` reports 0.089× `quick-xml` (events) and 0.319× `roxmltree` (tree), stable to 3–5% under 10 CPU hogs and gated at 15%. MB/s still needs a quiet machine; `scripts/record-throughput.sh` refuses above 0.20 load per core and has never yet been able to record | 🟡 |
@@ -244,8 +246,8 @@ warning was wrong and is withdrawn.
 
 ## Candidates for 0.0.7
 
-**Seven of the eight are done.** Each was checked by running it, not by
-reading the diff.
+**Released 2026-08-28. Seven of the eight shipped.** Each was checked by running it, not by
+reading the diff. All six crates are on crates.io at 0.0.7.
 
 | # | Candidate | Status |
 |---|---|---|
@@ -260,8 +262,47 @@ reading the diff.
 
 Item 8 is the only ❌ left in this document. `scripts/record-throughput.sh`
 refuses above 0.20 load per core and has never yet been able to record;
-attempts have found between 0.7 and 1.5. A figure obtained by
+attempts have found between 0.67 and 1.5. A figure obtained by
 overriding that check would not be a measurement.
+
+## After 0.0.7
+
+Shipped since the release, none of it planned here beforehand:
+
+| | |
+|---|---|
+| OpenSSF Best Practices | **silver at 100%** on all six crates; gold at 57% |
+| OpenSSF Scorecard | 5.2–7.2 → **6.5–7.8**; the badge existed for months with nothing publishing its data |
+| Branch protection | applied to all six; `RELEASING.md` had claimed it for five that did not have it |
+| CodeQL | `SAST` scored 0 everywhere; trialled on `oxml` before being copied, because Rust support is recent |
+| Fuzzing | `oxml-cli`, `oxml-mcp` and `oxml-lsp` gained their own targets — 18.7M executions, no crashes |
+| DCO | adopted and **enforced**; the check caught three of its own author's stale-base branches on day one |
+| Governance | `GOVERNANCE.md` and `doc/ASSURANCE-CASE.md`, both stating what the project does *not* claim |
+
+The five OpenSSF criteria still Unmet — two unassociated contributors,
+a bus factor above one, two-person review, an independent security
+review, and branch coverage — need a second person or an outside
+auditor. Four of the five are the same fact stated four ways.
+
+## Candidates for 0.0.8
+
+1. **The absolute throughput figure**, still. It has outlasted two
+   releases and is not code.
+2. **Branch coverage**, or a written finding that it cannot be
+   measured on the pinned toolchain. `cargo llvm-cov --branch` fails
+   there today.
+3. **Pin the remaining GitHub Actions by SHA.** `Pinned-Dependencies`
+   sits at 5/10 across the suite.
+4. **Serialisation and mutation** — round-tripping comments, entity
+   references, attribute order and whitespace is most of the
+   difficulty, and a writer that loses any of them is not a round
+   trip.
+5. **`oxml-lsp`: the LSP transport.** The crate is named for a
+   protocol it still does not speak.
+
+Items 2 and 3 are labelled `good first issue` in every repository,
+which is where a second contributor would most plausibly start — and a
+second contributor is what four of the five blocked criteria need.
 
 Items 5 and 6 turned out to be worth more than their placement here
 suggested. Extracting a library target from `oxml-cli` so it could be
