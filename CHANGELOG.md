@@ -10,6 +10,63 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [0.0.8] - 2026-08-29
+
+### Added
+
+- **Serialisation.** `Document::to_xml()` returns a document as XML,
+  and `write_xml<W: Write>()` writes it to any writer. The parser
+  could read a document and never write one back, so any round trip
+  had to be done by hand.
+
+  Escaping is done where it changes meaning rather than everywhere:
+  `&`, `<` and `>` in text; additionally `"`, tab, newline and
+  carriage return inside attribute values, because an unescaped
+  newline there is normalised to a space on the way back in and the
+  round trip would not be one. A literal carriage return becomes
+  `&#13;` for the same reason.
+
+  `<?xml version="1.1"?>` is emitted only when the document needs it
+  -- a C0 or C1 control character, or a namespace prefix unbound with
+  `xmlns:p=""`, neither of which XML 1.0 can express.
+
+  `tests/serialise.rs` walks every document in the conformance corpus
+  and asserts each is a fixed point: parse, serialise, parse again,
+  and the two trees agree. It asserts it checked more than 1,000
+  documents, so it cannot pass by finding none -- an earlier corpus
+  probe in this suite reported success over zero files.
+
+### Fixed
+
+- **Streaming was slower than it needed to be.** `ensure_construct`
+  scanned for a complete construct on every call, including when the
+  whole input was already in memory and no scan could change the
+  answer. Reading from a `&str` now skips it entirely. The events
+  benchmark moved from 0.092x to 0.147x of the in-memory reader
+  against a 0.113x baseline.
+
+- **A generic function nothing calls is not "covered".** The
+  example-coverage gate read a blank llvm-cov count as covered. A
+  generic function that no example instantiates produces exactly that
+  -- no caller, so no code, so no count -- which let an uncalled
+  public generic pass the check that exists to catch it.
+
+### Security
+
+- **Every GitHub Action is pinned by commit SHA.** A mutable ref means
+  the code that runs in CI can change without a commit here.
+  `dtolnay/rust-toolchain@1.98.0` and
+  `taiki-e/install-action@cargo-llvm-cov` were the awkward cases: the
+  ref carried a *value* (which compiler, which tool) rather than a
+  version, so the value moved into a `with:` input.
+
+- **Branch coverage is measured and gated**, and Scorecard results are
+  no longer uploaded to code scanning -- they are posture scores, not
+  defects, and 86 of them across the suite were drowning out anything
+  real.
+
+- The Developer Certificate of Origin is adopted and enforced in CI.
+
 ## [0.0.7] - 2026-08-28
 
 ### Added

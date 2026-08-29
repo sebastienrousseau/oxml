@@ -293,39 +293,26 @@ unmeasurable after one attempt is a metric nobody tried twice.
 
 ## Candidates for 0.0.8
 
-1. **The absolute throughput figure**, still. It has outlasted two
-   releases and is not code.
-2. **Pin the remaining GitHub Actions by SHA.** `Pinned-Dependencies`
-   sits at 5/10 across the suite.
-3. **Serialisation and mutation** — round-tripping comments, entity
-   references, attribute order and whitespace is most of the
-   difficulty, and a writer that loses any of them is not a round
-   trip.
-4. **`oxml-lsp`: the LSP transport.** The crate is named for a
-   protocol it still does not speak.
+Shipped in 0.0.8:
 
-Item 2 is labelled `good first issue` in every repository, which is
-where a second contributor would most plausibly start — and a second
-contributor is what all four remaining blocked criteria need.
+- **Serialisation.** `Document::to_xml()` and `write_xml()`. Every
+  document in the conformance corpus is a fixed point under
+  parse-serialise-parse, checked over more than 1,000 of them.
+- **Pinned dependencies.** Every action across the suite is pinned by
+  commit SHA; `Pinned-Dependencies` went from 5/10 to 10/10.
+- **`oxml-lsp` speaks LSP.** `initialize`, `shutdown`, `exit`,
+  `textDocument/didOpen`, `didChange`, `didClose` and
+  `publishDiagnostics`, framed with `Content-Length` over stdio.
 
-Items 5 and 6 turned out to be worth more than their placement here
-suggested. Extracting a library target from `oxml-cli` so it could be
-benchmarked found `cmd_query` taking a fresh lock on stdout inside its
-node-set branch, and showed `stats` printing a breakdown two short of
-its own total on any namespaced document. Neither was reachable while
-the crate was binary-only: its tests could assert only `is_ok()`,
-because output went straight to the process's stdout.
+Still outstanding:
 
-The benchmarks also had to be rewritten before they could be believed.
-Timing two things in separate loops and dividing reported an
-`oxml-mcp` tool call as *faster than the parse inside it* — impossible,
-and a sign that runs on a busy machine disagree by more than the
-effect. Both satellite benchmarks now measure in paired form.
-
-Deliberately *not* on this list: an LSP transport for `oxml-lsp`. It
-is the crate's whole reason to exist and too large for a patch
-release, and its README already says plainly that it is not yet a
-language server.
+1. **The absolute throughput figure.** It has now outlasted three
+   releases and is still not code -- it needs a quiet machine, and
+   load has been 0.67-2.5 per core against a 0.20 threshold.
+2. **Mutation.** Serialisation writes a document back out; nothing
+   yet edits one in place. Round-tripping comments, entity references,
+   attribute order and whitespace is most of the difficulty, and that
+   part is done -- the mutation API is not.
 
 ## Not planned
 
