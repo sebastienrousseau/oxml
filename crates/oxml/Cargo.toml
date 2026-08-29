@@ -85,6 +85,11 @@ path = "examples/parse_and_query.rs"
 required-features = ["std", "xpath"]
 
 [[example]]
+name = "serialise_a_document"
+path = "examples/serialise_a_document.rs"
+required-features = ["std"]
+
+[[example]]
 name = "walk_the_tree"
 path = "examples/walk_the_tree.rs"
 required-features = ["std"]
