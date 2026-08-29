@@ -279,30 +279,34 @@ Shipped since the release, none of it planned here beforehand:
 | DCO | adopted and **enforced**; the check caught three of its own author's stale-base branches on day one |
 | Governance | `GOVERNANCE.md` and `doc/ASSURANCE-CASE.md`, both stating what the project does *not* claim |
 
-The five OpenSSF criteria still Unmet — two unassociated contributors,
-a bus factor above one, two-person review, an independent security
-review, and branch coverage — need a second person or an outside
-auditor. Four of the five are the same fact stated four ways.
+The four OpenSSF criteria still Unmet — two unassociated contributors,
+a bus factor above one, two-person review, and an independent security
+review — need a second person or an outside auditor. They are largely
+the same fact stated four ways.
+
+Branch coverage was a fifth until it turned out not to be. It was
+recorded here as unmeasurable because `cargo llvm-cov --branch` fails
+on the pinned toolchain — which is true, and was the wrong place to
+stop. It measures on nightly: **91.7%**, above the 80% the criterion
+asks for, and it is now gated in CI at that floor. A metric declared
+unmeasurable after one attempt is a metric nobody tried twice.
 
 ## Candidates for 0.0.8
 
 1. **The absolute throughput figure**, still. It has outlasted two
    releases and is not code.
-2. **Branch coverage**, or a written finding that it cannot be
-   measured on the pinned toolchain. `cargo llvm-cov --branch` fails
-   there today.
-3. **Pin the remaining GitHub Actions by SHA.** `Pinned-Dependencies`
+2. **Pin the remaining GitHub Actions by SHA.** `Pinned-Dependencies`
    sits at 5/10 across the suite.
-4. **Serialisation and mutation** — round-tripping comments, entity
+3. **Serialisation and mutation** — round-tripping comments, entity
    references, attribute order and whitespace is most of the
    difficulty, and a writer that loses any of them is not a round
    trip.
-5. **`oxml-lsp`: the LSP transport.** The crate is named for a
+4. **`oxml-lsp`: the LSP transport.** The crate is named for a
    protocol it still does not speak.
 
-Items 2 and 3 are labelled `good first issue` in every repository,
-which is where a second contributor would most plausibly start — and a
-second contributor is what four of the five blocked criteria need.
+Item 2 is labelled `good first issue` in every repository, which is
+where a second contributor would most plausibly start — and a second
+contributor is what all four remaining blocked criteria need.
 
 Items 5 and 6 turned out to be worth more than their placement here
 suggested. Extracting a library target from `oxml-cli` so it could be
