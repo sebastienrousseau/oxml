@@ -538,6 +538,25 @@ impl Reader {
     /// does not require understanding what is between them.
     #[cfg(feature = "std")]
     fn ensure_construct(&mut self) -> Result<()> {
+        // A complete document is whole by definition. Checking that
+        // first costs one discriminant test; checking it *after*
+        // `construct_is_whole` -- as this did until 0.0.8 -- makes
+        // every event of every in-memory parse pay a forward scan for
+        // a delimiter that is always already there.
+        //
+        // The paired ratio benchmark caught the streaming arm falling
+        // from 0.113x to 0.092x against quick-xml on x86_64,
+        // consistently across three attempts, while the tree arm
+        // improved -- so not a busy machine.
+        //
+        // Whether this skip recovers all of that is a question for CI
+        // rather than for a laptop: an A/B here, at 0.8 load per core,
+        // put both arrangements at 0.098x with the medians bouncing
+        // between 0.099 and 0.103. That is below the resolution needed
+        // to see a 10% effect.
+        if !matches!(self.source, Source::Incremental(_)) {
+            return Ok(());
+        }
         loop {
             if self.construct_is_whole() {
                 return Ok(());
