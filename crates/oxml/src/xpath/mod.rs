@@ -128,7 +128,7 @@ impl XPath {
 /// A type an [`XPath`] result can be extracted into.
 ///
 /// Implemented for `String`, `f64`, `i64`, `bool` and
-/// [`NodeId`](crate::NodeId). The conversions follow `XPath` 1.0's own
+/// [`NodeId`]. The conversions follow `XPath` 1.0's own
 /// rules with one deliberate exception, documented on the `f64`
 /// implementation: a value that is not a number is an error rather
 /// than `NaN`, because a caller who names a numeric type wants a
