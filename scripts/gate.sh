@@ -74,6 +74,13 @@ step "examples run" bash -c '
     cargo run --quiet --example "$(basename "$f" .rs)" >/dev/null || exit 1
   done'
 
+# What `cargo publish` would upload, and whether the assurance case in
+# it describes this crate. oxml-json 0.0.8 shipped one inherited from
+# oxml-lsp, claiming tests over an `analyse()` it does not have; the
+# correction landed twelve minutes after the upload, and crates.io
+# versions cannot be edited afterwards.
+step "package claims" python3 scripts/check-package.py
+
 step "MSRV $MSRV" env RUSTUP_TOOLCHAIN="$MSRV" cargo build --workspace --all-features
 
 echo
