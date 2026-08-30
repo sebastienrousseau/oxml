@@ -17,6 +17,8 @@
 
 use std::fmt::Write as _;
 
+use oxml::{EmptyElement, Indent, SerialiseOptions};
+
 fn main() {
     let source = "<?xml version=\"1.0\"?>
 <catalogue>
@@ -49,4 +51,56 @@ fn main() {
     let _ =
         writeln!(report, "{} nodes, {} bytes of XML", doc.len(), once.len());
     print!("{report}");
+
+    // Formatted output, for humans. Indentation is only inserted
+    // between children of elements whose children are all elements --
+    // an element with any text child is written exactly as the
+    // compact form writes it, because whitespace next to character
+    // data becomes part of that data. Safe by construction rather
+    // than by a warning.
+    let nested = oxml::parse("<config><servers><host/><host/></servers><motd>hi there</motd></config>")
+        .expect("well-formed");
+    let pretty = nested.to_xml_with(SerialiseOptions {
+        indent: Some(Indent::Spaces(2)),
+        ..SerialiseOptions::default()
+    });
+    println!(
+        "pretty-printed:
+{pretty}
+"
+    );
+    assert!(
+        pretty.contains(
+            "
+  <servers>"
+        ),
+        "{pretty}"
+    );
+    assert!(
+        pretty.contains("<motd>hi there</motd>"),
+        "text content untouched: {pretty}"
+    );
+
+    // The default options are exactly `to_xml`, and only the default
+    // carries the fixed-point guarantee -- a pretty-printed document
+    // reparses with the inserted whitespace as text nodes.
+    assert_eq!(
+        nested.to_xml_with(SerialiseOptions::default()),
+        nested.to_xml()
+    );
+
+    // `write_xml_with` is the writer-flavoured form, and the
+    // empty-element spelling applies everywhere, mixed content
+    // included.
+    let mut spaced = String::new();
+    nested
+        .write_xml_with(
+            &mut spaced,
+            SerialiseOptions {
+                empty_elements: EmptyElement::SelfClosingSpaced,
+                ..SerialiseOptions::default()
+            },
+        )
+        .expect("writing to a String cannot fail");
+    assert!(spaced.contains("<host />"), "{spaced}");
 }

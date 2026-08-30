@@ -186,3 +186,171 @@ fn every_conformance_document_is_a_fixed_point() {
         failures.join("\n")
     );
 }
+
+mod options {
+    use oxml::{EmptyElement, Indent, Newline, SerialiseOptions};
+
+    fn pretty() -> SerialiseOptions {
+        SerialiseOptions {
+            indent: Some(Indent::Spaces(2)),
+            ..SerialiseOptions::default()
+        }
+    }
+
+    #[test]
+    fn default_options_are_exactly_to_xml() {
+        // `to_xml_with(default)` must be `to_xml`, byte for byte. If
+        // the two writers drift apart, one of them is wrong.
+        let doc = oxml::parse(
+            r#"<a x="1"><b>text</b><c/><!--note--><?pi data?></a>"#,
+        )
+        .expect("well-formed");
+        assert_eq!(doc.to_xml_with(SerialiseOptions::default()), doc.to_xml());
+    }
+
+    #[test]
+    fn element_only_content_is_indented() {
+        let doc = oxml::parse("<a><b><c/></b><d/></a>").expect("well-formed");
+        let out = doc.to_xml_with(pretty());
+        assert_eq!(out, "<a>\n  <b>\n    <c/>\n  </b>\n  <d/>\n</a>");
+    }
+
+    #[test]
+    fn mixed_content_is_never_touched() {
+        // The rule that makes pretty-printing safe by construction:
+        // an element with any non-element child is written exactly as
+        // the compact form writes it, because whitespace inserted next
+        // to character data becomes part of that data.
+        let source = "<a><p>text<b/>tail</p><q><r/></q></a>";
+        let doc = oxml::parse(source).expect("well-formed");
+        let out = doc.to_xml_with(pretty());
+        assert!(
+            out.contains("<p>text<b/>tail</p>"),
+            "mixed content must be byte-identical: {out}"
+        );
+        assert!(
+            out.contains("<q>\n    <r/>\n  </q>"),
+            "element-only siblings still indent: {out}"
+        );
+    }
+
+    #[test]
+    fn pretty_printing_preserves_every_documents_text() {
+        // Over the corpus: for every document that parses, the
+        // pretty-printed form must reparse with *identical character
+        // data* in every element. This is the property the mixed-
+        // content rule exists to guarantee, checked over 1,900+ real
+        // documents rather than the cases anyone thought of.
+        let mut checked = 0u32;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../conformance/data");
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "xml") {
+                    continue;
+                }
+                let Ok(bytes) = std::fs::read(&path) else {
+                    continue;
+                };
+                let Ok(text) = String::from_utf8(bytes) else {
+                    continue;
+                };
+                let Ok(doc) = oxml::parse(&text) else {
+                    continue;
+                };
+                let out = doc.to_xml_with(pretty());
+                let Ok(again) = oxml::parse(&out) else {
+                    panic!(
+                        "pretty output failed to parse for {path:?}:\n{out}"
+                    );
+                };
+                // Compare text per element in document order. The
+                // pretty form has extra whitespace-only text nodes, so
+                // whole-document text differs where indentation was
+                // inserted -- but only between elements, never inside
+                // an element that had character data.
+                let originals: Vec<String> = doc
+                    .descendants()
+                    .filter(|d| {
+                        doc.children(*d).iter().any(|c| {
+                            matches!(
+                                doc.kind(*c),
+                                Some(oxml::tree::NodeKind::Text(_))
+                            )
+                        })
+                    })
+                    .map(|d| doc.text(d))
+                    .collect();
+                let reparsed: Vec<String> = again
+                    .descendants()
+                    .filter(|d| {
+                        again.children(*d).iter().any(|c| {
+                            matches!(
+                                again.kind(*c),
+                                Some(oxml::tree::NodeKind::Text(_))
+                            )
+                        })
+                    })
+                    .map(|d| again.text(d))
+                    .filter(|t| !t.trim().is_empty() || originals.contains(t))
+                    .collect();
+                for original in &originals {
+                    assert!(
+                        reparsed.contains(original),
+                        "text changed by pretty-printing in {path:?}:\
+                         \n  missing: {original:?}"
+                    );
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 1_000, "only {checked} documents checked");
+    }
+
+    #[test]
+    fn empty_elements_can_be_spelled_three_ways() {
+        let doc = oxml::parse("<a><b/></a>").expect("well-formed");
+        let spell = |e| {
+            doc.to_xml_with(SerialiseOptions {
+                empty_elements: e,
+                ..SerialiseOptions::default()
+            })
+        };
+        assert_eq!(spell(EmptyElement::SelfClosing), "<a><b/></a>");
+        assert_eq!(spell(EmptyElement::SelfClosingSpaced), "<a><b /></a>");
+        assert_eq!(spell(EmptyElement::Expanded), "<a><b></b></a>");
+        // All three parse back to the same tree.
+        for e in [
+            EmptyElement::SelfClosing,
+            EmptyElement::SelfClosingSpaced,
+            EmptyElement::Expanded,
+        ] {
+            let out = spell(e);
+            assert_eq!(
+                oxml::parse(&out).expect("parses").to_xml(),
+                doc.to_xml(),
+                "{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn crlf_is_used_when_asked() {
+        let doc = oxml::parse("<a><b/></a>").expect("well-formed");
+        let out = doc.to_xml_with(SerialiseOptions {
+            indent: Some(Indent::Tab),
+            newline: Newline::CrLf,
+            ..SerialiseOptions::default()
+        });
+        assert_eq!(out, "<a>\r\n\t<b/>\r\n</a>");
+    }
+}
