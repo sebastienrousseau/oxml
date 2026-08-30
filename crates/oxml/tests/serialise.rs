@@ -244,6 +244,15 @@ mod options {
         let mut checked = 0u32;
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../conformance/data");
+        // The corpus is downloaded by the conformance job, not
+        // present in a plain checkout. Skip rather than fail -- the
+        // same pattern as `every_conformance_document_is_a_fixed_point`
+        // above -- and assert non-vacuously when the data is there, so
+        // the run that has it cannot pass by finding nothing.
+        if !root.is_dir() {
+            eprintln!("skipping: run the conformance downloader first");
+            return;
+        }
         let mut stack = vec![root];
         while let Some(dir) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else {
