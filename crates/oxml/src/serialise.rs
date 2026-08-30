@@ -11,6 +11,72 @@ use core::fmt::Write;
 
 use crate::tree::{Document, NodeId, NodeKind};
 
+/// How a document should be written.
+///
+/// The default is what [`Document::to_xml`] does: no whitespace of any
+/// kind added, `<a/>` for an empty element. That is the only mode in
+/// which serialisation is a fixed point over the conformance corpus,
+/// and it stays the default because the alternative -- a default that
+/// edits documents -- would have to be discovered rather than chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SerialiseOptions {
+    /// Indentation, or `None` to add no whitespace at all.
+    ///
+    /// Indentation is only inserted between children of an element
+    /// whose children are **all elements**. An element with any text,
+    /// CDATA-derived or comment child is written exactly as the
+    /// default mode writes it, because inserting whitespace there
+    /// changes the document's text -- `<p>a<b/>c</p>` pretty-printed
+    /// naively contains different character data than it did before.
+    /// This makes pretty-printing safe *by construction* rather than
+    /// by a warning in the documentation.
+    pub indent: Option<Indent>,
+    /// How an element with no children is written.
+    pub empty_elements: EmptyElement,
+    /// The line ending used when `indent` is set.
+    pub newline: Newline,
+}
+
+/// One level of indentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Indent {
+    /// This many spaces per depth level.
+    Spaces(u8),
+    /// One tab per depth level.
+    Tab,
+}
+
+/// How `<a></a>` with nothing inside is spelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EmptyElement {
+    /// `<a/>` -- the default, and what `to_xml` has always written.
+    #[default]
+    SelfClosing,
+    /// `<a />`, the XHTML-compatibility spelling.
+    SelfClosingSpaced,
+    /// `<a></a>`.
+    Expanded,
+}
+
+/// The line ending between elements when indenting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Newline {
+    /// `\n` -- the default.
+    #[default]
+    Lf,
+    /// `\r\n`.
+    CrLf,
+}
+
+impl Newline {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Lf => "\n",
+            Self::CrLf => "\r\n",
+        }
+    }
+}
+
 impl Document {
     /// Write this document as XML.
     ///
@@ -108,6 +174,175 @@ impl Document {
         })
     }
 
+    /// The document as XML, formatted according to `options`.
+    ///
+    /// With `SerialiseOptions::default()` this is exactly
+    /// [`Document::to_xml`]. With indentation set, whitespace is added
+    /// only between children of elements whose children are all
+    /// elements -- see [`SerialiseOptions::indent`] for why that
+    /// restriction is what makes pretty-printing safe.
+    ///
+    /// A pretty-printed document is **not** guaranteed equal to its
+    /// source, and reparsing it yields a tree containing the inserted
+    /// whitespace as text nodes. The fixed-point guarantee belongs to
+    /// the default options alone.
+    #[must_use]
+    pub fn to_xml_with(&self, options: SerialiseOptions) -> String {
+        let mut out = String::new();
+        let _ = self.write_xml_with(&mut out, options);
+        out
+    }
+
+    /// Write this document as XML into any writer, with options.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the writer returns.
+    pub fn write_xml_with<W: Write>(
+        &self,
+        out: &mut W,
+        options: SerialiseOptions,
+    ) -> core::fmt::Result {
+        if self.needs_xml_11() {
+            out.write_str("<?xml version=\"1.1\"?>")?;
+            if options.indent.is_some() {
+                out.write_str(options.newline.as_str())?;
+            }
+        }
+        let top = self.children(self.root());
+        for (i, &child) in top.iter().enumerate() {
+            self.write_node_with(child, out, options, 0)?;
+            // A newline between top-level items (the root element and
+            // any comments or PIs beside it), but not after the last.
+            if options.indent.is_some() && i + 1 < top.len() {
+                out.write_str(options.newline.as_str())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn write_indent<W: Write>(
+        out: &mut W,
+        options: SerialiseOptions,
+        depth: usize,
+    ) -> core::fmt::Result {
+        out.write_str(options.newline.as_str())?;
+        match options.indent {
+            Some(Indent::Spaces(n)) => {
+                for _ in 0..(depth * n as usize) {
+                    out.write_char(' ')?;
+                }
+            }
+            Some(Indent::Tab) => {
+                for _ in 0..depth {
+                    out.write_char('\t')?;
+                }
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    fn write_node_with<W: Write>(
+        &self,
+        id: NodeId,
+        out: &mut W,
+        options: SerialiseOptions,
+        depth: usize,
+    ) -> core::fmt::Result {
+        match self.kind(id) {
+            Some(NodeKind::Element { .. }) => {
+                self.write_element_with(id, out, options, depth)
+            }
+            _ => self.write_node(id, out),
+        }
+    }
+
+    fn write_element_with<W: Write>(
+        &self,
+        id: NodeId,
+        out: &mut W,
+        options: SerialiseOptions,
+        depth: usize,
+    ) -> core::fmt::Result {
+        let name = self.qualified_name(id);
+        write!(out, "<{name}")?;
+        self.write_tag_attributes(id, out)?;
+
+        let children = self.children(id);
+        if children.is_empty() {
+            return match options.empty_elements {
+                EmptyElement::SelfClosing => out.write_str("/>"),
+                EmptyElement::SelfClosingSpaced => out.write_str(" />"),
+                EmptyElement::Expanded => write!(out, "></{name}>"),
+            };
+        }
+        out.write_char('>')?;
+
+        // Indent only where every child is an element. Any text,
+        // comment or PI child means the element's content is written
+        // byte-for-byte as the default mode writes it: inserting
+        // whitespace next to character data would change that data.
+        let element_only = options.indent.is_some()
+            && children.iter().all(|&c| {
+                matches!(self.kind(c), Some(NodeKind::Element { .. }))
+            });
+
+        if element_only {
+            for &child in children {
+                Self::write_indent(out, options, depth + 1)?;
+                self.write_node_with(child, out, options, depth + 1)?;
+            }
+            Self::write_indent(out, options, depth)?;
+        } else {
+            // Inside mixed content no whitespace may be added, but the
+            // empty-element spelling still applies -- `<b/>` versus
+            // `<b />` is a difference between tags, not inside
+            // character data. Recurse with indentation off rather
+            // than falling back to the plain writer, which would
+            // silently drop every option below this point.
+            let compact = SerialiseOptions {
+                indent: None,
+                ..options
+            };
+            for &child in children {
+                self.write_node_with(child, out, compact, depth)?;
+            }
+        }
+        write!(out, "</{name}>")
+    }
+
+    /// Namespace declarations and attributes, shared by both writers.
+    fn write_tag_attributes<W: Write>(
+        &self,
+        id: NodeId,
+        out: &mut W,
+    ) -> core::fmt::Result {
+        for &ns in self.namespace_nodes(id) {
+            if let Some(NodeKind::Namespace { prefix, uri }) = self.kind(ns) {
+                if prefix == "xml" {
+                    continue;
+                }
+                if prefix.is_empty() {
+                    write!(out, " xmlns=\"")?;
+                } else {
+                    write!(out, " xmlns:{prefix}=\"")?;
+                }
+                write_attribute_value(uri, out)?;
+                out.write_char('"')?;
+            }
+        }
+        for &attr in self.attribute_nodes(id) {
+            if let Some(NodeKind::Attr(a)) = self.kind(attr) {
+                let attr_name = self.qualified_attribute_name(attr);
+                write!(out, " {attr_name}=\"")?;
+                write_attribute_value(a.value, out)?;
+                out.write_char('"')?;
+            }
+        }
+        Ok(())
+    }
+
     fn write_node<W: Write>(
         &self,
         id: NodeId,
@@ -137,34 +372,10 @@ impl Document {
     ) -> core::fmt::Result {
         let name = self.qualified_name(id);
         write!(out, "<{name}")?;
-
-        for &ns in self.namespace_nodes(id) {
-            if let Some(NodeKind::Namespace { prefix, uri }) = self.kind(ns) {
-                // `xml` is bound in every document by definition.
-                // Writing it back would be a redeclaration the
-                // specification forbids in some positions and that no
-                // parser needs.
-                if prefix == "xml" {
-                    continue;
-                }
-                if prefix.is_empty() {
-                    write!(out, " xmlns=\"")?;
-                } else {
-                    write!(out, " xmlns:{prefix}=\"")?;
-                }
-                write_attribute_value(uri, out)?;
-                out.write_char('"')?;
-            }
-        }
-
-        for &attr in self.attribute_nodes(id) {
-            if let Some(NodeKind::Attr(a)) = self.kind(attr) {
-                let attr_name = self.qualified_attribute_name(attr);
-                write!(out, " {attr_name}=\"")?;
-                write_attribute_value(a.value, out)?;
-                out.write_char('"')?;
-            }
-        }
+        // `xml` is skipped inside: it is bound in every document by
+        // definition, and writing it back would be a redeclaration the
+        // specification forbids in some positions.
+        self.write_tag_attributes(id, out)?;
 
         let children = self.children(id);
         if children.is_empty() {
