@@ -1050,7 +1050,7 @@ impl<'a> Parser<'a> {
         declared: Vec<(String, String)>,
     ) -> (usize, usize) {
         let start = self.doc.ns_ids.len();
-        if self.doc.nodes[node.0].parent == Some(self.doc.root()) {
+        if self.doc.nodes[node.index()].parent == Some(self.doc.root()) {
             // Namespace nodes go in the side table rather than
             // being ranges. There is one per *declaration*, not per
             // element -- a document usually has a handful, all on the
