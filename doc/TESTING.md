@@ -218,7 +218,7 @@ powerset were the ones that did it — a `Vec` that resolves through the
 The individual commands:
 
 ```bash
-cargo test --workspace --all-features        # 466 tests + 27 doctests
+cargo test --workspace --all-features        # 473 tests + 29 doctests
 cargo test --no-default-features             # the no_std surface
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check

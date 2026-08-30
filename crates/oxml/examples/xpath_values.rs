@@ -127,5 +127,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => println!("\n  unexpectedly compiled"),
         Err(e) => println!("\n  rejected at compile time: {e}"),
     }
+
+    // Typed extraction: name the Rust type, get that type or an error.
+    // Inside an expression a non-number converts to NaN, as the
+    // specification requires. At the boundary into Rust it is an
+    // error instead, because a caller who names f64 wants a number --
+    // NaN would poison every comparison downstream with no hint of
+    // where it came from.
+    let total: f64 = doc.xpath_one("sum(//item/@price)").expect("numeric");
+    let count: i64 = doc.xpath_one("count(//item)").expect("integral");
+    let any_out: bool = doc
+        .xpath_one("count(//item[@stock = 0]) > 0")
+        .expect("boolean");
+    println!("\n  total {total}, {count} items, out of stock: {any_out}");
+
+    let prices: Vec<f64> = doc.xpath_all("//item/@price").expect("all numeric");
+    println!("  prices: {prices:?}");
+    assert_eq!(prices.len() as i64, count);
+
+    let not_a_number: Result<f64, _> = doc.xpath_one("string(//item[1])");
+    println!("  `Tea` as f64: {not_a_number:?}");
+    assert!(not_a_number.is_err(), "text must not extract as a number");
     Ok(())
 }
