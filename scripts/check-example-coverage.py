@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Fail if any public function is not executed by at least one example.
 
+Ported from `oxml`, which is where this check was written and where
+the reasoning below was learned.
+
 The README claims the examples cover the public API. That claim decays
 silently: a function added in one commit and documented in none is
 indistinguishable, from the outside, from one the examples exercise.
@@ -12,6 +15,7 @@ It deliberately checks *execution*, not mention. An example that names
 a function in a comment does not count.
 """
 
+import json
 import pathlib
 import re
 import subprocess
@@ -27,7 +31,30 @@ def examples() -> list[str]:
     return re.findall(r'^\[\[example\]\]\nname = "([^"]+)"', text, re.M)
 
 
+
+
+def cargo() -> str:
+    """Where cargo is, saying so plainly when it is nowhere.
+
+    A bare `cargo` is right on CI and in a normal shell, but a rustup
+    install puts the real binary in ~/.cargo/bin and a PATH that lost
+    that entry produces a FileNotFoundError traceback rather than a
+    sentence.
+    """
+    import os
+    import shutil
+
+    found = shutil.which(os.environ.get("CARGO", "cargo"))
+    if found:
+        return found
+    fallback = pathlib.Path.home() / ".cargo" / "bin" / "cargo"
+    if fallback.is_file():
+        return str(fallback)
+    sys.exit("cargo is not on PATH and ~/.cargo/bin/cargo does not exist")
+
+
 def run(*args: str) -> str:
+    args = (cargo(),) + args[1:] if args and args[0] == "cargo" else args
     proc = subprocess.run(
         args, cwd=ROOT, capture_output=True, text=True, check=False
     )
@@ -55,21 +82,28 @@ def main() -> int:
             "cargo", "llvm-cov", "--no-report", "run",
             "-q", "-p", "oxml", "--example", name,
         )
-    report = run("cargo", "llvm-cov", "report", "--text")
+    report = run("cargo", "llvm-cov", "report", "--json")
 
     # file -> {line number: execution count}
-    counts: dict[str, dict[int, str]] = {}
-    current = None
-    for line in report.splitlines():
-        header = re.match(r"^(/.*\.rs):$", line)
-        if header:
-            current = header.group(1)
-            counts[current] = {}
-            continue
-        if current:
-            row = re.match(r"^\s*(\d+)\|\s*([\d.kMe]*)\|", line)
-            if row:
-                counts[current][int(row.group(1))] = row.group(2).strip()
+    #
+    # Read from `--json` rather than `--text`. The text renderer omits
+    # the `/path/file.rs:` header when the report covers exactly one
+    # file, so a parser keyed on that header silently attributed no
+    # coverage to anything -- and this check reports "no coverage data
+    # at all" as a failure, so a single-file crate could never pass it.
+    # Found porting the check to `oxml-cli`, whose public API is one
+    # function in one file. The JSON export always names the file.
+    counts: dict[str, dict[int, int]] = {}
+    for entry in json.loads(report)["data"]:
+        for item in entry["files"]:
+            per_line: dict[int, int] = {}
+            # A segment is [line, column, count, has_count, is_entry, is_gap].
+            # Several may start on one line; the line is executed if any
+            # of them ran, so keep the largest count.
+            for line, _column, count, has_count, *_rest in item["segments"]:
+                if has_count:
+                    per_line[line] = max(per_line.get(line, 0), count)
+            counts[item["filename"]] = per_line
 
     total = 0
     unexercised: list[str] = []
@@ -97,23 +131,20 @@ def main() -> int:
             total += 1
             count = counts[keys[0]].get(number)
             if count is None:
-                unexercised.append(f"{rel}:{number} (no coverage data) {stripped}")
-            elif count == "":
-                # A blank count means llvm-cov generated no region for
-                # the line. For a *generic* function that is what an
-                # uninstantiated one looks like: no caller, so no code,
-                # so nothing to count.
+                # No region begins on the declaration line. For a
+                # *generic* function that is exactly what an
+                # uninstantiated one looks like: no caller, so no code
+                # generated, so nothing to count.
                 #
-                # Testing only for "0" read blank as covered, which let
-                # a generic public function pass this check while no
-                # example called it -- the failure this check exists to
-                # prevent, inside the check. Found when the script was
-                # ported to `oxml-lsp`, whose `serve` is generic.
+                # Reading "no region" as covered is how `lsp::serve`
+                # passed this check while no example called it -- the
+                # failure mode the check exists to prevent, occurring
+                # inside the check.
                 unexercised.append(
                     f"{rel}:{number} (never instantiated) "
                     f"{stripped.rstrip(' {')}"
                 )
-            elif count == "0":
+            elif count == 0:
                 unexercised.append(f"{rel}:{number} {stripped.rstrip(' {')}")
 
     if total == 0:
