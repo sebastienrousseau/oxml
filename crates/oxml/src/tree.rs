@@ -397,7 +397,15 @@ impl Document {
             // is indexed in lockstep with `nodes`; starting it empty
             // here shifted every lookup by one, so slot 0 read slot 1's
             // generation and `root()` stopped resolving.
-            generations: vec![0],
+            //
+            // Built rather than `vec![0]`: that macro resolves through
+            // the `std` prelude, which is absent on the bare-metal
+            // targets this crate builds for.
+            generations: {
+                let mut g = Vec::with_capacity(nodes.saturating_add(1));
+                g.push(0);
+                g
+            },
             nodes: v,
             names: Vec::new(),
             name_prefixes: Vec::new(),
