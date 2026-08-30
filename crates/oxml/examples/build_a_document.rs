@@ -105,6 +105,54 @@ fn main() {
         "removing it again is not an error, just nothing to do"
     );
 
+    // The same tree, written as one expression. The builder is a
+    // convenience over the primitives above and does nothing they
+    // cannot -- a test asserts the two produce identical output.
+    let mut fluent = Document::empty();
+    let froot = fluent.root();
+    let built = fluent
+        .build(froot, "catalogue")
+        .attr("version", "1.0")
+        .child("book", |b| {
+            let _ = b.attr("year", "1965").child("title", |t| {
+                let _ = t.text("Dune");
+            });
+        })
+        .finish()
+        .expect("the root is live");
+    println!("\nbuilt fluently:\n{}", fluent.to_xml());
+    assert_eq!(fluent.attribute(built, "version"), Some("1.0"));
+    assert_eq!(fluent.text(froot), "Dune");
+
+    // A namespaced attribute. An unprefixed attribute is in *no*
+    // namespace rather than the element's, so the two are different
+    // names and both can sit on one element.
+    let ns_doc = fluent
+        .build(built, "record")
+        .attr_ns("urn:example:meta", "id", "r-1")
+        .attr("id", "plain")
+        .finish()
+        .expect("live");
+    // Both are stored: an unprefixed attribute is in *no* namespace
+    // rather than the element's, so `urn:example:meta`-`id` and plain
+    // `id` are different names.
+    assert_eq!(
+        fluent.attribute_nodes(ns_doc).len(),
+        2,
+        "two distinct names"
+    );
+
+    // But `attribute` looks up by *local* name and ignores
+    // namespaces, which is what a caller almost always means -- so
+    // with two attributes sharing a local name it answers with the
+    // first, here the namespaced one.
+    assert_eq!(fluent.attribute(ns_doc, "id"), Some("r-1"));
+
+    // Errors are sticky rather than returned at every step, so a chain
+    // reads as one expression and never half-applies silently.
+    let failed = fluent.build(froot, "second-root").attr("k", "v").finish();
+    assert_eq!(failed, Err(NodeError::RootElementExists));
+
     let xml = doc.to_xml();
     println!("\nafter moving a book into the archive:\n{xml}");
     assert_eq!(
