@@ -20,8 +20,27 @@ use alloc::vec::Vec;
 /// A handle to a node within a [`Document`].
 ///
 /// Cheap to copy. Only valid for the document that produced it.
+///
+/// Carries the *generation* of the arena slot it was minted for as
+/// well as the slot's index. A slot's generation changes when the node
+/// in it is removed, so an identifier kept across that removal stops
+/// resolving instead of silently addressing whatever occupies the slot
+/// afterwards.
+///
+/// Without it, removal would be a correctness hazard rather than a
+/// memory one: this crate forbids `unsafe`, so a stale identifier
+/// could never corrupt memory, but it could return a different node
+/// than the caller meant and nothing would report it.
+///
+/// Both halves are `u32` so the identifier stays eight bytes. Widening
+/// it would double `child_ids` and `attr_ids`, which hold one entry per
+/// parent-child and parent-attribute edge in the document -- millions
+/// on a large one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NodeId(pub(crate) usize);
+pub struct NodeId {
+    pub(crate) index: u32,
+    pub(crate) generation: u32,
+}
 
 impl NodeId {
     /// The index of this node within its document's arena.
@@ -29,9 +48,14 @@ impl NodeId {
     /// Exposed because it is useful for building side tables keyed by
     /// node, which is how callers usually annotate a tree without
     /// mutating it.
+    ///
+    /// Two identifiers for the same slot in different generations
+    /// share an index. A side table keyed on this is therefore keyed on
+    /// the slot, not the node -- which is what a side table wants, but
+    /// worth knowing if entries outlive a removal.
     #[must_use]
     pub const fn index(self) -> usize {
-        self.0
+        self.index as usize
     }
 }
 
@@ -278,6 +302,14 @@ pub struct Document {
     /// in the source as written. Empty for most documents.
     pub(crate) expanded: Vec<String>,
     pub(crate) nodes: Vec<Node>,
+    /// The current generation of each arena slot, parallel to `nodes`.
+    ///
+    /// Bumped when the node in a slot is removed, so every `NodeId`
+    /// minted for it beforehand stops resolving. Kept beside `nodes`
+    /// rather than inside `Node` because it must outlive the node it
+    /// describes -- the whole point is to answer questions about a slot
+    /// whose node is gone.
+    pub(crate) generations: Vec<u32>,
     /// Every distinct element name in the document, once.
     pub(crate) names: Vec<ExpandedName>,
     /// The prefix each interned name was written with, parallel to
@@ -339,6 +371,7 @@ impl Document {
         Self {
             input: String::new(),
             expanded: Vec::new(),
+            generations: Vec::new(),
             nodes: Vec::new(),
             names: Vec::new(),
             name_prefixes: Vec::new(),
@@ -360,6 +393,11 @@ impl Document {
         Self {
             input: String::new(),
             expanded: Vec::new(),
+            // One entry for the root node pushed above. `generations`
+            // is indexed in lockstep with `nodes`; starting it empty
+            // here shifted every lookup by one, so slot 0 read slot 1's
+            // generation and `root()` stopped resolving.
+            generations: vec![0],
             nodes: v,
             names: Vec::new(),
             name_prefixes: Vec::new(),
@@ -378,11 +416,14 @@ impl Document {
     /// [`Document::root_element`] for that.
     #[must_use]
     pub const fn root(&self) -> NodeId {
-        NodeId(0)
+        NodeId {
+            index: 0,
+            generation: 0,
+        }
     }
 
     pub(crate) fn push(&mut self, data: NodeData, parent: NodeId) -> NodeId {
-        let id = NodeId(self.nodes.len());
+        let id = self.mint();
         self.nodes.push(Node {
             data,
             parent: Some(parent),
@@ -407,11 +448,14 @@ impl Document {
         let start = self.child_ids.len();
         self.child_ids.extend_from_slice(&self.scratch[mark..]);
         self.scratch.truncate(mark);
-        if let Some(n) = self.nodes.get_mut(parent.0) {
-            n.children = (
-                u32::try_from(start).unwrap_or(u32::MAX),
-                u32::try_from(self.child_ids.len() - start).unwrap_or(0),
-            );
+        // The range is computed before taking the mutable borrow, so
+        // that reading `child_ids` and writing the node do not overlap.
+        let range = (
+            u32::try_from(start).unwrap_or(u32::MAX),
+            u32::try_from(self.child_ids.len() - start).unwrap_or(0),
+        );
+        if let Some(n) = self.resolve_mut(parent) {
+            n.children = range;
         }
     }
 
@@ -424,13 +468,56 @@ impl Document {
         data: NodeData,
         parent: NodeId,
     ) -> NodeId {
-        let id = NodeId(self.nodes.len());
+        let id = self.mint();
         self.nodes.push(Node {
             data,
             parent: Some(parent),
             children: (0, 0),
         });
         id
+    }
+
+    /// Mint an identifier for the slot `push` is about to fill.
+    ///
+    /// Slots are never reused today -- nothing removes a node -- so the
+    /// generation of a fresh slot is always zero. The generation table
+    /// grows alongside `nodes` regardless, so that removal can bump an
+    /// entry without a migration.
+    ///
+    /// A document with more than `u32::MAX` nodes cannot be addressed
+    /// by a `NodeId`. At the smallest possible node that is over a
+    /// hundred gigabytes of arena, so the panic is unreachable rather
+    /// than merely unlikely -- but it is a panic and not a silent
+    /// truncation, because a truncated index would address the wrong
+    /// node.
+    pub(crate) fn mint(&mut self) -> NodeId {
+        let index = u32::try_from(self.nodes.len())
+            .expect("document exceeds u32::MAX nodes");
+        self.generations.push(0);
+        NodeId {
+            index,
+            generation: 0,
+        }
+    }
+
+    /// The node behind `id`, if the identifier is still live.
+    ///
+    /// Returns `None` for an identifier whose slot has since been
+    /// removed, which is the whole reason the generation is carried.
+    pub(crate) fn resolve(&self, id: NodeId) -> Option<&Node> {
+        let index = id.index as usize;
+        if *self.generations.get(index)? != id.generation {
+            return None;
+        }
+        self.nodes.get(index)
+    }
+
+    pub(crate) fn resolve_mut(&mut self, id: NodeId) -> Option<&mut Node> {
+        let index = id.index as usize;
+        if *self.generations.get(index)? != id.generation {
+            return None;
+        }
+        self.nodes.get_mut(index)
     }
 
     /// Resolve stored character data against the document.
@@ -463,7 +550,7 @@ impl Document {
     /// document and borrowed from it, so this allocates nothing.
     #[must_use]
     pub fn kind(&self, id: NodeId) -> Option<NodeKind<'_>> {
-        let node = self.nodes.get(id.0)?;
+        let node = self.resolve(id)?;
         Some(match &node.data {
             NodeData::Root => NodeKind::Root,
             NodeData::Element {
@@ -509,13 +596,13 @@ impl Document {
     /// start tag has been fully read, so the node is pushed first and
     /// filled in after.
     pub(crate) fn data_mut(&mut self, id: NodeId) -> Option<&mut NodeData> {
-        self.nodes.get_mut(id.0).map(|n| &mut n.data)
+        self.resolve_mut(id).map(|n| &mut n.data)
     }
 
     /// A node's parent, or `None` for the root.
     #[must_use]
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
-        self.nodes.get(id.0).and_then(|n| n.parent)
+        self.resolve(id).and_then(|n| n.parent)
     }
 
     /// A node's children, in document order.
@@ -524,7 +611,7 @@ impl Document {
     /// id that does not belong to this document.
     #[must_use]
     pub fn children(&self, id: NodeId) -> &[NodeId] {
-        self.nodes.get(id.0).map_or(&[], |n| {
+        self.resolve(id).map_or(&[], |n| {
             let (start, len) = (n.children.0 as usize, n.children.1 as usize);
             // `saturating_add` because on a 32-bit target -- and this
             // crate builds for three bare-metal ones -- two `u32`
@@ -686,7 +773,10 @@ impl Document {
     /// source, which for this arena is simply ascending index — the
     /// parser only ever appends.
     pub fn descendants(&self) -> impl Iterator<Item = NodeId> + '_ {
-        (0..self.nodes.len()).map(NodeId)
+        (0..self.nodes.len()).map(|i| NodeId {
+            index: u32::try_from(i).unwrap_or(u32::MAX),
+            generation: self.generations.get(i).copied().unwrap_or(0),
+        })
     }
 
     /// The number of nodes, including the document root.
@@ -699,5 +789,54 @@ impl Document {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.len() <= 1
+    }
+}
+
+#[cfg(test)]
+mod generation_tests {
+    use super::*;
+
+    #[test]
+    fn node_id_stays_eight_bytes() {
+        // `child_ids` and `attr_ids` hold one `NodeId` per parent-child
+        // and parent-attribute edge — millions on a large document.
+        // Widening the identifier would double both.
+        assert_eq!(core::mem::size_of::<NodeId>(), 8);
+    }
+
+    #[test]
+    fn generations_stay_in_lockstep_with_nodes() {
+        // They are indexed together. A length mismatch shifts every
+        // lookup, which is how `root()` briefly stopped resolving.
+        let doc = crate::parse("<a><b/><c>text</c></a>").expect("well-formed");
+        assert_eq!(doc.generations.len(), doc.nodes.len());
+    }
+
+    #[test]
+    fn a_fresh_document_resolves_every_id_it_hands_out() {
+        let doc = crate::parse("<a><b/><c>text</c></a>").expect("well-formed");
+        for id in doc.descendants() {
+            assert!(
+                doc.resolve(id).is_some(),
+                "descendants() handed out an id it cannot resolve: {id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_id_from_another_generation_does_not_resolve() {
+        // Nothing removes a node yet, so the stale case is constructed
+        // by hand. This is what a removal must produce.
+        let doc = crate::parse("<a/>").expect("well-formed");
+        let live = doc.root();
+        let stale = NodeId {
+            index: live.index,
+            generation: live.generation + 1,
+        };
+        assert!(doc.resolve(live).is_some());
+        assert!(
+            doc.resolve(stale).is_none(),
+            "a mismatched generation must not resolve to the live node"
+        );
     }
 }
