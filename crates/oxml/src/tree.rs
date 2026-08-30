@@ -864,6 +864,17 @@ pub enum NodeError {
     /// The operation needs an element and was given something else --
     /// a text node, a comment, or the document root.
     NotAnElement,
+    /// The document already has a root element.
+    ///
+    /// XML permits exactly one. A second would serialise to something
+    /// this crate's own parser rejects as trailing content, which the
+    /// caller would not discover until the round trip.
+    RootElementExists,
+    /// The move would place a node inside its own subtree.
+    ///
+    /// The result would be a tree containing a loop, and every walker
+    /// here follows children until they run out. None of them would.
+    WouldCycle,
 }
 
 impl core::fmt::Display for NodeError {
@@ -871,6 +882,12 @@ impl core::fmt::Display for NodeError {
         match self {
             Self::Stale => f.write_str("the node has been removed"),
             Self::NotAnElement => f.write_str("the node is not an element"),
+            Self::RootElementExists => {
+                f.write_str("the document already has a root element")
+            }
+            Self::WouldCycle => f.write_str(
+                "the move would place a node inside its own subtree",
+            ),
         }
     }
 }
@@ -973,6 +990,13 @@ impl Document {
     ) -> Result<NodeId, NodeError> {
         if self.resolve(parent).is_none() {
             return Err(NodeError::Stale);
+        }
+        // XML has exactly one root element. Allowing a second would
+        // build a document that serialises and then fails to reparse
+        // with `TrailingContent` -- a fault the caller meets long after
+        // the call that caused it.
+        if parent == self.root() && self.root_element().is_some() {
+            return Err(NodeError::RootElementExists);
         }
         let name = self.intern(namespace, local);
         let id = self.mint();
@@ -1221,10 +1245,428 @@ mod mutation_tests {
     fn names_are_interned_rather_than_repeated() {
         let mut doc = Document::empty();
         let root = doc.root();
+        // Under one root element, because a document may only have
+        // one -- `append_element` on the document root refuses a
+        // second with `RootElementExists`.
+        let holder = doc.append_element(root, None, "holder").expect("live");
         let before = doc.names.len();
         for _ in 0..10 {
-            let _ = doc.append_element(root, None, "same").expect("live");
+            let _ = doc.append_element(holder, None, "same").expect("live");
         }
         assert_eq!(doc.names.len(), before + 1, "one name, ten elements");
+    }
+}
+
+impl Document {
+    /// Set an attribute on an element, replacing any it already has
+    /// with that name.
+    ///
+    /// Attributes live in the same kind of contiguous arena as
+    /// children -- an element holds a `(start, len)` slice of
+    /// `attr_ids` -- so this relocates the block for the same reason
+    /// `append_element` does. Replacing in place is possible when the
+    /// name already exists and is the common case, so it is taken
+    /// first and costs nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Stale`] if `element` has been removed, or
+    /// [`NodeError::NotAnElement`] if it is not an element -- only
+    /// elements carry attributes.
+    pub fn set_attribute(
+        &mut self,
+        element: NodeId,
+        namespace: Option<&str>,
+        local: &str,
+        value: &str,
+    ) -> Result<(), NodeError> {
+        let Some(node) = self.resolve(element) else {
+            return Err(NodeError::Stale);
+        };
+        let NodeData::Element { attributes, .. } = node.data else {
+            return Err(NodeError::NotAnElement);
+        };
+
+        let name = self.intern(namespace, local);
+        let chars = self.intern_text(value);
+
+        // Replace in place if the element already carries this name.
+        let (start, len) = (attributes.0 as usize, attributes.1 as usize);
+        let existing: Option<NodeId> = self
+            .attr_ids
+            .get(start..start.saturating_add(len))
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .find(|a| {
+                matches!(
+                    self.resolve(*a).map(|n| &n.data),
+                    Some(NodeData::Attr { name: n, .. }) if *n == name
+                )
+            });
+        if let Some(attr) = existing {
+            if let Some(n) = self.resolve_mut(attr) {
+                n.data = NodeData::Attr { name, value: chars };
+            }
+            return Ok(());
+        }
+
+        // Otherwise mint one and relocate the block with it appended.
+        let attr = self.mint();
+        self.nodes.push(Node {
+            data: NodeData::Attr { name, value: chars },
+            // Attributes have a parent so `parent::` works from them,
+            // but are not children -- they must not appear on the
+            // `child::` axis.
+            parent: Some(element),
+            children: (0, 0),
+        });
+        let new_start = self.attr_ids.len();
+        self.attr_ids
+            .extend_from_within(start..start.saturating_add(len));
+        self.attr_ids.push(attr);
+        let range = (
+            u32::try_from(new_start).unwrap_or(u32::MAX),
+            u32::try_from(len + 1).unwrap_or(u32::MAX),
+        );
+        if let Some(n) = self.resolve_mut(element) {
+            if let NodeData::Element { attributes, .. } = &mut n.data {
+                *attributes = range;
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove an attribute, reporting whether there was one.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Stale`] if `element` has been removed, or
+    /// [`NodeError::NotAnElement`] if it is not an element.
+    pub fn remove_attribute(
+        &mut self,
+        element: NodeId,
+        namespace: Option<&str>,
+        local: &str,
+    ) -> Result<bool, NodeError> {
+        let Some(node) = self.resolve(element) else {
+            return Err(NodeError::Stale);
+        };
+        let NodeData::Element { attributes, .. } = node.data else {
+            return Err(NodeError::NotAnElement);
+        };
+        let wanted = ExpandedName {
+            namespace: namespace.map(String::from),
+            local: String::from(local),
+        };
+        let Some(name) = self
+            .names
+            .iter()
+            .position(|n| *n == wanted)
+            .and_then(|i| u32::try_from(i).ok())
+            .map(NameId)
+        else {
+            // The document has never seen this name, so no element
+            // can carry it.
+            return Ok(false);
+        };
+
+        let (start, len) = (attributes.0 as usize, attributes.1 as usize);
+        let kept: Vec<NodeId> = self
+            .attr_ids
+            .get(start..start.saturating_add(len))
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .filter(|a| {
+                !matches!(
+                    self.resolve(*a).map(|n| &n.data),
+                    Some(NodeData::Attr { name: n, .. }) if *n == name
+                )
+            })
+            .collect();
+        if kept.len() == len {
+            return Ok(false);
+        }
+        let new_start = self.attr_ids.len();
+        self.attr_ids.extend_from_slice(&kept);
+        let range = (
+            u32::try_from(new_start).unwrap_or(u32::MAX),
+            u32::try_from(kept.len()).unwrap_or(u32::MAX),
+        );
+        if let Some(n) = self.resolve_mut(element) {
+            if let NodeData::Element { attributes, .. } = &mut n.data {
+                *attributes = range;
+            }
+        }
+        Ok(true)
+    }
+
+    /// Move a subtree to a new parent, appending it there.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Stale`] if either identifier has been removed, or
+    /// [`NodeError::WouldCycle`] if `id` is `new_parent` or an
+    /// ancestor of it. That check is not optional: the result would be
+    /// a "tree" containing a loop, and every walker in this crate --
+    /// `descendants`, `text`, the serialiser, `XPath` -- follows
+    /// children until they run out. None of them would ever run out.
+    pub fn reparent(
+        &mut self,
+        id: NodeId,
+        new_parent: NodeId,
+    ) -> Result<(), NodeError> {
+        if self.resolve(id).is_none() || self.resolve(new_parent).is_none() {
+            return Err(NodeError::Stale);
+        }
+        if id == new_parent {
+            return Err(NodeError::WouldCycle);
+        }
+        // Walk up from the destination: if `id` is on that path, the
+        // move would put a node inside its own subtree.
+        let mut cursor = self.resolve(new_parent).and_then(|n| n.parent);
+        while let Some(node) = cursor {
+            if node == id {
+                return Err(NodeError::WouldCycle);
+            }
+            cursor = self.resolve(node).and_then(|n| n.parent);
+        }
+
+        self.unlink_from_parent(id);
+        if let Some(n) = self.resolve_mut(id) {
+            n.parent = Some(new_parent);
+        }
+        self.push_child(new_parent, id);
+        Ok(())
+    }
+
+    /// Drop `id` from its parent's child list, leaving the node itself
+    /// alone.
+    fn unlink_from_parent(&mut self, id: NodeId) {
+        let Some(parent) = self.resolve(id).and_then(|n| n.parent) else {
+            return;
+        };
+        let Some(p) = self.resolve(parent) else {
+            return;
+        };
+        let (start, len) = (p.children.0 as usize, p.children.1 as usize);
+        let kept: Vec<NodeId> = self
+            .child_ids
+            .get(start..start.saturating_add(len))
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .filter(|c| *c != id)
+            .collect();
+        let new_start = self.child_ids.len();
+        self.child_ids.extend_from_slice(&kept);
+        let range = (
+            u32::try_from(new_start).unwrap_or(u32::MAX),
+            u32::try_from(kept.len()).unwrap_or(u32::MAX),
+        );
+        if let Some(p) = self.resolve_mut(parent) {
+            p.children = range;
+        }
+    }
+}
+
+#[cfg(test)]
+mod attribute_and_move_tests {
+    use super::*;
+
+    fn built() -> (Document, NodeId, NodeId) {
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let a = doc.append_element(root, None, "a").expect("live");
+        (doc, root, a)
+    }
+
+    #[test]
+    fn an_attribute_can_be_set_and_read_back() {
+        let (mut doc, _root, a) = built();
+        doc.set_attribute(a, None, "id", "one").expect("live");
+        assert_eq!(doc.attribute(a, "id"), Some("one"));
+    }
+
+    #[test]
+    fn setting_the_same_name_twice_replaces_rather_than_duplicates() {
+        // XML forbids duplicate attribute names on an element. If this
+        // appended instead of replacing, the document would serialise
+        // to something that will not parse.
+        let (mut doc, _root, a) = built();
+        doc.set_attribute(a, None, "id", "one").expect("live");
+        doc.set_attribute(a, None, "id", "two").expect("live");
+
+        assert_eq!(doc.attribute(a, "id"), Some("two"));
+        assert_eq!(doc.attribute_nodes(a).len(), 1, "one attribute, not two");
+
+        let xml = doc.to_xml();
+        assert!(crate::parse(&xml).is_ok(), "must stay well-formed: {xml}");
+    }
+
+    #[test]
+    fn several_attributes_survive_the_arena_relocation() {
+        let (mut doc, _root, a) = built();
+        for (n, v) in [("one", "1"), ("two", "2"), ("three", "3")] {
+            doc.set_attribute(a, None, n, v).expect("live");
+        }
+        assert_eq!(doc.attribute_nodes(a).len(), 3);
+        assert_eq!(doc.attribute(a, "one"), Some("1"));
+        assert_eq!(doc.attribute(a, "three"), Some("3"));
+    }
+
+    #[test]
+    fn removing_an_attribute_reports_whether_there_was_one() {
+        let (mut doc, _root, a) = built();
+        doc.set_attribute(a, None, "id", "one").expect("live");
+
+        assert_eq!(doc.remove_attribute(a, None, "id"), Ok(true));
+        assert_eq!(doc.attribute(a, "id"), None);
+        assert_eq!(
+            doc.remove_attribute(a, None, "id"),
+            Ok(false),
+            "removing it again is not an error, just nothing to do"
+        );
+        assert_eq!(
+            doc.remove_attribute(a, None, "never-existed"),
+            Ok(false),
+            "a name the document has never interned is not an error either"
+        );
+    }
+
+    #[test]
+    fn attributes_need_an_element() {
+        let (mut doc, root, a) = built();
+        let text = doc.append_text(a, "t").expect("live");
+        assert_eq!(
+            doc.set_attribute(text, None, "id", "x"),
+            Err(NodeError::NotAnElement)
+        );
+        assert_eq!(
+            doc.set_attribute(root, None, "id", "x"),
+            Err(NodeError::NotAnElement),
+            "the document root is not an element"
+        );
+    }
+
+    #[test]
+    fn attributes_of_a_removed_element_are_stale() {
+        let (mut doc, _root, a) = built();
+        doc.remove(a).expect("live");
+        assert_eq!(
+            doc.set_attribute(a, None, "id", "x"),
+            Err(NodeError::Stale)
+        );
+        assert_eq!(doc.remove_attribute(a, None, "id"), Err(NodeError::Stale));
+    }
+
+    #[test]
+    fn a_subtree_can_be_moved_between_parents() {
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let d = doc.append_element(root, None, "d").expect("live");
+        let from = doc.append_element(d, None, "from").expect("live");
+        let to = doc.append_element(d, None, "to").expect("live");
+        let moved = doc.append_element(from, None, "moved").expect("live");
+        let _ = doc.append_text(moved, "payload").expect("live");
+
+        doc.reparent(moved, to).expect("both live, no cycle");
+
+        assert!(doc.children(from).is_empty(), "left the old parent");
+        assert_eq!(doc.children(to), [moved], "arrived at the new one");
+        assert_eq!(doc.parent(moved), Some(to), "and knows its parent");
+        assert_eq!(doc.text(to), "payload", "with its subtree intact");
+    }
+
+    #[test]
+    fn a_node_cannot_be_moved_into_its_own_subtree() {
+        // Without this check the tree would contain a loop, and every
+        // walker here follows children until they run out.
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let outer = doc.append_element(root, None, "outer").expect("live");
+        let inner = doc.append_element(outer, None, "inner").expect("live");
+        let deeper = doc.append_element(inner, None, "deeper").expect("live");
+
+        assert_eq!(doc.reparent(outer, inner), Err(NodeError::WouldCycle));
+        assert_eq!(doc.reparent(outer, deeper), Err(NodeError::WouldCycle));
+        assert_eq!(doc.reparent(outer, outer), Err(NodeError::WouldCycle));
+
+        // And the tree is untouched by the refusal.
+        assert_eq!(doc.children(root), [outer]);
+        assert_eq!(doc.children(outer), [inner]);
+    }
+
+    #[test]
+    fn a_refused_move_leaves_the_document_walkable() {
+        // The property the cycle check protects: after a refusal, a
+        // full walk still terminates.
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let outer = doc.append_element(root, None, "outer").expect("live");
+        let inner = doc.append_element(outer, None, "inner").expect("live");
+        let _ = doc.reparent(outer, inner);
+
+        assert_eq!(doc.descendants().count(), doc.len());
+        assert!(doc.to_xml().contains("<outer>"), "{}", doc.to_xml());
+    }
+
+    #[test]
+    fn moving_to_a_removed_parent_is_stale() {
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let d = doc.append_element(root, None, "d").expect("live");
+        let a = doc.append_element(d, None, "a").expect("live");
+        let b = doc.append_element(d, None, "b").expect("live");
+        doc.remove(b).expect("live");
+        assert_eq!(doc.reparent(a, b), Err(NodeError::Stale));
+    }
+
+    #[test]
+    fn a_second_root_element_is_refused() {
+        // XML permits exactly one. Building two silently produced a
+        // document that serialised and then failed to reparse with
+        // `TrailingContent` -- found by a test that meant to check
+        // something else.
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let first = doc.append_element(root, None, "one").expect("live");
+
+        assert_eq!(
+            doc.append_element(root, None, "two"),
+            Err(NodeError::RootElementExists)
+        );
+
+        // Whereas nesting is fine, and so is a comment or text beside
+        // the root element at document level.
+        let inner = doc.append_element(first, None, "inner");
+        assert!(inner.is_ok(), "{inner:?}");
+        assert!(doc.append_text(root, " ").is_ok(), "text at document level");
+
+        let xml = doc.to_xml();
+        assert!(crate::parse(&xml).is_ok(), "must reparse: {xml}");
+    }
+
+    #[test]
+    fn a_moved_document_still_round_trips() {
+        let mut doc = Document::empty();
+        let root = doc.root();
+        // One root element: `from` and `to` are siblings *inside* it.
+        // An earlier version of this test put both at the document
+        // level, which serialised to two top-level elements and failed
+        // to reparse with `TrailingContent` -- the gap that
+        // `RootElementExists` now closes.
+        let doc_el = doc.append_element(root, None, "doc").expect("live");
+        let from = doc.append_element(doc_el, None, "from").expect("live");
+        let to = doc.append_element(doc_el, None, "to").expect("live");
+        let moved = doc.append_element(from, None, "moved").expect("live");
+        doc.set_attribute(moved, None, "k", "v & w").expect("live");
+        doc.reparent(moved, to).expect("live");
+
+        let once = doc.to_xml();
+        let reparsed = crate::parse(&once).expect("must parse: {once}");
+        assert_eq!(reparsed.to_xml(), once);
+        assert!(once.contains("&amp;"), "attribute escaped: {once}");
     }
 }

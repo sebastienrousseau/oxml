@@ -65,4 +65,51 @@ fn main() {
     );
 
     println!("\nafter removing the note:\n{}", doc.to_xml());
+
+    // Moving a subtree. A node cannot be moved inside its own subtree:
+    // the result would be a tree containing a loop, and every walker
+    // here follows children until they run out.
+    let archive = doc
+        .append_element(catalogue, None, "archive")
+        .expect("live");
+    let first = doc.children(catalogue)[0];
+    doc.reparent(first, archive).expect("no cycle");
+    assert_eq!(doc.children(archive).len(), 1, "the book moved");
+
+    assert_eq!(
+        doc.reparent(catalogue, archive),
+        Err(NodeError::WouldCycle),
+        "moving a node into its own descendant must be refused"
+    );
+
+    // A document may have only one root element.
+    assert_eq!(
+        doc.append_element(root, None, "second-root"),
+        Err(NodeError::RootElementExists)
+    );
+
+    // Attributes. Setting the same name twice replaces rather than
+    // appends -- XML forbids duplicates on an element, and a document
+    // carrying two would serialise to something that will not parse.
+    doc.set_attribute(archive, None, "count", "0")
+        .expect("live");
+    doc.set_attribute(archive, None, "count", "1")
+        .expect("live");
+    assert_eq!(doc.attribute(archive, "count"), Some("1"));
+    assert_eq!(doc.attribute_nodes(archive).len(), 1);
+
+    assert_eq!(doc.remove_attribute(archive, None, "count"), Ok(true));
+    assert_eq!(
+        doc.remove_attribute(archive, None, "count"),
+        Ok(false),
+        "removing it again is not an error, just nothing to do"
+    );
+
+    let xml = doc.to_xml();
+    println!("\nafter moving a book into the archive:\n{xml}");
+    assert_eq!(
+        oxml::parse(&xml).expect("must parse").to_xml(),
+        xml,
+        "still a fixed point after mutation"
+    );
 }
