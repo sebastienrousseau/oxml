@@ -165,7 +165,7 @@ Miri, libm and the host disagreed by 2 ULP on `17.49`.
 ## Coverage
 
 ≥95% of lines, gated in CI, measured with `cargo-llvm-cov`. Currently
-**96.7%**. It fell when 0.0.7 added streaming from a reader, and stays
+**96.8%**. It fell when 0.0.7 added streaming from a reader, and stays
 above the floor.
 
 **Branch coverage is 91.7%**, gated at 80 by its own job. That needs a
@@ -218,7 +218,7 @@ powerset were the ones that did it — a `Vec` that resolves through the
 The individual commands:
 
 ```bash
-cargo test --workspace --all-features        # 385 tests + 22 doctests
+cargo test --workspace --all-features        # 428 tests + 26 doctests
 cargo test --no-default-features             # the no_std surface
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check
