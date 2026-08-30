@@ -119,7 +119,7 @@ unavailable.
 
 Verification beyond the type system:
 
-- **Six fuzz targets** (`parse`, `stream`, `tree_walk`,
+- **Seven fuzz targets** (`parse`, `stream`, `tree_walk`, `mutate`,
   `parse_limits`, `xpath_compile`, `xpath_eval`) with a seeded corpus
   and an XML dictionary. `stream` checks not only that the event
   reader never panics but that it *agrees* with `parse` — same

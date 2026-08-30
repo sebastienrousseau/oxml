@@ -304,6 +304,14 @@ pub struct Document {
     pub(crate) nodes: Vec<Node>,
     /// The current generation of each arena slot, parallel to `nodes`.
     ///
+    /// **Even means live, odd means removed.** Removal bumps by one,
+    /// so a slot's parity says whether anything occupies it without a
+    /// second table. `resolve` refuses an odd slot even when the
+    /// generation matches, which is what stops `descendants` handing
+    /// out identifiers to removed nodes -- it mints them with the
+    /// slot's *current* generation, so without the parity rule a
+    /// removed node would look perfectly live.
+    ///
     /// Bumped when the node in a slot is removed, so every `NodeId`
     /// minted for it beforehand stops resolving. Kept beside `nodes`
     /// rather than inside `Node` because it must outlive the node it
@@ -514,7 +522,11 @@ impl Document {
     /// removed, which is the whole reason the generation is carried.
     pub(crate) fn resolve(&self, id: NodeId) -> Option<&Node> {
         let index = id.index as usize;
-        if *self.generations.get(index)? != id.generation {
+        let generation = *self.generations.get(index)?;
+        // Odd means the slot was removed. Checked before the match,
+        // because an identifier minted from the current generation of
+        // a removed slot would otherwise match itself.
+        if generation % 2 == 1 || generation != id.generation {
             return None;
         }
         self.nodes.get(index)
@@ -522,7 +534,8 @@ impl Document {
 
     pub(crate) fn resolve_mut(&mut self, id: NodeId) -> Option<&mut Node> {
         let index = id.index as usize;
-        if *self.generations.get(index)? != id.generation {
+        let generation = *self.generations.get(index)?;
+        if generation % 2 == 1 || generation != id.generation {
             return None;
         }
         self.nodes.get_mut(index)
@@ -781,10 +794,17 @@ impl Document {
     /// source, which for this arena is simply ascending index — the
     /// parser only ever appends.
     pub fn descendants(&self) -> impl Iterator<Item = NodeId> + '_ {
-        (0..self.nodes.len()).map(|i| NodeId {
-            index: u32::try_from(i).unwrap_or(u32::MAX),
-            generation: self.generations.get(i).copied().unwrap_or(0),
-        })
+        // Removed slots are skipped. Before this, a removed node was
+        // still yielded -- it minted cleanly from its own current
+        // generation -- so a walk after a removal visited nodes that
+        // were gone, and their child lists named identifiers that no
+        // longer resolved. Found by the mutation fuzz target.
+        (0..self.nodes.len())
+            .filter(|i| self.generations.get(*i).is_none_or(|g| g % 2 == 0))
+            .map(|i| NodeId {
+                index: u32::try_from(i).unwrap_or(u32::MAX),
+                generation: self.generations.get(i).copied().unwrap_or(0),
+            })
     }
 
     /// The number of nodes, including the document root.
@@ -1158,6 +1178,39 @@ mod mutation_tests {
             doc.children(root).is_empty(),
             "and the parent must not still list it"
         );
+    }
+
+    #[test]
+    fn a_walk_does_not_visit_removed_nodes() {
+        // Found by the mutation fuzz target, not by review. Removal
+        // bumps a slot's generation, but `descendants` mints
+        // identifiers from each slot's *current* generation -- so a
+        // removed node minted cleanly from its own bumped generation
+        // and looked live. A walk after a removal visited nodes that
+        // were gone, whose child lists named identifiers that no
+        // longer resolved.
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let top = doc.append_element(root, None, "r").expect("live");
+        let a = doc.append_element(top, None, "a").expect("live");
+        let _deep = doc.append_element(a, None, "b").expect("live");
+        assert_eq!(doc.descendants().count(), 4);
+
+        doc.remove(a).expect("live");
+
+        assert_eq!(doc.descendants().count(), 2, "root and r only");
+        assert!(
+            !doc.descendants().any(|d| d.index() == a.index()),
+            "a removed node must not be walked"
+        );
+
+        // And the invariant the fuzz target asserts: every child names
+        // its parent.
+        for id in doc.descendants() {
+            for child in doc.children(id) {
+                assert_eq!(doc.parent(*child), Some(id), "links disagree");
+            }
+        }
     }
 
     #[test]
