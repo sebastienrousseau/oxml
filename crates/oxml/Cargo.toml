@@ -77,6 +77,10 @@ name = "throughput"
 harness = false
 
 [[example]]
+name = "build_a_document"
+path = "examples/build_a_document.rs"
+
+[[example]]
 name = "parse_and_query"
 path = "examples/parse_and_query.rs"
 # The example demonstrates XPath and uses `std::error::Error`, so it is

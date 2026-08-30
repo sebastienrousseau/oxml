@@ -848,3 +848,383 @@ mod generation_tests {
         );
     }
 }
+
+/// Why a mutation could not be applied.
+///
+/// Every variant names a condition the caller can check for, rather
+/// than a generic failure: a mutation API that returns one opaque
+/// error teaches callers to `unwrap` it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeError {
+    /// The node behind this identifier has been removed.
+    ///
+    /// Carries nothing that would let a caller retry with the same
+    /// identifier, because retrying is never the right response.
+    Stale,
+    /// The operation needs an element and was given something else --
+    /// a text node, a comment, or the document root.
+    NotAnElement,
+}
+
+impl core::fmt::Display for NodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Stale => f.write_str("the node has been removed"),
+            Self::NotAnElement => f.write_str("the node is not an element"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for NodeError {}
+
+impl Document {
+    /// An empty document, with a root and nothing under it.
+    ///
+    /// The counterpart to parsing. Until now a `Document` could only
+    /// come from a parser, so building one meant writing XML to a
+    /// string and parsing it back -- which is both slower and unable
+    /// to express anything the serialiser would have escaped.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::with_capacity(0)
+    }
+
+    /// Intern a name, reusing the entry if the document already has it.
+    ///
+    /// Names are interned because a document repeats a handful of them
+    /// thousands of times. A linear scan is right here: mutation
+    /// touches few names, and a map would cost every parsed document
+    /// memory to speed up a case most documents never reach.
+    fn intern(&mut self, namespace: Option<&str>, local: &str) -> NameId {
+        // `String::from` rather than `.to_owned()`: the `ToOwned`
+        // trait is not in the prelude without `std`, and this crate
+        // builds for three bare-metal targets.
+        let wanted = ExpandedName {
+            namespace: namespace.map(String::from),
+            local: String::from(local),
+        };
+        if let Some(i) = self.names.iter().position(|n| *n == wanted) {
+            return NameId(u32::try_from(i).unwrap_or(u32::MAX));
+        }
+        let id = u32::try_from(self.names.len())
+            .expect("document exceeds u32::MAX names");
+        self.names.push(wanted);
+        self.name_prefixes.push(None);
+        NameId(id)
+    }
+
+    /// Store text the input does not contain, returning a handle.
+    fn intern_text(&mut self, text: &str) -> Chars {
+        if text.is_empty() {
+            return Chars::EMPTY;
+        }
+        let id = u32::try_from(self.expanded.len())
+            .expect("document exceeds u32::MAX texts");
+        self.expanded.push(String::from(text));
+        Chars::Expanded(id)
+    }
+
+    /// Append `child` to `parent`'s child list.
+    ///
+    /// A node's children are a contiguous `(start, len)` slice of a
+    /// shared arena, written as one block when the parser closes the
+    /// element. That layout is why reading is fast -- a `Vec` per node
+    /// meant an allocation per element, about a million on the
+    /// benchmark document -- and it is why appending cannot simply
+    /// push.
+    ///
+    /// The block is copied to the end of the arena with the new child
+    /// after it, and the old block is left behind as garbage. Reads
+    /// keep their contiguous slice; the cost is arena growth
+    /// proportional to how much a document is mutated, which a
+    /// compaction pass can reclaim later. Moving to a linked list
+    /// would make this O(1) and give up the locality the parser was
+    /// built around.
+    fn push_child(&mut self, parent: NodeId, child: NodeId) {
+        let Some(node) = self.resolve(parent) else {
+            return;
+        };
+        let (start, len) = (node.children.0 as usize, node.children.1 as usize);
+        let new_start = self.child_ids.len();
+        // `extend_from_within` copies in place without a temporary.
+        self.child_ids
+            .extend_from_within(start..start.saturating_add(len));
+        self.child_ids.push(child);
+        let range = (
+            u32::try_from(new_start).unwrap_or(u32::MAX),
+            u32::try_from(len + 1).unwrap_or(u32::MAX),
+        );
+        if let Some(n) = self.resolve_mut(parent) {
+            n.children = range;
+        }
+    }
+
+    /// Add an element as the last child of `parent`.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Stale`] if `parent` has been removed.
+    pub fn append_element(
+        &mut self,
+        parent: NodeId,
+        namespace: Option<&str>,
+        local: &str,
+    ) -> Result<NodeId, NodeError> {
+        if self.resolve(parent).is_none() {
+            return Err(NodeError::Stale);
+        }
+        let name = self.intern(namespace, local);
+        let id = self.mint();
+        self.nodes.push(Node {
+            data: NodeData::Element {
+                name,
+                attributes: (0, 0),
+                namespaces: (0, 0),
+            },
+            parent: Some(parent),
+            children: (0, 0),
+        });
+        self.push_child(parent, id);
+        Ok(id)
+    }
+
+    /// Add a text node as the last child of `parent`.
+    ///
+    /// The text is stored verbatim. Escaping happens at serialisation,
+    /// so a caller passes the characters it means rather than the
+    /// markup that spells them.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Stale`] if `parent` has been removed.
+    pub fn append_text(
+        &mut self,
+        parent: NodeId,
+        text: &str,
+    ) -> Result<NodeId, NodeError> {
+        if self.resolve(parent).is_none() {
+            return Err(NodeError::Stale);
+        }
+        let chars = self.intern_text(text);
+        let id = self.mint();
+        self.nodes.push(Node {
+            data: NodeData::Text(chars),
+            parent: Some(parent),
+            children: (0, 0),
+        });
+        self.push_child(parent, id);
+        Ok(id)
+    }
+
+    /// Remove a node and everything under it.
+    ///
+    /// The slots are not reused; their generations are bumped, so every
+    /// identifier minted for them stops resolving. That is the whole
+    /// reason [`NodeId`] carries a generation: without it a caller
+    /// holding an identifier across this call would address whatever
+    /// occupied the slot next, and get a wrong answer nothing reports.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeError::Stale`] if `id` has already been removed.
+    pub fn remove(&mut self, id: NodeId) -> Result<(), NodeError> {
+        if self.resolve(id).is_none() {
+            return Err(NodeError::Stale);
+        }
+
+        // Unlink from the parent first, so the tree is never walkable
+        // into a removed subtree even briefly.
+        if let Some(parent) = self.resolve(id).and_then(|n| n.parent) {
+            if let Some(p) = self.resolve(parent) {
+                let (start, len) =
+                    (p.children.0 as usize, p.children.1 as usize);
+                let kept: Vec<NodeId> = self
+                    .child_ids
+                    .get(start..start.saturating_add(len))
+                    .unwrap_or(&[])
+                    .iter()
+                    .copied()
+                    .filter(|c| *c != id)
+                    .collect();
+                let new_start = self.child_ids.len();
+                self.child_ids.extend_from_slice(&kept);
+                let range = (
+                    u32::try_from(new_start).unwrap_or(u32::MAX),
+                    u32::try_from(kept.len()).unwrap_or(u32::MAX),
+                );
+                if let Some(p) = self.resolve_mut(parent) {
+                    p.children = range;
+                }
+            }
+        }
+
+        // Then the subtree, depth first. Collected before bumping, so
+        // the walk is not reading generations it is in the middle of
+        // changing.
+        let mut doomed = Vec::new();
+        let mut stack = alloc::vec::Vec::from([id]);
+        while let Some(current) = stack.pop() {
+            doomed.push(current);
+            stack.extend_from_slice(self.children(current));
+        }
+        for node in doomed {
+            if let Some(g) = self.generations.get_mut(node.index as usize) {
+                *g = g.wrapping_add(1);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod mutation_tests {
+    use super::*;
+
+    #[test]
+    fn a_document_can_be_built_from_nothing() {
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let a = doc.append_element(root, None, "a").expect("root is live");
+        let b = doc.append_element(a, None, "b").expect("a is live");
+        let _ = doc.append_text(b, "hello").expect("b is live");
+
+        assert_eq!(doc.children(root), [a]);
+        assert_eq!(doc.children(a), [b]);
+        assert_eq!(doc.text(root), "hello");
+    }
+
+    #[test]
+    fn children_stay_contiguous_and_ordered_as_they_are_appended() {
+        // The arena copies each block to the end on append. Order and
+        // contents must survive that, or reads silently see a stale
+        // block.
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let parent = doc.append_element(root, None, "p").expect("live");
+        let kids: Vec<NodeId> = (0..8)
+            .map(|i| {
+                if i % 2 == 0 {
+                    doc.append_element(parent, None, "e").expect("live")
+                } else {
+                    doc.append_text(parent, "t").expect("live")
+                }
+            })
+            .collect();
+        assert_eq!(doc.children(parent), kids.as_slice());
+    }
+
+    #[test]
+    fn a_removed_node_leaves_its_identifier_stale() {
+        // The reason NodeId carries a generation at all.
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let a = doc.append_element(root, None, "a").expect("live");
+        assert!(doc.resolve(a).is_some());
+
+        doc.remove(a).expect("a is live");
+
+        assert!(doc.resolve(a).is_none(), "the identifier must not resolve");
+        assert_eq!(
+            doc.remove(a),
+            Err(NodeError::Stale),
+            "and removing twice is an error"
+        );
+        assert!(
+            doc.children(root).is_empty(),
+            "and the parent must not still list it"
+        );
+    }
+
+    #[test]
+    fn removing_a_subtree_invalidates_every_descendant() {
+        // Removing only the top of a subtree would leave descendants
+        // resolving through identifiers whose parent is gone.
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let a = doc.append_element(root, None, "a").expect("live");
+        let b = doc.append_element(a, None, "b").expect("live");
+        let t = doc.append_text(b, "deep").expect("live");
+
+        doc.remove(a).expect("live");
+
+        for (name, id) in [("a", a), ("b", b), ("text", t)] {
+            assert!(doc.resolve(id).is_none(), "{name} should be stale");
+        }
+    }
+
+    #[test]
+    fn removing_one_child_leaves_its_siblings_alone() {
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let p = doc.append_element(root, None, "p").expect("live");
+        let one = doc.append_element(p, None, "one").expect("live");
+        let two = doc.append_element(p, None, "two").expect("live");
+        let three = doc.append_element(p, None, "three").expect("live");
+
+        doc.remove(two).expect("live");
+
+        assert_eq!(doc.children(p), [one, three]);
+        assert!(doc.resolve(one).is_some());
+        assert!(doc.resolve(three).is_some());
+    }
+
+    #[test]
+    fn appending_to_a_removed_parent_is_an_error_not_a_panic() {
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let a = doc.append_element(root, None, "a").expect("live");
+        doc.remove(a).expect("live");
+
+        assert_eq!(doc.append_element(a, None, "b"), Err(NodeError::Stale));
+        assert_eq!(doc.append_text(a, "t"), Err(NodeError::Stale));
+    }
+
+    #[test]
+    fn a_built_document_serialises_and_reparses_to_the_same_tree() {
+        // The join between the new mutation path and the existing
+        // serialiser: a document built by hand must be a fixed point
+        // just as a parsed one is.
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let a = doc.append_element(root, None, "a").expect("live");
+        let b = doc.append_element(a, None, "b").expect("live");
+        let _ = doc.append_text(b, "p & q").expect("live");
+
+        let once = doc.to_xml();
+        let reparsed = crate::parse(&once).expect("what we built must parse");
+        assert_eq!(reparsed.to_xml(), once, "built: {once}");
+        assert_eq!(reparsed.text(reparsed.root()), "p & q");
+    }
+
+    #[test]
+    fn text_is_stored_verbatim_and_escaped_only_on_the_way_out() {
+        // A caller passes characters, not markup. If `&` were stored
+        // as written and emitted as written, the reparse would read an
+        // entity reference.
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let a = doc.append_element(root, None, "a").expect("live");
+        let _ = doc.append_text(a, "x & y < z").expect("live");
+
+        assert_eq!(doc.text(root), "x & y < z");
+        let out = doc.to_xml();
+        assert!(out.contains("&amp;"), "{out}");
+        assert!(out.contains("&lt;"), "{out}");
+        assert_eq!(
+            crate::parse(&out).expect("reparses").text(doc.root()),
+            "x & y < z"
+        );
+    }
+
+    #[test]
+    fn names_are_interned_rather_than_repeated() {
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let before = doc.names.len();
+        for _ in 0..10 {
+            let _ = doc.append_element(root, None, "same").expect("live");
+        }
+        assert_eq!(doc.names.len(), before + 1, "one name, ten elements");
+    }
+}
