@@ -211,3 +211,96 @@ fn malformed_expressions_report_rather_than_panic() {
     assert!(XPath::compile("'unterminated").is_err());
     assert!(XPath::compile("//book)extra").is_err());
 }
+
+mod typed {
+    use oxml::{NodeId, QueryError};
+
+    const DOC: &str = r#"<order id="o-1">
+        <price>9.99</price><price>7.50</price>
+        <qty>3</qty>
+        <note>gift &amp; wrap</note>
+    </order>"#;
+
+    #[test]
+    fn each_type_extracts_what_it_names() {
+        let doc = oxml::parse(DOC).expect("well-formed");
+        let price: f64 = doc.xpath_one("number(//price[1])").expect("a number");
+        let qty: i64 = doc.xpath_one("number(//qty)").expect("an integer");
+        let text: String = doc.xpath_one("string(//note)").expect("a string");
+        let has: bool = doc.xpath_one("count(//price) = 2").expect("a bool");
+        let node: NodeId = doc.xpath_one("//qty").expect("a node");
+
+        // Exact equality is right here: 9.99 parses to one specific
+        // f64, and the extraction must hand back that bit pattern, not
+        // something near it. An epsilon would mask a lossy conversion.
+        #[allow(clippy::float_cmp)]
+        {
+            assert_eq!(price, 9.99);
+        }
+        assert_eq!(qty, 3);
+        assert_eq!(text, "gift & wrap");
+        assert!(has);
+        assert_eq!(doc.text(node), "3");
+    }
+
+    #[test]
+    fn nan_is_an_error_not_a_value() {
+        // Inside an expression NaN follows the specification. At the
+        // boundary into Rust a caller naming f64 wants a number, and
+        // NaN would poison every comparison downstream with no hint of
+        // where it came from.
+        let doc = oxml::parse(DOC).expect("well-formed");
+        let out: Result<f64, _> = doc.xpath_one("number(//note)");
+        assert!(
+            matches!(out, Err(QueryError::Type(_))),
+            "a non-number must be reported, got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_fraction_does_not_truncate_into_an_integer() {
+        let doc = oxml::parse(DOC).expect("well-formed");
+        let out: Result<i64, _> = doc.xpath_one("number(//price[1])");
+        assert!(
+            matches!(out, Err(QueryError::Type(_))),
+            "9.99 as i64 must be an error, not 9: {out:?}"
+        );
+    }
+
+    #[test]
+    fn xpath_all_converts_every_match_or_fails() {
+        let doc = oxml::parse(DOC).expect("well-formed");
+        let prices: Vec<f64> = doc.xpath_all("//price").expect("all numeric");
+        assert_eq!(prices, [9.99, 7.5]);
+
+        // One unconvertible node fails the whole call. Skipping it
+        // silently would hand back a shorter list than the document
+        // has nodes, which is a wrong answer that looks right.
+        let mixed: Result<Vec<f64>, _> = doc.xpath_all("//order/*");
+        assert!(matches!(mixed, Err(QueryError::Type(_))), "{mixed:?}");
+    }
+
+    #[test]
+    fn an_invalid_expression_reports_compile_not_type() {
+        let doc = oxml::parse(DOC).expect("well-formed");
+        let out: Result<f64, _> = doc.xpath_one("//[");
+        assert!(matches!(out, Err(QueryError::Compile(_))), "{out:?}");
+    }
+
+    #[test]
+    fn an_empty_node_set_is_an_error_for_nodeid() {
+        let doc = oxml::parse(DOC).expect("well-formed");
+        let out: Result<NodeId, _> = doc.xpath_one("//absent");
+        assert!(matches!(out, Err(QueryError::Type(_))), "{out:?}");
+    }
+
+    #[test]
+    fn a_string_extraction_cannot_fail_on_any_value() {
+        let doc = oxml::parse(DOC).expect("well-formed");
+        for expr in ["//price", "number(//note)", "count(//price)", "//absent"]
+        {
+            let out: Result<String, _> = doc.xpath_one(expr);
+            assert!(out.is_ok(), "{expr}: {out:?}");
+        }
+    }
+}

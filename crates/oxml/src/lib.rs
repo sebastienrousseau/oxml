@@ -143,4 +143,4 @@ pub use serialise::{EmptyElement, Indent, Newline, SerialiseOptions};
 pub use tree::{Attribute, Document, ExpandedName, NodeId, NodeKind};
 
 #[cfg(feature = "xpath")]
-pub use xpath::{XPath, XPathError};
+pub use xpath::{FromXPath, QueryError, TypeError, XPath, XPathError};
