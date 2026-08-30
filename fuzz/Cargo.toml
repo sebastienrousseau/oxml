@@ -25,6 +25,12 @@ debug-assertions = true
 overflow-checks = true
 
 [[bin]]
+name = "mutate"
+path = "fuzz_targets/mutate.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "parse"
 path = "fuzz_targets/parse.rs"
 test = false

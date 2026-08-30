@@ -27,7 +27,7 @@ one is listed as not done, however close it feels.
 |---|---|---|---|
 | Memory safety | No `unsafe` | `#![forbid(unsafe_code)]`, CI-checked | ✅ |
 | `no_std` | Full, with `alloc` | Builds for 3 bare-metal targets in CI | ✅ |
-| Panics on hostile input | Zero | 0 across 2,585 conformance documents, 6 fuzz targets, Miri | ✅ |
+| Panics on hostile input | Zero | 0 across 2,585 conformance documents, 7 fuzz targets, Miri | ✅ |
 | Resource bounds | Configurable | 10 bounds, 3 profiles, per-document entity budget | ✅ |
 | XXE | Structurally impossible | No file or socket code exists | ✅ |
 | Line coverage | ≥95% | **96.8%**, gated | ✅ |
