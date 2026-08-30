@@ -323,7 +323,7 @@ Two architectural choices motivate the design:
 
 - **All 2,557** decided W3C conformance tests pass, with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 441 tests and 26 doctests; 96.8% line coverage, gated in CI
+- 453 tests and 26 doctests; 96.8% line coverage, gated in CI
 - Six fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not yet:** serialisation, mutation, XSD validation and XSLT. The
@@ -1172,7 +1172,7 @@ vulnerability.
 ## Development
 
 ```bash
-cargo test --workspace --all-features   # 441 tests, plus 26 doctests
+cargo test --workspace --all-features   # 453 tests, plus 26 doctests
 cargo test --no-default-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check
