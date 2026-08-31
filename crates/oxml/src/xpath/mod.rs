@@ -9,6 +9,13 @@
 //! close that gap: compile an expression once with
 //! [`XPath::compile`], then evaluate it against as many documents as
 //! you like.
+//!
+//! One extension beyond `XPath` 1.0, documented as such: the `*:local`
+//! name test (2.0's production) matches a local name in whatever
+//! namespace, so a structural question does not require binding a
+//! prefix for every namespace in the document. Everything else is
+//! strictly 1.0, and an unprefixed name test still matches nodes in
+//! *no* namespace only.
 
 mod ast;
 mod eval;

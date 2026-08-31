@@ -294,6 +294,10 @@ Two architectural choices motivate the design:
 
 **XPath 1.0**
 
+- One documented extension: `*:local` (XPath 2.0's production)
+  matches a local name in any namespace, so deeply namespaced
+  documents can be queried without binding every prefix. Everything
+  else is strictly 1.0.
 - All thirteen axes: `child`, `descendant`, `descendant-or-self`,
   `parent`, `ancestor`, `ancestor-or-self`, `self`, `attribute`,
   `namespace`, `following`, `following-sibling`, `preceding`,
@@ -323,7 +327,7 @@ Two architectural choices motivate the design:
 
 - **All 2,557** decided W3C conformance tests pass, with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 473 tests and 29 doctests; 96.8% line coverage, gated in CI
+- 479 tests and 29 doctests; 96.8% line coverage, gated in CI
 - Seven fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not yet:** serialisation, mutation, XSD validation and XSLT. The
@@ -1172,7 +1176,7 @@ vulnerability.
 ## Development
 
 ```bash
-cargo test --workspace --all-features   # 473 tests, plus 29 doctests
+cargo test --workspace --all-features   # 479 tests, plus 29 doctests
 cargo test --no-default-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check

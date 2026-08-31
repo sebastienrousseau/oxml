@@ -304,3 +304,60 @@ mod typed {
         }
     }
 }
+
+mod wildcard_prefix {
+    //! `*:local` -- an extension (`XPath` 2.0's production, not 1.0),
+    //! for matching a local name in whatever namespace.
+
+    const NS: &str = r#"<r xmlns:a="urn:a" xmlns:b="urn:b">
+        <a:item n="1"/><b:item n="2"/><item n="3"/><a:other/>
+    </r>"#;
+
+    #[test]
+    fn a_wildcard_prefix_matches_every_namespace_and_none() {
+        let doc = oxml::parse(NS).expect("well-formed");
+        let count: i64 = doc.xpath_one("count(//*:item)").expect("numeric");
+        assert_eq!(count, 3, "urn:a, urn:b and no namespace");
+    }
+
+    #[test]
+    fn an_unprefixed_test_still_means_no_namespace() {
+        // The extension must not loosen XPath 1.0's rule: an
+        // unprefixed name test matches nodes in *no* namespace only.
+        let doc = oxml::parse(NS).expect("well-formed");
+        let count: i64 = doc.xpath_one("count(//item)").expect("numeric");
+        assert_eq!(count, 1, "only the unprefixed element");
+    }
+
+    #[test]
+    fn the_wildcard_prefix_works_on_attributes() {
+        let doc = oxml::parse(
+            r#"<r xmlns:m="urn:m"><e m:id="x" id="y" class="z"/></r>"#,
+        )
+        .expect("well-formed");
+        let count: i64 = doc.xpath_one("count(//e/@*:id)").expect("numeric");
+        assert_eq!(count, 2, "m:id and plain id, not class");
+    }
+
+    #[test]
+    fn a_bare_star_is_unchanged() {
+        let doc = oxml::parse(NS).expect("well-formed");
+        let all: i64 = doc.xpath_one("count(//*)").expect("numeric");
+        assert_eq!(all, 5, "r and its four children");
+    }
+
+    #[test]
+    fn multiplication_is_unaffected() {
+        // `*` is also the multiply operator; the extension lives only
+        // in node-test position and must not leak into expressions.
+        let doc = oxml::parse(NS).expect("well-formed");
+        let six: f64 = doc.xpath_one("2 * 3").expect("numeric");
+        assert!((six - 6.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_qualified_name_after_the_star_is_rejected() {
+        assert!(oxml::XPath::compile("//*:a:b").is_err());
+        assert!(oxml::XPath::compile("//*:").is_err());
+    }
+}

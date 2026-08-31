@@ -392,6 +392,10 @@ fn test_matches(
                         && name.namespace.as_deref() == namespace.as_deref()
                 })
             }
+            // `@*:local` -- the local name, in whatever namespace.
+            (NodeTest::AnyNamespace { local }, Some(NodeKind::Attr(a))) => {
+                doc.name(a.name).is_some_and(|name| &name.local == local)
+            }
             _ => false,
         };
     }
@@ -410,6 +414,12 @@ fn test_matches(
                 NodeTest::Name { namespace, local },
                 Some(NodeKind::Namespace { prefix, .. }),
             ) => namespace.is_none() && local == prefix,
+            // A namespace node is in no namespace, so "any namespace"
+            // degenerates to the same match as an unprefixed test.
+            (
+                NodeTest::AnyNamespace { local },
+                Some(NodeKind::Namespace { prefix, .. }),
+            ) => local == prefix,
             _ => false,
         };
     }
@@ -421,6 +431,12 @@ fn test_matches(
                 &e.local == local
                     && e.namespace.as_deref() == namespace.as_deref()
             })
+        }
+        // `*:local` -- the local name, in whatever namespace,
+        // including none. The whole point is not having to bind a
+        // prefix per namespace to ask a structural question.
+        NodeTest::AnyNamespace { local } => {
+            doc.element_name(node).is_some_and(|e| &e.local == local)
         }
         NodeTest::Text => {
             matches!(doc.kind(node), Some(NodeKind::Text(_)))
