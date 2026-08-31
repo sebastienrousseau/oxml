@@ -518,6 +518,24 @@ impl P<'_> {
     fn parse_node_test(&mut self) -> Result<NodeTest, XPathError> {
         self.ws();
         if self.eat("*") {
+            // `*:local` -- any namespace, one local name. An extension
+            // (XPath 2.0's production, not in 1.0), accepted only with
+            // the colon immediately adjacent, as 2.0's lexical rule
+            // requires. In node-test position `*` is never
+            // multiplication, so there is no ambiguity to resolve.
+            if self.peek() == Some(b':') {
+                self.i += 1;
+                let local = self
+                    .try_name()
+                    .ok_or_else(|| self.err("expected a name after `*:`"))?;
+                // `try_name` reads a full QName; a prefix here would
+                // make the expression `*:p:l`, which nothing defines.
+                if local.contains(':') {
+                    return Err(self
+                        .err("`*:` takes a local name, not a qualified one"));
+                }
+                return Ok(NodeTest::AnyNamespace { local });
+            }
             return Ok(NodeTest::Wildcard);
         }
         let name = self

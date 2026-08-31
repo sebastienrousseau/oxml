@@ -60,6 +60,19 @@ pub enum NodeTest {
         /// The local part.
         local: String,
     },
+    /// `*:local` — any namespace, one local name.
+    ///
+    /// **An extension, not `XPath` 1.0.** The 1.0 grammar has no way to
+    /// say "this local name in whatever namespace"; 2.0 added exactly
+    /// this production. It is implemented because binding a prefix for
+    /// every namespace in a deeply namespaced document is boilerplate
+    /// that answers no question, and it is documented as an extension
+    /// so nobody ports an expression to another 1.0 engine and finds
+    /// it rejected.
+    AnyNamespace {
+        /// The local part.
+        local: String,
+    },
     /// `text()`
     Text,
     /// `comment()`
