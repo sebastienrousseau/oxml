@@ -9,6 +9,7 @@
 //! tree is built directly as the scan proceeds.
 
 use alloc::borrow::{Cow, ToOwned};
+use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -101,6 +102,9 @@ pub(crate) struct Parser<'a> {
     /// not be referenced: the document promised it needs nothing from
     /// out there.
     pub(crate) standalone: bool,
+    /// Validated entity replacement texts, keyed by entity name and
+    /// the namespace bindings active when referenced.
+    pub(crate) entity_cache: BTreeSet<(String, Vec<(String, String)>)>,
 }
 
 /// Parse an XML document.
@@ -529,6 +533,7 @@ fn parse_normalized(
         entity_budget: limits.max_entity_expansion,
         entity_depth: 0,
         standalone: declared_standalone(input),
+        entity_cache: BTreeSet::new(),
     };
     p.parse_document()?;
     Ok(p.doc)
@@ -1403,6 +1408,7 @@ impl<'a> Parser<'a> {
             entity_budget: self.entity_budget,
             entity_depth: self.entity_depth + 1,
             standalone: self.standalone,
+            entity_cache: self.entity_cache.clone(),
         };
         let result = sub.parse_entity_body();
         // The budget is per document, so what the check spent counts.
@@ -1949,7 +1955,11 @@ impl<'a> Parser<'a> {
                 if in_attribute {
                     Self::check_entity_in_attribute(&replacement, offset)?;
                 } else {
-                    self.check_entity_as_content(&replacement, offset)?;
+                    let key = (ent.to_owned(), self.ns.bindings.clone());
+                    if !self.entity_cache.contains(&key) {
+                        self.check_entity_as_content(&replacement, offset)?;
+                        let _ = self.entity_cache.insert(key);
+                    }
                 }
                 let mut budget = self.entity_budget;
                 let out = self.expand_text(

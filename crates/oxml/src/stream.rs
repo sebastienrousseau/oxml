@@ -242,6 +242,9 @@ struct Carried {
     /// Per document, not per event. Rebuilding it each scan handed a
     /// bomb split across fifty text nodes fifty full budgets.
     entity_budget: usize,
+    /// Validated entity replacement texts, keyed by entity name and
+    /// the namespace bindings active when referenced.
+    entity_cache: alloc::collections::BTreeSet<(String, Vec<(String, String)>)>,
 }
 
 #[cfg(feature = "std")]
@@ -396,6 +399,7 @@ impl Reader {
                 dtd: None,
                 entity_budget: limits.max_entity_expansion,
                 standalone,
+                entity_cache: alloc::collections::BTreeSet::new(),
             },
             cursor: Cursor {
                 pos: 0,
@@ -511,6 +515,7 @@ impl Reader {
                 dtd: None,
                 entity_budget: limits.max_entity_expansion,
                 standalone,
+                entity_cache: alloc::collections::BTreeSet::new(),
             },
             cursor: Cursor {
                 pos: 0,
@@ -717,6 +722,7 @@ impl Reader {
             entity_budget: carried.entity_budget,
             entity_depth: 0,
             standalone: carried.standalone,
+            entity_cache: core::mem::take(&mut carried.entity_cache),
         };
 
         let result = Self::one_event(
@@ -734,6 +740,7 @@ impl Reader {
         carried.namespaces = core::mem::take(&mut parser.ns);
         carried.dtd = parser.dtd.take();
         carried.entity_budget = parser.entity_budget;
+        carried.entity_cache = core::mem::take(&mut parser.entity_cache);
         result
     }
 
