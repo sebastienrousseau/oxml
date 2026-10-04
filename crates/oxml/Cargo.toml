@@ -148,12 +148,12 @@ required-features = ["std"]
 [[example]]
 name = "stream_async"
 path = "examples/stream_async.rs"
-required-features = ["std", "async"]
+required-features = ["std"]
 
 [[example]]
 name = "telemetry_tracing"
 path = "examples/telemetry_tracing.rs"
-required-features = ["std", "tracing", "xpath"]
+required-features = ["std"]
 
 [[bench]]
 name = "arena_recycling"

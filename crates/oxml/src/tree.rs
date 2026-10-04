@@ -530,7 +530,11 @@ impl Document {
             let slot = index as usize;
             let slot_gen = &mut self.generations[slot];
             *slot_gen = slot_gen.wrapping_add(1);
-            debug_assert_eq!(*slot_gen % 2, 0, "Live slots must have even generation");
+            debug_assert_eq!(
+                *slot_gen % 2,
+                0,
+                "Live slots must have even generation"
+            );
             self.nodes[slot] = Node {
                 data,
                 parent,
@@ -1398,10 +1402,8 @@ impl Document {
         }
 
         // Otherwise allocate one and relocate the block with it appended.
-        let attr = self.alloc_node(
-            NodeData::Attr { name, value: chars },
-            Some(element),
-        );
+        let attr = self
+            .alloc_node(NodeData::Attr { name, value: chars }, Some(element));
         let new_start = self.attr_ids.len();
         self.attr_ids
             .extend_from_within(start..start.saturating_add(len));
@@ -2088,7 +2090,10 @@ mod builder_tests {
 
         // Remove the element: slot is recycled
         doc.remove(first).expect("live");
-        assert!(doc.resolve(first).is_none(), "removed node is not resolvable");
+        assert!(
+            doc.resolve(first).is_none(),
+            "removed node is not resolvable"
+        );
 
         // Append a new element: should reuse first_index
         let second = doc.append_element(root, None, "item2").expect("live");
@@ -2097,7 +2102,10 @@ mod builder_tests {
         assert_eq!(doc.len(), initial_len, "arena size did not grow");
 
         // Stale handle still does not resolve even though slot was reused
-        assert!(doc.resolve(first).is_none(), "stale generation 0 does not resolve");
+        assert!(
+            doc.resolve(first).is_none(),
+            "stale generation 0 does not resolve"
+        );
 
         // New handle resolves correctly
         assert_eq!(

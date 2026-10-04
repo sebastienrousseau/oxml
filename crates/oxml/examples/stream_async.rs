@@ -7,11 +7,12 @@
 //! Tokio's `AsyncBufRead`. Events are processed one at a time with bounded
 //! memory consumption.
 
+#[cfg(feature = "async")]
 use oxml::stream::{AsyncReader, Event};
-use oxml::Result;
 
+#[cfg(feature = "async")]
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let xml_payload = r#"<?xml version="1.0" encoding="UTF-8"?>
     <inventory store="London Flagship">
         <item sku="OX-001" category="books">
@@ -40,7 +41,9 @@ async fn main() -> Result<()> {
             Event::StartElement { name, attributes } => {
                 if name.local == "item" {
                     item_count += 1;
-                    if let Some((_, sku)) = attributes.iter().find(|(attr, _)| attr.local == "sku") {
+                    if let Some((_, sku)) =
+                        attributes.iter().find(|(attr, _)| attr.local == "sku")
+                    {
                         current_item_sku = Some(sku.clone());
                     }
                 } else if name.local == "title" {
@@ -69,4 +72,10 @@ async fn main() -> Result<()> {
 
     println!("\nSuccessfully streamed {item_count} items with AsyncReader.");
     Ok(())
+}
+
+#[cfg(not(feature = "async"))]
+fn main() {
+    println!("Asynchronous streaming requires the 'async' feature.");
+    println!("Run with: cargo run --example stream_async --features async");
 }

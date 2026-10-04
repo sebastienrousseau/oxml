@@ -187,7 +187,8 @@ fn repeated_entity_references_respect_namespace_scopes() {
     let doc_valid = r#"<!DOCTYPE doc [<!ENTITY e "<p:child/>">]><doc xmlns:p="urn:test">&e;&e;&e;</doc>"#;
     assert!(parse(doc_valid).is_ok());
 
-    let doc_invalid = r#"<!DOCTYPE doc [<!ENTITY e "<p:child/>">]><doc>&e;</doc>"#;
+    let doc_invalid =
+        r#"<!DOCTYPE doc [<!ENTITY e "<p:child/>">]><doc>&e;</doc>"#;
     let err = parse(doc_invalid).expect_err("p is undeclared");
     assert!(matches!(err.kind, ErrorKind::UnboundPrefix(_)));
 }

@@ -281,10 +281,7 @@ fn append_chunk(
             return Ok(true);
         }
         if !partial.is_empty() {
-            return Err(Error::new(
-                ErrorKind::MalformedEncoding,
-                text.len(),
-            ));
+            return Err(Error::new(ErrorKind::MalformedEncoding, text.len()));
         }
         return Ok(false);
     }
@@ -797,7 +794,10 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
     /// # Errors
     ///
     /// As [`Self::from_reader`].
-    pub async fn from_reader_with(mut reader: R, limits: Limits) -> Result<Self> {
+    pub async fn from_reader_with(
+        mut reader: R,
+        limits: Limits,
+    ) -> Result<Self> {
         let mut at_eof = false;
         let mut partial = Vec::new();
         let mut pending_cr = false;
@@ -807,8 +807,18 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
         while text.len() < 1024 && !at_eof {
             let read = tokio::io::AsyncReadExt::read(&mut reader, &mut buf)
                 .await
-                .map_err(|e| Error::new(ErrorKind::Io(e.to_string()), text.len()))?;
-            if !append_chunk(&mut text, &buf, read, &mut partial, &mut pending_cr, Version::V10, &mut at_eof)? {
+                .map_err(|e| {
+                    Error::new(ErrorKind::Io(e.to_string()), text.len())
+                })?;
+            if !append_chunk(
+                &mut text,
+                &buf,
+                read,
+                &mut partial,
+                &mut pending_cr,
+                Version::V10,
+                &mut at_eof,
+            )? {
                 break;
             }
         }
@@ -816,7 +826,8 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
         let version = crate::parser::declared_version(&text)?;
         crate::parser::check_prolog_shape(&text)?;
         if version != Version::V10 {
-            text = crate::parser::normalize_line_endings(&text, version).into_owned();
+            text = crate::parser::normalize_line_endings(&text, version)
+                .into_owned();
         }
         crate::parser::check_characters(&text, version, 0)?;
         let standalone = crate::parser::declared_standalone(&text);
@@ -858,8 +869,11 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
     ///
     /// Returns [`Error`] for malformed XML or I/O errors.
     pub async fn next_event(&mut self) -> Result<Option<Event>> {
+        const THRESHOLD: usize = 8192;
+
         #[cfg(feature = "tracing")]
-        let _span = tracing::trace_span!("oxml.stream.async_next_event").entered();
+        let _span =
+            tracing::trace_span!("oxml.stream.async_next_event").entered();
 
         if let Some(end) = self.pending_end.take() {
             return Ok(Some(end));
@@ -878,16 +892,26 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
             let mut buf = [0u8; 8192];
             let read = tokio::io::AsyncReadExt::read(&mut self.inner, &mut buf)
                 .await
-                .map_err(|e| Error::new(ErrorKind::Io(e.to_string()), self.text.len()))?;
+                .map_err(|e| {
+                    Error::new(ErrorKind::Io(e.to_string()), self.text.len())
+                })?;
             let version = self.version;
-            if !append_chunk(&mut self.text, &buf, read, &mut self.partial, &mut self.pending_cr, version, &mut self.at_eof)? {
+            if !append_chunk(
+                &mut self.text,
+                &buf,
+                read,
+                &mut self.partial,
+                &mut self.pending_cr,
+                version,
+                &mut self.at_eof,
+            )? {
                 break;
             }
         }
 
-        let outcome = Reader::scan(&self.text, &mut self.carried, &mut self.cursor);
+        let outcome =
+            Reader::scan(&self.text, &mut self.carried, &mut self.cursor);
 
-        const THRESHOLD: usize = 8192;
         if self.cursor.pos >= THRESHOLD {
             let _ = self.text.drain(..self.cursor.pos);
             self.consumed += self.cursor.pos;
@@ -915,25 +939,9 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
             }
         }
     }
-
-    /// Return a reference to the underlying reader.
-    pub fn get_ref(&self) -> &R {
-        &self.inner
-    }
-
-    /// Return a mutable reference to the underlying reader.
-    pub fn get_mut(&mut self) -> &mut R {
-        &mut self.inner
-    }
-
-    /// Consume the async reader, returning the inner source.
-    pub fn into_inner(self) -> R {
-        self.inner
-    }
 }
 
 impl Reader {
-
     #[allow(clippy::too_many_lines)] // one arm per construct
     fn scan(
         text: &str,
