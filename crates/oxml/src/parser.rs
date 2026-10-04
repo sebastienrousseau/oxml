@@ -178,6 +178,9 @@ pub fn parse_with_external(
     limits: Limits,
     external: &dyn crate::external::ExternalSource,
 ) -> Result<Document> {
+    #[cfg(feature = "tracing")]
+    let _span = tracing::trace_span!("oxml.parse", input_len = input.len()).entered();
+
     // End-of-line normalisation happens before anything else, because
     // the specification defines it as something the processor behaves
     // as though it had done "on input, before parsing". Doing it later

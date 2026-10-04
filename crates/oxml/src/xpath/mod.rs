@@ -113,12 +113,18 @@ impl XPath {
     /// Evaluate against a document, starting at its root.
     #[must_use]
     pub fn evaluate(&self, doc: &Document) -> Value {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::trace_span!("oxml.xpath.evaluate").entered();
+
         eval::evaluate(doc, &self.expr, doc.root())
     }
 
     /// Evaluate with an explicit context node.
     #[must_use]
     pub fn evaluate_from(&self, doc: &Document, context: NodeId) -> Value {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::trace_span!("oxml.xpath.evaluate_from").entered();
+
         eval::evaluate(doc, &self.expr, context)
     }
 

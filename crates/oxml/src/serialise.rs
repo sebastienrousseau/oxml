@@ -203,6 +203,9 @@ impl Document {
         out: &mut W,
         options: SerialiseOptions,
     ) -> core::fmt::Result {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::trace_span!("oxml.serialise").entered();
+
         if self.needs_xml_11() {
             out.write_str("<?xml version=\"1.1\"?>")?;
             if options.indent.is_some() {

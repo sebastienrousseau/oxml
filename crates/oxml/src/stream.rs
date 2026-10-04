@@ -262,6 +262,91 @@ impl core::fmt::Debug for Source {
 }
 
 #[cfg(feature = "std")]
+fn append_chunk(
+    text: &mut String,
+    buf: &[u8],
+    read: usize,
+    partial: &mut Vec<u8>,
+    pending_cr: &mut bool,
+    version: Version,
+    at_eof: &mut bool,
+) -> Result<bool> {
+    if read == 0 {
+        *at_eof = true;
+        // A held-back `\r` at the end of the document is a line
+        // ending of its own.
+        if *pending_cr {
+            *pending_cr = false;
+            text.push('\n');
+            return Ok(true);
+        }
+        if !partial.is_empty() {
+            return Err(Error::new(
+                ErrorKind::MalformedEncoding,
+                text.len(),
+            ));
+        }
+        return Ok(false);
+    }
+
+    let mut bytes = core::mem::take(partial);
+    bytes.extend_from_slice(&buf[..read]);
+
+    // Decode as much as is whole; keep the tail for next time.
+    let chunk = match core::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            let valid = e.valid_up_to();
+            if e.error_len().is_some() {
+                return Err(Error::new(
+                    ErrorKind::MalformedEncoding,
+                    text.len() + valid,
+                ));
+            }
+            // Incomplete rather than invalid: the rest is coming.
+            *partial = bytes[valid..].to_vec();
+            match core::str::from_utf8(&bytes[..valid]) {
+                Ok(s) => s,
+                Err(_) => {
+                    return Err(Error::new(
+                        ErrorKind::MalformedEncoding,
+                        text.len(),
+                    ));
+                }
+            }
+        }
+    };
+    let chunk = chunk.to_owned();
+    if !partial.is_empty() && chunk.is_empty() {
+        // Nothing decodable yet; ask again.
+        return Ok(true);
+    }
+
+    let before = text.len();
+    // A `\r` held back from last time pairs with a `\n` now.
+    let mut rest = chunk.as_str();
+    if *pending_cr {
+        *pending_cr = false;
+        text.push('\n');
+        if let Some(stripped) = rest.strip_prefix('\n') {
+            rest = stripped;
+        }
+    }
+    // Hold back a trailing `\r`: its partner may be in the next
+    // read.
+    let (body, hold) = match rest.strip_suffix('\r') {
+        Some(body) if !*at_eof => (body, true),
+        _ => (rest, false),
+    };
+    *pending_cr = hold;
+
+    let normalised = crate::parser::normalize_line_endings(body, version);
+    text.push_str(&normalised);
+    crate::parser::check_characters(&text[before..], version, before)?;
+    Ok(true)
+}
+
+#[cfg(feature = "std")]
 impl Incoming {
     /// Read one buffer's worth, normalise it, and append it.
     ///
@@ -291,79 +376,15 @@ impl Incoming {
                 ));
             }
         };
-        if read == 0 {
-            self.at_eof = true;
-            // A held-back `\r` at the end of the document is a line
-            // ending of its own.
-            if self.pending_cr {
-                self.pending_cr = false;
-                text.push('\n');
-                return Ok(true);
-            }
-            if !self.partial.is_empty() {
-                return Err(Error::new(
-                    ErrorKind::MalformedEncoding,
-                    text.len(),
-                ));
-            }
-            return Ok(false);
-        }
-
-        let mut bytes = core::mem::take(&mut self.partial);
-        bytes.extend_from_slice(&buf[..read]);
-
-        // Decode as much as is whole; keep the tail for next time.
-        let chunk = match core::str::from_utf8(&bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                let valid = e.valid_up_to();
-                if e.error_len().is_some() {
-                    return Err(Error::new(
-                        ErrorKind::MalformedEncoding,
-                        text.len() + valid,
-                    ));
-                }
-                // Incomplete rather than invalid: the rest is coming.
-                self.partial = bytes[valid..].to_vec();
-                match core::str::from_utf8(&bytes[..valid]) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        return Err(Error::new(
-                            ErrorKind::MalformedEncoding,
-                            text.len(),
-                        ));
-                    }
-                }
-            }
-        };
-        let chunk = chunk.to_owned();
-        if !self.partial.is_empty() && chunk.is_empty() {
-            // Nothing decodable yet; ask again.
-            return Ok(true);
-        }
-
-        let before = text.len();
-        // A `\r` held back from last time pairs with a `\n` now.
-        let mut rest = chunk.as_str();
-        if self.pending_cr {
-            self.pending_cr = false;
-            text.push('\n');
-            if let Some(stripped) = rest.strip_prefix('\n') {
-                rest = stripped;
-            }
-        }
-        // Hold back a trailing `\r`: its partner may be in the next
-        // read.
-        let (body, hold) = match rest.strip_suffix('\r') {
-            Some(body) if !self.at_eof => (body, true),
-            _ => (rest, false),
-        };
-        self.pending_cr = hold;
-
-        let normalised = crate::parser::normalize_line_endings(body, version);
-        text.push_str(&normalised);
-        crate::parser::check_characters(&text[before..], version, before)?;
-        Ok(true)
+        append_chunk(
+            text,
+            &buf,
+            read,
+            &mut self.partial,
+            &mut self.pending_cr,
+            version,
+            &mut self.at_eof,
+        )
     }
 }
 
@@ -582,52 +603,7 @@ impl Reader {
     /// buffered.
     #[cfg(feature = "std")]
     fn construct_is_whole(&self) -> bool {
-        let rest = &self.text[self.cursor.pos.min(self.text.len())..];
-        if rest.is_empty() {
-            return false;
-        }
-        if !rest.starts_with('<') {
-            // Character data runs to the next `<`. The whole run has
-            // to be here, because the tree parser merges a run into
-            // one text node and the events must agree with it.
-            return rest.contains('<');
-        }
-        for (opener, closer) in
-            [("<!--", "-->"), ("<![CDATA[", "]]>"), ("<?", "?>")]
-        {
-            if let Some(body) = rest.strip_prefix(opener) {
-                return body.contains(closer);
-            }
-        }
-        if rest.starts_with("<!DOCTYPE") {
-            // An internal subset contains `>` freely, so the end is
-            // the first `>` at bracket depth zero.
-            let mut depth = 0usize;
-            for c in rest.chars() {
-                match c {
-                    '[' => depth += 1,
-                    ']' => depth = depth.saturating_sub(1),
-                    '>' if depth == 0 => return true,
-                    _ => {}
-                }
-            }
-            return false;
-        }
-        // A tag. `>` inside an attribute value is data, so quotes are
-        // tracked rather than searching for the first one.
-        let mut quote: Option<char> = None;
-        for c in rest.chars() {
-            match (quote, c) {
-                (Some(q), c) if c == q => quote = None,
-                (None, '"' | '\'') => quote = Some(c),
-                (None, '>') => return true,
-                // Inside a quoted value everything is data; outside
-                // one, anything else is part of the name or an
-                // attribute.
-                _ => {}
-            }
-        }
-        false
+        construct_is_whole_str(&self.text, self.cursor.pos)
     }
 
     /// Drop text the scanner has passed.
@@ -659,6 +635,9 @@ impl Reader {
     /// rejects, at the same offset.
     #[allow(clippy::should_implement_trait)] // `next` returns a Result
     pub fn next_event(&mut self) -> Result<Option<Event>> {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::trace_span!("oxml.stream.next_event").entered();
+
         if let Some(end) = self.pending_end.take() {
             return Ok(Some(end));
         }
@@ -697,6 +676,243 @@ impl Reader {
             }
         }
     }
+}
+
+#[cfg(feature = "std")]
+fn construct_is_whole_str(text: &str, pos: usize) -> bool {
+    let rest = &text[pos.min(text.len())..];
+    if rest.is_empty() {
+        return false;
+    }
+    if !rest.starts_with('<') {
+        // Character data runs to the next `<`. The whole run has
+        // to be here, because the tree parser merges a run into
+        // one text node and the events must agree with it.
+        return rest.contains('<');
+    }
+    for (opener, closer) in
+        [("<!--", "-->"), ("<![CDATA[", "]]>"), ("<?", "?>")]
+    {
+        if let Some(body) = rest.strip_prefix(opener) {
+            return body.contains(closer);
+        }
+    }
+    if rest.starts_with("<!DOCTYPE") {
+        // An internal subset contains `>` freely, so the end is
+        // the first `>` at bracket depth zero.
+        let mut depth = 0usize;
+        for c in rest.chars() {
+            match c {
+                '[' => depth += 1,
+                ']' => depth = depth.saturating_sub(1),
+                '>' if depth == 0 => return true,
+                _ => {}
+            }
+        }
+        return false;
+    }
+    // A tag. `>` inside an attribute value is data, so quotes are
+    // tracked rather than searching for the first one.
+    let mut quote: Option<char> = None;
+    for c in rest.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '>') => return true,
+            // Inside a quoted value everything is data; outside
+            // one, anything else is part of the name or an
+            // attribute.
+            _ => {}
+        }
+    }
+    false
+}
+
+/// An asynchronous, non-blocking pull-based XML stream reader.
+///
+/// Reads an XML document from an asynchronous byte source implementing
+/// [`tokio::io::AsyncBufRead`] without loading the entire document into
+/// memory or building a DOM tree. Memory is bounded by the largest single
+/// construct.
+#[cfg(feature = "async")]
+pub struct AsyncReader<R> {
+    inner: R,
+    at_eof: bool,
+    version: Version,
+    partial: Vec<u8>,
+    pending_cr: bool,
+    text: String,
+    carried: Carried,
+    cursor: Cursor,
+    done: bool,
+    pending_end: Option<Event>,
+    consumed: usize,
+}
+
+#[cfg(feature = "async")]
+impl<R> core::fmt::Debug for AsyncReader<R> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("AsyncReader")
+            .field("at_eof", &self.at_eof)
+            .field("version", &self.version)
+            .field("consumed", &self.consumed)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "async")]
+impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
+    /// Read an XML document from an asynchronous byte source using default limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] if the declaration is malformed or the input
+    /// contains illegal characters or violates XML well-formedness.
+    pub async fn from_reader(reader: R) -> Result<Self> {
+        Self::from_reader_with(reader, Limits::default()).await
+    }
+
+    /// Read an XML document from an asynchronous byte source under explicit resource bounds.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::from_reader`].
+    pub async fn from_reader_with(mut reader: R, limits: Limits) -> Result<Self> {
+        let mut at_eof = false;
+        let mut partial = Vec::new();
+        let mut pending_cr = false;
+        let mut text = String::new();
+        let mut buf = [0u8; 1024];
+
+        while text.len() < 1024 && !at_eof {
+            let read = tokio::io::AsyncReadExt::read(&mut reader, &mut buf)
+                .await
+                .map_err(|e| Error::new(ErrorKind::Io(e.to_string()), text.len()))?;
+            if !append_chunk(&mut text, &buf, read, &mut partial, &mut pending_cr, Version::V10, &mut at_eof)? {
+                break;
+            }
+        }
+
+        let version = crate::parser::declared_version(&text)?;
+        crate::parser::check_prolog_shape(&text)?;
+        if version != Version::V10 {
+            text = crate::parser::normalize_line_endings(&text, version).into_owned();
+        }
+        crate::parser::check_characters(&text, version, 0)?;
+        let standalone = crate::parser::declared_standalone(&text);
+
+        Ok(Self {
+            inner: reader,
+            at_eof,
+            version,
+            partial,
+            pending_cr,
+            text,
+            carried: Carried {
+                document: Document::placeholder(),
+                namespaces: crate::parser::Namespaces::default(),
+                names: alloc::collections::BTreeMap::new(),
+                version,
+                limits,
+                depth: 0,
+                dtd: None,
+                entity_budget: limits.max_entity_expansion,
+                standalone,
+                entity_cache: alloc::collections::BTreeSet::new(),
+            },
+            cursor: Cursor {
+                pos: 0,
+                open: Vec::new(),
+                started: false,
+                seen_root: false,
+            },
+            done: false,
+            pending_end: None,
+            consumed: 0,
+        })
+    }
+
+    /// Read the next event asynchronously, or `None` at the end of the document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for malformed XML or I/O errors.
+    pub async fn next_event(&mut self) -> Result<Option<Event>> {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::trace_span!("oxml.stream.async_next_event").entered();
+
+        if let Some(end) = self.pending_end.take() {
+            return Ok(Some(end));
+        }
+        if self.done {
+            return Ok(None);
+        }
+
+        loop {
+            if construct_is_whole_str(&self.text, self.cursor.pos) {
+                break;
+            }
+            if self.at_eof && self.partial.is_empty() && !self.pending_cr {
+                break;
+            }
+            let mut buf = [0u8; 8192];
+            let read = tokio::io::AsyncReadExt::read(&mut self.inner, &mut buf)
+                .await
+                .map_err(|e| Error::new(ErrorKind::Io(e.to_string()), self.text.len()))?;
+            let version = self.version;
+            if !append_chunk(&mut self.text, &buf, read, &mut self.partial, &mut self.pending_cr, version, &mut self.at_eof)? {
+                break;
+            }
+        }
+
+        let outcome = Reader::scan(&self.text, &mut self.carried, &mut self.cursor);
+
+        const THRESHOLD: usize = 8192;
+        if self.cursor.pos >= THRESHOLD {
+            let _ = self.text.drain(..self.cursor.pos);
+            self.consumed += self.cursor.pos;
+            self.cursor.pos = 0;
+        }
+
+        let outcome = outcome.map_err(|mut e| {
+            e.offset += self.consumed;
+            e
+        });
+
+        match outcome {
+            Ok(Scanned::Event(event)) => Ok(Some(event)),
+            Ok(Scanned::SelfClosed(start, end)) => {
+                self.pending_end = Some(end);
+                Ok(Some(start))
+            }
+            Ok(Scanned::Eof) => {
+                self.done = true;
+                Ok(None)
+            }
+            Err(e) => {
+                self.done = true;
+                Err(e)
+            }
+        }
+    }
+
+    /// Return a reference to the underlying reader.
+    pub fn get_ref(&self) -> &R {
+        &self.inner
+    }
+
+    /// Return a mutable reference to the underlying reader.
+    pub fn get_mut(&mut self) -> &mut R {
+        &mut self.inner
+    }
+
+    /// Consume the async reader, returning the inner source.
+    pub fn into_inner(self) -> R {
+        self.inner
+    }
+}
+
+impl Reader {
 
     #[allow(clippy::too_many_lines)] // one arm per construct
     fn scan(
