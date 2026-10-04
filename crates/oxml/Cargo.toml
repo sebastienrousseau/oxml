@@ -42,11 +42,18 @@ libm = ["dep:libm"]
 # XPath 1.0 evaluation. Separable because the tree alone is useful, and
 # a caller who only parses should not pay for the engine.
 xpath = []
+# Non-blocking pull-based streaming parser supporting `tokio::io::AsyncBufRead`.
+async = ["dep:tokio", "std"]
+# Diagnostic and performance instrumentation via tracing spans.
+tracing = ["dep:tracing"]
 
 [dependencies]
 libm = { version = "0.2", optional = true }
+tokio = { version = "1.0", optional = true, default-features = false, features = ["io-util", "sync"] }
+tracing = { version = "0.1", optional = true, default-features = false }
 
 [dev-dependencies]
+tokio = { version = "1.0", features = ["rt", "macros", "io-util"] }
 proptest = "1"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 quick-xml = "0.42"

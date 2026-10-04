@@ -303,16 +303,27 @@ Shipped in 0.0.8:
 - **`oxml-lsp` speaks LSP.** `initialize`, `shutdown`, `exit`,
   `textDocument/didOpen`, `didChange`, `didClose` and
   `publishDiagnostics`, framed with `Content-Length` over stdio.
+- **Mutation and Fluent Builder.** `Builder`, `Document::build_element()`,
+  and in-place tree mutation primitives.
+- **Arena Slot Recycling.** Generational free-list slot recycling
+  prevents monotonic memory growth during tree mutation while preserving
+  handle safety.
+- **Scope-Aware Entity Validation Memoization.** Re-validating identical
+  general entity references within the same namespace scope is memoised.
+- **Safe Chunked Delimiter Scanning.** 8-byte SWAR delimiter scanning
+  runs at memory speeds without a single line of `unsafe` code.
+- **Asynchronous Streaming Parser.** `stream::AsyncReader` supporting
+  non-blocking pull-based event streaming from any `tokio::io::AsyncBufRead`
+  under the optional `async` feature.
+- **Diagnostic Telemetry.** OpenTelemetry/Tokio `tracing` spans across
+  parsing, serialization, streaming, and XPath query evaluation under the
+  optional `tracing` feature.
 
 Still outstanding:
 
 1. **The absolute throughput figure.** It has now outlasted three
    releases and is still not code -- it needs a quiet machine, and
    load has been 0.67-2.5 per core against a 0.20 threshold.
-2. **Mutation.** Serialisation writes a document back out; nothing
-   yet edits one in place. Round-tripping comments, entity references,
-   attribute order and whitespace is most of the difficulty, and that
-   part is done -- the mutation API is not.
 
 ## Not planned
 
