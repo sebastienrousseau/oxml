@@ -1,0 +1,135 @@
+# MkDocs Material configuration for oxml
+site_name: oxml
+site_description: >-
+  A pure Rust XML toolkit with zero unsafe code — parsing, an ergonomic tree, and XPath 1.0.
+site_url: https://sebastienrousseau.github.io/oxml/
+site_author: Sebastien Rousseau
+copyright: Copyright &copy; 2026 <a href="https://sebastienrousseau.com/" rel="author">Sebastien Rousseau</a>
+
+repo_url: https://github.com/sebastienrousseau/oxml
+repo_name: sebastienrousseau/oxml
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+exclude_docs: |
+  docs/README.md
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/xml
+  favicon: assets/favicon.png
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.indexes
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.tabs.link
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - search
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Overview: index.md
+  - User Guide: USER-GUIDE.md
+  - Architecture: ARCHITECTURE.md
+  - Conformance: CONFORMANCE.md
+  - Benchmarks: BENCHMARKS.md
+  - Comparison: COMPARISON.md
+  - Ecosystem: ECOSYSTEM.md
+  - Security & Assurance:
+      - Security Model: SECURITY-MODEL.md
+      - Assurance Case: ASSURANCE-CASE.md
+      - Testing: TESTING.md
+  - Migrations:
+      - From quick-xml: MIGRATION-FROM-QUICK-XML.md
+      - From roxmltree: MIGRATION-FROM-ROXMLTREE.md
+      - From libxml2: MIGRATION-FROM-LIBXML.md
+      - From sxd-xpath: MIGRATION-FROM-SXD.md
+  - Decisions & Design:
+      - ADR Overview: adr/README.md
+      - ADR 0001 Arena over Rc/RefCell: adr/0001-arena-over-rc-refcell.md
+      - ADR 0002 Forbid Unsafe: adr/0002-forbid-unsafe.md
+      - ADR 0003 No External Entities: adr/0003-no-external-entities.md
+      - ADR 0004 Entity Budget: adr/0004-per-document-entity-budget.md
+      - ADR 0005 Limits as a Value: adr/0005-limits-as-a-value.md
+      - ADR 0006 Baseline Ratchet: adr/0006-baseline-ratchet.md
+      - ADR 0007 Owned Strings: adr/0007-owned-strings-for-now.md
+      - Design Notes: design/README.md
+      - Design Owned Input: design/owned-input.md
+      - Design XML 1.1 Line Endings: design/xml-1-1-line-endings.md
+      - Parse Pipeline: diagrams/parse-pipeline.md
+      - Release Notes Overview: release-notes/README.md
+      - Release 0.0.4: release-notes/0.0.4.md
+      - Release 0.0.5: release-notes/0.0.5.md
+  - Reference:
+      - House Style: HOUSE-STYLE.md
+      - MSRV & Deprecation: MSRV-AND-DEPRECATION.md
+      - Releasing: RELEASING.md
+      - Roadmap: ROADMAP.md
+      - Handover: HANDOVER.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/sebastienrousseau/oxml
+    - icon: fontawesome/brands/mastodon
+      link: https://sebastienrousseau.com
