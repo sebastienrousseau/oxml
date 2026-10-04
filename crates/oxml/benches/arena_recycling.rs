@@ -23,7 +23,8 @@ fn bench(c: &mut Criterion) {
             // Add 1000 nodes
             let mut ids = Vec::with_capacity(1000);
             for i in 0..1000 {
-                let id = doc.append_element(root, None, "node").expect("append");
+                let id =
+                    doc.append_element(root, None, "node").expect("append");
                 ids.push(id);
                 black_box(i);
             }
@@ -35,7 +36,9 @@ fn bench(c: &mut Criterion) {
 
             // Allocate 1000 more nodes (recycling from free_slots)
             for _ in 0..1000 {
-                let _ = doc.append_element(root, None, "recycled").expect("recycled");
+                let _ = doc
+                    .append_element(root, None, "recycled")
+                    .expect("recycled");
             }
 
             black_box(doc)

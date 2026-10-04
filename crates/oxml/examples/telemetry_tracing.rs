@@ -3,10 +3,10 @@
 
 //! Telemetry and distributed tracing integration with `oxml`.
 //!
-//! Demonstrates how `oxml` instruments parsing, XPath queries, and
+//! Demonstrates how `oxml` instruments parsing, `XPath` queries, and
 //! serialization under the optional `tracing` feature flag.
 
-use oxml::{parse, XPath};
+use oxml::{XPath, parse};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"

@@ -10,15 +10,18 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxml::stream::AsyncReader;
+use std::fmt::Write as _;
 use std::hint::black_box;
 use std::io::Cursor;
 
 fn generate_xml(n: usize) -> Vec<u8> {
-    let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><catalog>");
+    let mut xml =
+        String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><catalog>");
     for i in 0..n {
-        xml.push_str(&format!(
+        let _ = write!(
+            xml,
             r#"<item id="{i}" status="active"><name>Item {i}</name><value>{i}</value></item>"#
-        ));
+        );
     }
     xml.push_str("</catalog>");
     xml.into_bytes()
@@ -37,9 +40,11 @@ fn bench(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let cursor = Cursor::new(&payload);
-                let mut reader = AsyncReader::from_reader(cursor).await.expect("reader");
+                let mut reader =
+                    AsyncReader::from_reader(cursor).await.expect("reader");
                 let mut count = 0;
-                while let Some(evt) = reader.next_event().await.expect("event") {
+                while let Some(evt) = reader.next_event().await.expect("event")
+                {
                     black_box(evt);
                     count += 1;
                 }

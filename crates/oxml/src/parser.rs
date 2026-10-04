@@ -179,7 +179,8 @@ pub fn parse_with_external(
     external: &dyn crate::external::ExternalSource,
 ) -> Result<Document> {
     #[cfg(feature = "tracing")]
-    let _span = tracing::trace_span!("oxml.parse", input_len = input.len()).entered();
+    let _span =
+        tracing::trace_span!("oxml.parse", input_len = input.len()).entered();
 
     // End-of-line normalisation happens before anything else, because
     // the specification defines it as something the processor behaves
@@ -1173,7 +1174,8 @@ impl<'a> Parser<'a> {
     const fn has_byte(v: u64, b: u8) -> bool {
         let splat = u64::from_ne_bytes([b; 8]);
         let x = v ^ splat;
-        (x.wrapping_sub(0x0101_0101_0101_0101) & !x & 0x8080_8080_8080_8080) != 0
+        (x.wrapping_sub(0x0101_0101_0101_0101) & !x & 0x8080_8080_8080_8080)
+            != 0
     }
 
     #[inline]
@@ -1183,7 +1185,9 @@ impl<'a> Parser<'a> {
 
     #[inline]
     const fn has_attr_delimiter(v: u64, quote: u8) -> bool {
-        Self::has_byte(v, quote) || Self::has_byte(v, b'&') || Self::has_byte(v, b'<')
+        Self::has_byte(v, quote)
+            || Self::has_byte(v, b'&')
+            || Self::has_byte(v, b'<')
     }
 
     pub(crate) fn parse_text_run(&mut self, out: &mut Run) -> Result<()> {
@@ -1218,7 +1222,9 @@ impl<'a> Parser<'a> {
                 _ => {
                     let start = self.pos;
                     while self.pos + 8 <= self.bytes.len() {
-                        let Ok(chunk) = self.bytes[self.pos..self.pos + 8].try_into() else {
+                        let Ok(chunk) =
+                            self.bytes[self.pos..self.pos + 8].try_into()
+                        else {
                             break;
                         };
                         let v = u64::from_ne_bytes(chunk);
@@ -1688,7 +1694,9 @@ impl<'a> Parser<'a> {
                     // `a="<x"` was rejected and `a="1 < 2"` was not.
                     let s = self.pos;
                     while self.pos + 8 <= self.bytes.len() {
-                        let Ok(chunk) = self.bytes[self.pos..self.pos + 8].try_into() else {
+                        let Ok(chunk) =
+                            self.bytes[self.pos..self.pos + 8].try_into()
+                        else {
                             break;
                         };
                         let v = u64::from_ne_bytes(chunk);
@@ -1947,6 +1955,7 @@ impl<'a> Parser<'a> {
     /// anywhere in it is exempt. Normalising the finished expansion
     /// instead would lose that distinction, because by then `&#xA;`
     /// and a literal newline are the same character.
+    #[allow(clippy::too_many_lines)]
     fn expand_entity(
         &mut self,
         ent: &str,
