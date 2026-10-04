@@ -768,6 +768,26 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
     ///
     /// Returns [`Error`] if the declaration is malformed or the input
     /// contains illegal characters or violates XML well-formedness.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), oxml::Error> {
+    /// use oxml::stream::{AsyncReader, Event};
+    ///
+    /// let xml = "<catalog><item>Book</item></catalog>";
+    /// let mut reader = AsyncReader::from_reader(xml.as_bytes()).await?;
+    /// let mut items = Vec::new();
+    /// while let Some(event) = reader.next_event().await? {
+    ///     if let Event::StartElement { name, .. } = event {
+    ///         items.push(name.local);
+    ///     }
+    /// }
+    /// assert_eq!(items, ["catalog", "item"]);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn from_reader(reader: R) -> Result<Self> {
         Self::from_reader_with(reader, Limits::default()).await
     }

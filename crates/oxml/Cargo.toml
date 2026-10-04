@@ -53,7 +53,7 @@ tokio = { version = "1.0", optional = true, default-features = false, features =
 tracing = { version = "0.1", optional = true, default-features = false }
 
 [dev-dependencies]
-tokio = { version = "1.0", features = ["rt", "macros", "io-util"] }
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros", "io-util"] }
 proptest = "1"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 quick-xml = "0.42"
@@ -144,6 +144,25 @@ required-features = ["std"]
 name = "stream_events"
 path = "examples/stream_events.rs"
 required-features = ["std"]
+
+[[example]]
+name = "stream_async"
+path = "examples/stream_async.rs"
+required-features = ["std", "async"]
+
+[[example]]
+name = "telemetry_tracing"
+path = "examples/telemetry_tracing.rs"
+required-features = ["std", "tracing", "xpath"]
+
+[[bench]]
+name = "arena_recycling"
+harness = false
+
+[[bench]]
+name = "async_stream"
+harness = false
+required-features = ["std", "async"]
 
 [[bench]]
 name = "comparison"
