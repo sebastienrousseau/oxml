@@ -10,6 +10,35 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [0.0.9] - 2026-10-04
+
+### Added
+
+- **Generational slot free-list recycling.** Removed nodes and attributes
+  recycle their arena slots in `Document`, bounding memory during rapid
+  tree mutation while invalidating stale `NodeId` handles via generation
+  bumping.
+- **Asynchronous streaming reader.** `oxml::stream::AsyncReader<R>`
+  delivers non-blocking event-based streaming from any
+  `tokio::io::AsyncBufRead` under optional feature `async`.
+- **Diagnostic telemetry tracing.** OpenTelemetry/Tokio `tracing` spans
+  instrument parsing, XPath evaluation, serialization, and streaming
+  under optional feature `tracing`.
+- **Benchmarks and examples.** Added benchmark suites for arena
+  recycling and async streaming, accompanied by runnable examples for
+  async streaming and telemetry tracing.
+
+### Performance
+
+- **Chunked safe delimiter scanning (SWAR).** 8-byte chunk scanning
+  accelerates character data and attribute value scanning without unsafe
+  code, more than doubling streaming event throughput (+149% vs
+  `quick-xml` benchmark).
+- **Scope-aware entity memoization.** Caches validated entity
+  replacement markup by entity name and active namespace scope to
+  eliminate repeated throwaway tree parsing across thousands of
+  references.
+
 ## [0.0.8] - 2026-08-29
 
 ### Added
