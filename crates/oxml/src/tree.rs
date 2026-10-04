@@ -318,6 +318,8 @@ pub struct Document {
     /// describes -- the whole point is to answer questions about a slot
     /// whose node is gone.
     pub(crate) generations: Vec<u32>,
+    /// Recycled arena slot indices from removed nodes and attributes.
+    pub(crate) free_slots: Vec<u32>,
     /// Every distinct element name in the document, once.
     pub(crate) names: Vec<ExpandedName>,
     /// The prefix each interned name was written with, parallel to
@@ -381,6 +383,7 @@ impl Document {
             expanded: Vec::new(),
             generations: Vec::new(),
             nodes: Vec::new(),
+            free_slots: Vec::new(),
             names: Vec::new(),
             name_prefixes: Vec::new(),
             attr_ids: Vec::new(),
@@ -415,6 +418,7 @@ impl Document {
                 g
             },
             nodes: v,
+            free_slots: Vec::new(),
             names: Vec::new(),
             name_prefixes: Vec::new(),
             attr_ids: Vec::new(),
@@ -513,6 +517,37 @@ impl Document {
         NodeId {
             index,
             generation: 0,
+        }
+    }
+
+    /// Allocate a node in the arena, reusing dead slots if available.
+    pub(crate) fn alloc_node(
+        &mut self,
+        data: NodeData,
+        parent: Option<NodeId>,
+    ) -> NodeId {
+        if let Some(index) = self.free_slots.pop() {
+            let slot = index as usize;
+            let slot_gen = &mut self.generations[slot];
+            *slot_gen = slot_gen.wrapping_add(1);
+            debug_assert_eq!(*slot_gen % 2, 0, "Live slots must have even generation");
+            self.nodes[slot] = Node {
+                data,
+                parent,
+                children: (0, 0),
+            };
+            NodeId {
+                index,
+                generation: *slot_gen,
+            }
+        } else {
+            let id = self.mint();
+            self.nodes.push(Node {
+                data,
+                parent,
+                children: (0, 0),
+            });
+            id
         }
     }
 
@@ -1019,16 +1054,14 @@ impl Document {
             return Err(NodeError::RootElementExists);
         }
         let name = self.intern(namespace, local);
-        let id = self.mint();
-        self.nodes.push(Node {
-            data: NodeData::Element {
+        let id = self.alloc_node(
+            NodeData::Element {
                 name,
                 attributes: (0, 0),
                 namespaces: (0, 0),
             },
-            parent: Some(parent),
-            children: (0, 0),
-        });
+            Some(parent),
+        );
         self.push_child(parent, id);
         Ok(id)
     }
@@ -1051,23 +1084,19 @@ impl Document {
             return Err(NodeError::Stale);
         }
         let chars = self.intern_text(text);
-        let id = self.mint();
-        self.nodes.push(Node {
-            data: NodeData::Text(chars),
-            parent: Some(parent),
-            children: (0, 0),
-        });
+        let id = self.alloc_node(NodeData::Text(chars), Some(parent));
         self.push_child(parent, id);
         Ok(id)
     }
 
     /// Remove a node and everything under it.
     ///
-    /// The slots are not reused; their generations are bumped, so every
-    /// identifier minted for them stops resolving. That is the whole
-    /// reason [`NodeId`] carries a generation: without it a caller
-    /// holding an identifier across this call would address whatever
-    /// occupied the slot next, and get a wrong answer nothing reports.
+    /// The slots are recycled for future allocations once their
+    /// generations are bumped, so every identifier minted for them
+    /// beforehand stops resolving. That is the whole reason [`NodeId`]
+    /// carries a generation: without it a caller holding an identifier
+    /// across this call would address whatever occupied the slot next,
+    /// and get a wrong answer nothing reports.
     ///
     /// # Errors
     ///
@@ -1111,11 +1140,15 @@ impl Document {
         while let Some(current) = stack.pop() {
             doomed.push(current);
             stack.extend_from_slice(self.children(current));
+            for &attr in self.attribute_nodes(current) {
+                doomed.push(attr);
+            }
         }
         for node in doomed {
             if let Some(g) = self.generations.get_mut(node.index as usize) {
                 *g = g.wrapping_add(1);
             }
+            self.free_slots.push(node.index);
         }
         Ok(())
     }
@@ -1364,16 +1397,11 @@ impl Document {
             return Ok(());
         }
 
-        // Otherwise mint one and relocate the block with it appended.
-        let attr = self.mint();
-        self.nodes.push(Node {
-            data: NodeData::Attr { name, value: chars },
-            // Attributes have a parent so `parent::` works from them,
-            // but are not children -- they must not appear on the
-            // `child::` axis.
-            parent: Some(element),
-            children: (0, 0),
-        });
+        // Otherwise allocate one and relocate the block with it appended.
+        let attr = self.alloc_node(
+            NodeData::Attr { name, value: chars },
+            Some(element),
+        );
         let new_start = self.attr_ids.len();
         self.attr_ids
             .extend_from_within(start..start.saturating_add(len));
@@ -1425,6 +1453,7 @@ impl Document {
         };
 
         let (start, len) = (attributes.0 as usize, attributes.1 as usize);
+        let mut removed_attr = None;
         let kept: Vec<NodeId> = self
             .attr_ids
             .get(start..start.saturating_add(len))
@@ -1432,14 +1461,26 @@ impl Document {
             .iter()
             .copied()
             .filter(|a| {
-                !matches!(
+                let matches_name = matches!(
                     self.resolve(*a).map(|n| &n.data),
                     Some(NodeData::Attr { name: n, .. }) if *n == name
-                )
+                );
+                if matches_name {
+                    removed_attr = Some(*a);
+                    false
+                } else {
+                    true
+                }
             })
             .collect();
         if kept.len() == len {
             return Ok(false);
+        }
+        if let Some(attr_id) = removed_attr {
+            if let Some(g) = self.generations.get_mut(attr_id.index as usize) {
+                *g = g.wrapping_add(1);
+            }
+            self.free_slots.push(attr_id.index);
         }
         let new_start = self.attr_ids.len();
         self.attr_ids.extend_from_slice(&kept);
@@ -2035,5 +2076,33 @@ mod builder_tests {
         let reparsed = crate::parse(&xml).expect("must parse");
         assert_eq!(reparsed.to_xml(), xml);
         assert_eq!(reparsed.text(reparsed.root()), "text & more");
+    }
+
+    #[test]
+    fn recycled_slots_do_not_grow_arena_and_reject_stale_handles() {
+        let mut doc = Document::empty();
+        let root = doc.root();
+        let first = doc.append_element(root, None, "item").expect("live");
+        let first_index = first.index();
+        let initial_len = doc.len();
+
+        // Remove the element: slot is recycled
+        doc.remove(first).expect("live");
+        assert!(doc.resolve(first).is_none(), "removed node is not resolvable");
+
+        // Append a new element: should reuse first_index
+        let second = doc.append_element(root, None, "item2").expect("live");
+        assert_eq!(second.index(), first_index, "reused recycled slot");
+        assert_ne!(second.generation, first.generation, "generation advanced");
+        assert_eq!(doc.len(), initial_len, "arena size did not grow");
+
+        // Stale handle still does not resolve even though slot was reused
+        assert!(doc.resolve(first).is_none(), "stale generation 0 does not resolve");
+
+        // New handle resolves correctly
+        assert_eq!(
+            doc.element_name(second).map(|n| n.local.as_str()),
+            Some("item2")
+        );
     }
 }
