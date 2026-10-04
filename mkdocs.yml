@@ -2,7 +2,7 @@
 site_name: oxml
 site_description: >-
   A pure Rust XML toolkit with zero unsafe code — parsing, an ergonomic tree, and XPath 1.0.
-site_url: https://sebastienrousseau.github.io/oxml/
+site_url: https://oxmllib.com/
 site_author: Sebastien Rousseau
 copyright: Copyright &copy; 2026 <a href="https://sebastienrousseau.com/" rel="author">Sebastien Rousseau</a>
 
