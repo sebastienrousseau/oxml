@@ -641,12 +641,14 @@ input: the gap narrowed because the *tree* got cheaper, not because
 reading got dearer.
 
 **What it costs.** Time. Reading a document as events takes about 1.9
-times as long as parsing it into a tree, because an event owns its
-text: a name and an attribute value are copied out, where the tree
-keeps a range into the input it already holds. Streaming trades time
-for memory, and the trade is only worth making when the memory
-matters — which is the opposite of what "streaming" usually
-suggests.
+times as long as parsing it into a tree when using owned `Event`s,
+because names and attribute values are copied out, where the tree keeps
+a range into the input it already holds. Streaming trades time for
+memory, and the trade is only worth making when the memory matters.
+
+**Zero-copy borrowing.** For workloads sensitive to allocation overhead,
+`Reader::next_borrowed()` returns `BorrowedEvent<'a>` items borrowing
+string slices directly from the resident buffer without allocation.
 
 **Reading from a byte source.** `Reader::new` takes a `&str`, so the
 document is resident either way. `Reader::from_reader` takes anything
