@@ -218,7 +218,9 @@ fn eval_path(doc: &Document, steps: &[Step], start: NodeId) -> Vec<NodeId> {
             let size = next.len();
             // Fast-path: constant positive integer index like `foo[1]`
             if let Expr::Number(n) = pred {
-                if *n >= 1.0 && n.fract() == 0.0 {
+                #[allow(clippy::float_cmp)]
+                let is_int = *n >= 1.0 && float::trunc(*n) == *n;
+                if is_int {
                     let target_idx = (*n as usize) - 1;
                     if target_idx < size {
                         next = alloc::vec![next[target_idx]];

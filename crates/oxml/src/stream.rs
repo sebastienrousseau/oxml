@@ -960,6 +960,12 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
             return Ok(None);
         }
 
+        if self.cursor.pos >= THRESHOLD {
+            let _ = self.text.drain(..self.cursor.pos);
+            self.consumed += self.cursor.pos;
+            self.cursor.pos = 0;
+        }
+
         loop {
             if construct_is_whole_str(&self.text, self.cursor.pos) {
                 break;
@@ -989,12 +995,6 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
 
         let outcome =
             Reader::scan(&self.text, &mut self.carried, &mut self.cursor);
-
-        if self.cursor.pos >= THRESHOLD {
-            let _ = self.text.drain(..self.cursor.pos);
-            self.consumed += self.cursor.pos;
-            self.cursor.pos = 0;
-        }
 
         let outcome = outcome.map_err(|mut e| {
             e.offset += self.consumed;
