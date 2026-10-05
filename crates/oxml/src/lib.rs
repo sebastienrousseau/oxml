@@ -10,11 +10,11 @@
 //!
 //! Rust's XML ecosystem is strong at one end and specialised at the other.
 //! `quick-xml` handles streaming and `roxmltree` provides read-only traversal.
-//! While `xee` targets XPath 3.1, earlier XPath 1.0 crates like `sxd-xpath`
+//! While `xee` targets `XPath` 3.1, earlier `XPath` 1.0 crates like `sxd-xpath`
 //! have not shipped releases since 2018.
 //!
 //! oxml provides an integrated memory-safe toolkit combining a mutable
-//! arena DOM, XPath 1.0, and WebAssembly under one unified version.
+//! arena DOM, `XPath` 1.0, and WebAssembly under one unified version.
 //!
 //! ## Quick Start
 //!
