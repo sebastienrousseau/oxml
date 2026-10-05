@@ -8,14 +8,13 @@
 //!
 //! ## Why this exists
 //!
-//! Rust's XML ecosystem is strong at one end and empty at the other.
-//! `quick-xml` and `roxmltree` parse quickly; nothing maintained
-//! offers what `lxml` gives Python. The only `XPath` crate,
-//! `sxd-xpath`, has not shipped a release since 2018, and XSLT and
-//! XSD validation have no pure-Rust implementation at all.
+//! Rust's XML ecosystem is strong at one end and specialised at the other.
+//! `quick-xml` handles streaming and `roxmltree` provides read-only traversal.
+//! While `xee` targets XPath 3.1, earlier XPath 1.0 crates like `sxd-xpath`
+//! have not shipped releases since 2018.
 //!
-//! oxml closes the query gap first, because that is the one people
-//! actually hit.
+//! oxml provides an integrated memory-safe toolkit combining a mutable
+//! arena DOM, XPath 1.0, and WebAssembly under one unified version.
 //!
 //! ## Quick Start
 //!
