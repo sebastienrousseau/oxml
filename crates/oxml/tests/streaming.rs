@@ -496,3 +496,69 @@ fn a_malformed_tag_at_the_depth_limit_reports_the_depth() {
         }
     }
 }
+
+/// Zero-copy text and attribute borrowing directly from the stream.
+#[test]
+fn streaming_text_and_attribute_borrowing() {
+    use std::borrow::Cow;
+
+    let xml = r#"<catalog id="c1"><book lang="en">The Rust Book &amp; More</book></catalog>"#;
+    let mut reader = Reader::new(xml).expect("valid xml");
+
+    // StartElement catalog
+    let ev1 = reader.next_borrowed().expect("ok").expect("some");
+    if let oxml::stream::BorrowedEvent::StartElement { name, attributes } = ev1
+    {
+        assert_eq!(name.local, "catalog");
+        assert_eq!(attributes.len(), 1);
+        assert_eq!(attributes[0].0.local, "id");
+        assert!(
+            matches!(&attributes[0].1, Cow::Borrowed(val) if *val == "c1"),
+            "attribute should be borrowed slice"
+        );
+    } else {
+        panic!("expected StartElement");
+    }
+
+    // StartElement book
+    let ev2 = reader.next_borrowed().expect("ok").expect("some");
+    if let oxml::stream::BorrowedEvent::StartElement { name, attributes } = ev2
+    {
+        assert_eq!(name.local, "book");
+        assert_eq!(attributes.len(), 1);
+        assert!(
+            matches!(&attributes[0].1, Cow::Borrowed(val) if *val == "en"),
+            "attribute should be borrowed slice"
+        );
+    } else {
+        panic!("expected StartElement");
+    }
+
+    // Text: contains &amp; entity, so rewritten to Cow::Owned
+    let ev3 = reader.next_borrowed().expect("ok").expect("some");
+    if let oxml::stream::BorrowedEvent::Text(cow) = ev3 {
+        assert_eq!(cow.as_ref(), "The Rust Book & More");
+        assert!(
+            matches!(cow, Cow::Owned(_)),
+            "expanded entity requires owned string"
+        );
+    } else {
+        panic!("expected Text");
+    }
+
+    // Contiguous plain text: strictly borrowed zero-copy
+    let plain_xml = "<root><item>Purely Contiguous Text</item></root>";
+    let mut plain_reader = Reader::new(plain_xml).expect("valid xml");
+    let _ = plain_reader.next_borrowed().expect("ok"); // <root>
+    let _ = plain_reader.next_borrowed().expect("ok"); // <item>
+    let text_ev = plain_reader.next_borrowed().expect("ok").expect("text");
+    if let oxml::stream::BorrowedEvent::Text(cow) = text_ev {
+        assert_eq!(cow.as_ref(), "Purely Contiguous Text");
+        assert!(
+            matches!(cow, Cow::Borrowed(_)),
+            "contiguous text MUST borrow zero-copy from input"
+        );
+    } else {
+        panic!("expected Text");
+    }
+}

@@ -199,11 +199,7 @@ fn eval_path(doc: &Document, steps: &[Step], start: NodeId) -> Vec<NodeId> {
     for step in steps {
         let mut next: Vec<NodeId> = Vec::new();
         for &node in &current {
-            next.extend(
-                axis_nodes(doc, node, step.axis)
-                    .into_iter()
-                    .filter(|&c| test_matches(doc, c, &step.test, step.axis)),
-            );
+            collect_axis_matches(doc, node, step.axis, &step.test, &mut next);
         }
         // Deduplicate by sorting rather than scanning. A `contains`
         // check inside the loop above is O(n^2), which on `//title`
@@ -220,6 +216,18 @@ fn eval_path(doc: &Document, steps: &[Step], start: NodeId) -> Vec<NodeId> {
         // is gathered rather than inside the filter above.
         for pred in &step.predicates {
             let size = next.len();
+            // Fast-path: constant positive integer index like `foo[1]`
+            if let Expr::Number(n) = pred {
+                if *n >= 1.0 && n.fract() == 0.0 {
+                    let target_idx = (*n as usize) - 1;
+                    if target_idx < size {
+                        next = alloc::vec![next[target_idx]];
+                    } else {
+                        next.clear();
+                    }
+                    continue;
+                }
+            }
             let mut kept = Vec::with_capacity(next.len());
             for (idx, &node) in next.iter().enumerate() {
                 let v = eval(doc, pred, node, idx + 1, size);
@@ -244,52 +252,88 @@ fn eval_path(doc: &Document, steps: &[Step], start: NodeId) -> Vec<NodeId> {
     current
 }
 
-fn axis_nodes(doc: &Document, node: NodeId, axis: Axis) -> Vec<NodeId> {
+#[allow(clippy::too_many_lines)]
+fn collect_axis_matches(
+    doc: &Document,
+    node: NodeId,
+    axis: Axis,
+    test: &NodeTest,
+    out: &mut Vec<NodeId>,
+) {
     match axis {
-        Axis::Child => doc.children(node).to_vec(),
-        Axis::SelfAxis => alloc::vec![node],
-        Axis::Parent => doc.parent(node).into_iter().collect(),
-        Axis::Attribute => doc.attribute_nodes(node).to_vec(),
+        Axis::Child => {
+            for &c in doc.children(node) {
+                if test_matches(doc, c, test, axis) {
+                    out.push(c);
+                }
+            }
+        }
+        Axis::SelfAxis => {
+            if test_matches(doc, node, test, axis) {
+                out.push(node);
+            }
+        }
+        Axis::Parent => {
+            if let Some(p) = doc.parent(node) {
+                if test_matches(doc, p, test, axis) {
+                    out.push(p);
+                }
+            }
+        }
+        Axis::Attribute => {
+            for &a in doc.attribute_nodes(node) {
+                if test_matches(doc, a, test, axis) {
+                    out.push(a);
+                }
+            }
+        }
         Axis::Descendant => {
-            let mut out = Vec::new();
-            collect_descendants(doc, node, &mut out);
-            out
+            collect_descendant_matches(doc, node, test, out);
         }
         Axis::DescendantOrSelf => {
-            let mut out = alloc::vec![node];
-            collect_descendants(doc, node, &mut out);
-            out
+            if test_matches(doc, node, test, axis) {
+                out.push(node);
+            }
+            collect_descendant_matches(doc, node, test, out);
         }
         Axis::Ancestor => {
-            let mut out = Vec::new();
             let mut cur = doc.parent(node);
             while let Some(p) = cur {
-                out.push(p);
+                if test_matches(doc, p, test, axis) {
+                    out.push(p);
+                }
                 cur = doc.parent(p);
             }
-            out
         }
         Axis::AncestorOrSelf => {
-            let mut out = alloc::vec![node];
+            if test_matches(doc, node, test, axis) {
+                out.push(node);
+            }
             let mut cur = doc.parent(node);
             while let Some(p) = cur {
-                out.push(p);
+                if test_matches(doc, p, test, axis) {
+                    out.push(p);
+                }
                 cur = doc.parent(p);
             }
-            out
         }
         Axis::FollowingSibling | Axis::PrecedingSibling => {
             let Some(parent) = doc.parent(node) else {
-                return Vec::new();
+                return;
             };
             let sibs = doc.children(parent);
             let Some(idx) = sibs.iter().position(|&s| s == node) else {
-                return Vec::new();
+                return;
             };
-            if axis == Axis::FollowingSibling {
-                sibs[idx + 1..].to_vec()
+            let slice = if axis == Axis::FollowingSibling {
+                &sibs[idx + 1..]
             } else {
-                sibs[..idx].to_vec()
+                &sibs[..idx]
+            };
+            for &s in slice {
+                if test_matches(doc, s, test, axis) {
+                    out.push(s);
+                }
             }
         }
         // Every namespace in scope, which is the element's own
@@ -297,7 +341,6 @@ fn axis_nodes(doc: &Document, node: NodeId, axis: Axis) -> Vec<NodeId> {
         // shadows the same prefix declared further up, so the walk
         // keeps the first node it sees for each prefix.
         Axis::Namespace => {
-            let mut out: Vec<NodeId> = Vec::new();
             let mut seen: Vec<&str> = Vec::new();
             let mut at = Some(node);
             while let Some(current) = at {
@@ -314,13 +357,12 @@ fn axis_nodes(doc: &Document, node: NodeId, axis: Axis) -> Vec<NodeId> {
                     // An undeclaration shadows the ancestor binding
                     // and then contributes nothing itself: the prefix
                     // is out of scope, not bound to the empty string.
-                    if !uri.is_empty() {
+                    if !uri.is_empty() && test_matches(doc, ns, test, axis) {
                         out.push(ns);
                     }
                 }
                 at = doc.parent(current);
             }
-            out
         }
         // Both are defined over the whole document rather than one
         // parent's children, and both exclude attribute nodes however
@@ -329,26 +371,25 @@ fn axis_nodes(doc: &Document, node: NodeId, axis: Axis) -> Vec<NodeId> {
         // -- so comparing them *is* comparing document position.
         Axis::Following | Axis::Preceding => {
             let here = node.index();
-            doc.descendants()
-                .filter(|&cand| cand != node)
-                // Attribute nodes are on neither axis. Namespace nodes
-                // would be excluded here too, once they exist.
-                .filter(|&cand| {
-                    !matches!(
-                        doc.kind(cand),
-                        Some(NodeKind::Attr(_) | NodeKind::Namespace { .. })
-                    )
-                })
-                .filter(|&cand| {
-                    if axis == Axis::Following {
-                        // After the context node, but not beneath it.
-                        cand.index() > here && !is_ancestor(doc, node, cand)
-                    } else {
-                        // Before it, but not above it.
-                        cand.index() < here && !is_ancestor(doc, cand, node)
-                    }
-                })
-                .collect()
+            for cand in doc.descendants() {
+                if cand == node {
+                    continue;
+                }
+                if matches!(
+                    doc.kind(cand),
+                    Some(NodeKind::Attr(_) | NodeKind::Namespace { .. })
+                ) {
+                    continue;
+                }
+                let condition = if axis == Axis::Following {
+                    cand.index() > here && !is_ancestor(doc, node, cand)
+                } else {
+                    cand.index() < here && !is_ancestor(doc, cand, node)
+                };
+                if condition && test_matches(doc, cand, test, axis) {
+                    out.push(cand);
+                }
+            }
         }
     }
 }
@@ -365,10 +406,17 @@ fn is_ancestor(doc: &Document, maybe: NodeId, of: NodeId) -> bool {
     false
 }
 
-fn collect_descendants(doc: &Document, node: NodeId, out: &mut Vec<NodeId>) {
+fn collect_descendant_matches(
+    doc: &Document,
+    node: NodeId,
+    test: &NodeTest,
+    out: &mut Vec<NodeId>,
+) {
     for &child in doc.children(node) {
-        out.push(child);
-        collect_descendants(doc, child, out);
+        if test_matches(doc, child, test, Axis::Descendant) {
+            out.push(child);
+        }
+        collect_descendant_matches(doc, child, test, out);
     }
 }
 

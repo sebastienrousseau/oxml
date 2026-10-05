@@ -67,7 +67,7 @@
 //!
 //! [`parse`]: crate::parse
 
-use alloc::borrow::ToOwned;
+use alloc::borrow::{Cow, ToOwned};
 use alloc::string::String;
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
@@ -82,11 +82,8 @@ use crate::{Document, Limits};
 
 /// One thing found in a document.
 ///
-/// Owned rather than borrowed. A borrowing event would tie the caller
-/// to the reader between calls, which is the opposite of what a
-/// streaming interface is for; and text has been through entity
-/// expansion and line-ending normalisation, so it frequently is not a
-/// slice of the input in any case.
+/// Owned values. For zero-copy borrowing from the reader's buffer,
+/// see [`BorrowedEvent`] and [`Reader::next_borrowed`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Event {
@@ -122,6 +119,71 @@ pub enum Event {
     },
 }
 
+/// A streaming event borrowing character data from the reader's input buffer.
+///
+/// Unlike [`Event`], which allocates an owned [`String`] for every text,
+/// comment, and processing instruction, [`BorrowedEvent`] borrows slices
+/// (`Cow<'a, str>`) directly from the reader when the character data is contiguous
+/// in the input buffer without entity expansion or escaping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BorrowedEvent<'a> {
+    /// An element opened.
+    StartElement {
+        /// The element's expanded name.
+        name: ExpandedName,
+        /// Its attributes, with names resolved and values expanded.
+        attributes: Vec<(ExpandedName, Cow<'a, str>)>,
+    },
+    /// An element closed.
+    EndElement {
+        /// The element's expanded name.
+        name: ExpandedName,
+    },
+    /// Character data, borrowed where contiguous or owned where rewritten.
+    Text(Cow<'a, str>),
+    /// A comment's content, without the `<!--` and `-->`.
+    Comment(Cow<'a, str>),
+    /// A processing instruction.
+    ProcessingInstruction {
+        /// The target, e.g. `xml-stylesheet`.
+        target: Cow<'a, str>,
+        /// Everything after the target, verbatim.
+        data: Cow<'a, str>,
+    },
+}
+
+impl BorrowedEvent<'_> {
+    /// Convert this borrowed event into an owned [`Event`].
+    #[must_use]
+    pub fn into_owned(self) -> Event {
+        match self {
+            Self::StartElement { name, attributes } => Event::StartElement {
+                name,
+                attributes: attributes
+                    .into_iter()
+                    .map(|(n, v)| (n, v.into_owned()))
+                    .collect(),
+            },
+            Self::EndElement { name } => Event::EndElement { name },
+            Self::Text(text) => Event::Text(text.into_owned()),
+            Self::Comment(comment) => Event::Comment(comment.into_owned()),
+            Self::ProcessingInstruction { target, data } => {
+                Event::ProcessingInstruction {
+                    target: target.into_owned(),
+                    data: data.into_owned(),
+                }
+            }
+        }
+    }
+}
+
+impl From<BorrowedEvent<'_>> for Event {
+    fn from(b: BorrowedEvent<'_>) -> Self {
+        b.into_owned()
+    }
+}
+
 /// A pull reader over a document.
 ///
 /// Call [`Reader::next_event`] until it returns `None`. Errors are the
@@ -147,7 +209,7 @@ pub struct Reader {
     /// Set once the document is finished or has failed.
     done: bool,
     /// Held back after a self-closing tag.
-    pending_end: Option<Event>,
+    pending_end: Option<ExpandedName>,
     /// Where the rest of the document comes from, if anywhere.
     ///
     /// Only meaningful with `std`: without a reader to refill from,
@@ -625,29 +687,30 @@ impl Reader {
     }
 
     /// The next event, or `None` at the end of the document.
+    /// Yield the next event, borrowing character data and attribute values
+    /// directly from the reader's buffer when possible without allocation.
     ///
     /// # Errors
     ///
     /// Returns [`Error`] for the same malformed input [`crate::parse`]
     /// rejects, at the same offset.
-    #[allow(clippy::should_implement_trait)] // `next` returns a Result
-    pub fn next_event(&mut self) -> Result<Option<Event>> {
+    pub fn next_borrowed(&mut self) -> Result<Option<BorrowedEvent<'_>>> {
         #[cfg(feature = "tracing")]
-        let _span = tracing::trace_span!("oxml.stream.next_event").entered();
+        let _span = tracing::trace_span!("oxml.stream.next_borrowed").entered();
 
-        if let Some(end) = self.pending_end.take() {
-            return Ok(Some(end));
+        if let Some(name) = self.pending_end.take() {
+            return Ok(Some(BorrowedEvent::EndElement { name }));
         }
         if self.done {
             return Ok(None);
         }
         #[cfg(feature = "std")]
+        self.compact();
+        #[cfg(feature = "std")]
         self.ensure_construct()?;
 
         let outcome =
             Self::scan(&self.text, &mut self.carried, &mut self.cursor);
-        #[cfg(feature = "std")]
-        self.compact();
 
         // Offsets are the caller's, not this buffer's.
         let outcome = outcome.map_err(|mut e| {
@@ -657,8 +720,8 @@ impl Reader {
 
         match outcome {
             Ok(Scanned::Event(event)) => Ok(Some(event)),
-            Ok(Scanned::SelfClosed(start, end)) => {
-                self.pending_end = Some(end);
+            Ok(Scanned::SelfClosed(start, end_name)) => {
+                self.pending_end = Some(end_name);
                 Ok(Some(start))
             }
             Ok(Scanned::Eof) => {
@@ -672,6 +735,21 @@ impl Reader {
                 Err(e)
             }
         }
+    }
+
+    /// The next event, or `None` at the end of the document.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] for the same malformed input [`crate::parse`]
+    /// rejects, at the same offset.
+    #[allow(clippy::should_implement_trait)] // `next` returns a Result
+    pub fn next_event(&mut self) -> Result<Option<Event>> {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::trace_span!("oxml.stream.next_event").entered();
+
+        self.next_borrowed()
+            .map(|opt| opt.map(BorrowedEvent::into_owned))
     }
 }
 
@@ -742,7 +820,7 @@ pub struct AsyncReader<R> {
     carried: Carried,
     cursor: Cursor,
     done: bool,
-    pending_end: Option<Event>,
+    pending_end: Option<ExpandedName>,
     consumed: usize,
 }
 
@@ -875,8 +953,8 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
         let _span =
             tracing::trace_span!("oxml.stream.async_next_event").entered();
 
-        if let Some(end) = self.pending_end.take() {
-            return Ok(Some(end));
+        if let Some(name) = self.pending_end.take() {
+            return Ok(Some(Event::EndElement { name }));
         }
         if self.done {
             return Ok(None);
@@ -924,10 +1002,10 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
         });
 
         match outcome {
-            Ok(Scanned::Event(event)) => Ok(Some(event)),
-            Ok(Scanned::SelfClosed(start, end)) => {
-                self.pending_end = Some(end);
-                Ok(Some(start))
+            Ok(Scanned::Event(event)) => Ok(Some(event.into_owned())),
+            Ok(Scanned::SelfClosed(start, end_name)) => {
+                self.pending_end = Some(end_name);
+                Ok(Some(start.into_owned()))
             }
             Ok(Scanned::Eof) => {
                 self.done = true;
@@ -943,11 +1021,11 @@ impl<R: tokio::io::AsyncBufRead + Unpin> AsyncReader<R> {
 
 impl Reader {
     #[allow(clippy::too_many_lines)] // one arm per construct
-    fn scan(
-        text: &str,
+    fn scan<'a>(
+        text: &'a str,
         carried: &mut Carried,
         cursor: &mut Cursor,
-    ) -> Result<Scanned> {
+    ) -> Result<Scanned<'a>> {
         let mut parser = Parser {
             input: text,
             bytes: text.as_bytes(),
@@ -998,11 +1076,11 @@ impl Reader {
     /// content: no character data, no second root, and a `DOCTYPE`
     /// only before the root and only once. The tree parser enforces
     /// the same rules in its document loop.
-    fn outside_root(
-        parser: &mut Parser<'_>,
+    fn outside_root<'a>(
+        parser: &mut Parser<'a>,
         open: &mut Vec<(String, ExpandedName)>,
         seen_root: &mut bool,
-    ) -> Result<Scanned> {
+    ) -> Result<Scanned<'a>> {
         loop {
             parser.skip_whitespace();
             if parser.pos >= parser.bytes.len() {
@@ -1022,16 +1100,18 @@ impl Reader {
             }
             if parser.starts_with("<!--") {
                 let c = parser.parse_comment()?;
-                return Ok(Scanned::Event(Event::Comment(
-                    parser.owned(c).to_owned(),
+                return Ok(Scanned::Event(BorrowedEvent::Comment(
+                    chars_to_cow(parser, c),
                 )));
             }
             if parser.starts_with("<?") {
                 let (target, data) = parser.parse_pi()?;
-                return Ok(Scanned::Event(Event::ProcessingInstruction {
-                    target: parser.owned(target).to_owned(),
-                    data: parser.owned(data).to_owned(),
-                }));
+                return Ok(Scanned::Event(
+                    BorrowedEvent::ProcessingInstruction {
+                        target: chars_to_cow(parser, target),
+                        data: chars_to_cow(parser, data),
+                    },
+                ));
             }
             if parser.starts_with("<!DOCTYPE") {
                 // Reachable here as well as from `skip_prolog`, because
@@ -1068,7 +1148,7 @@ impl Reader {
     /// instruction. The tree parser accumulates exactly this run into
     /// one text node, so yielding it as one event is what makes the
     /// two agree on `a &amp; <![CDATA[b]]> c`.
-    fn char_data(parser: &mut Parser<'_>) -> Result<Event> {
+    fn char_data<'a>(parser: &mut Parser<'a>) -> Result<BorrowedEvent<'a>> {
         let mut run = crate::parser::Run::default();
         loop {
             if parser.starts_with("<![CDATA[") {
@@ -1085,19 +1165,20 @@ impl Reader {
         if parser.limits.max_text_length.is_some_and(|m| run.len() > m) {
             return Err(Error::new(ErrorKind::TextTooLong, parser.pos));
         }
-        // An event owns its text: a borrowed one would tie the caller
-        // to the reader between calls, which is the opposite of what a
-        // streaming interface is for. The tree keeps the range; the
-        // reader pays one copy per run and keeps nothing.
-        Ok(Event::Text(run.as_str(parser.input).to_owned()))
+        let cow = if let Some((start, len)) = run.as_span() {
+            Cow::Borrowed(&parser.input[start..start + len])
+        } else {
+            Cow::Owned(run.as_str(parser.input).to_owned())
+        };
+        Ok(BorrowedEvent::Text(cow))
     }
 
-    fn one_event(
-        parser: &mut Parser<'_>,
+    fn one_event<'a>(
+        parser: &mut Parser<'a>,
         open: &mut Vec<(String, ExpandedName)>,
         started: bool,
         seen_root: &mut bool,
-    ) -> Result<Scanned> {
+    ) -> Result<Scanned<'a>> {
         if !started {
             parser.skip_prolog()?;
         }
@@ -1147,20 +1228,20 @@ impl Reader {
             }
             parser.ns.pop_scope();
             parser.depth -= 1;
-            return Ok(Scanned::Event(Event::EndElement { name }));
+            return Ok(Scanned::Event(BorrowedEvent::EndElement { name }));
         }
 
         if parser.starts_with("<!--") {
             let c = parser.parse_comment()?;
-            return Ok(Scanned::Event(Event::Comment(
-                parser.owned(c).to_owned(),
-            )));
+            return Ok(Scanned::Event(BorrowedEvent::Comment(chars_to_cow(
+                parser, c,
+            ))));
         }
         if parser.starts_with("<?") {
             let (target, data) = parser.parse_pi()?;
-            return Ok(Scanned::Event(Event::ProcessingInstruction {
-                target: parser.owned(target).to_owned(),
-                data: parser.owned(data).to_owned(),
+            return Ok(Scanned::Event(BorrowedEvent::ProcessingInstruction {
+                target: chars_to_cow(parser, target),
+                data: chars_to_cow(parser, data),
             }));
         }
 
@@ -1168,10 +1249,10 @@ impl Reader {
     }
 
     /// A start tag, and the end event a self-closing one implies.
-    fn start_tag(
-        parser: &mut Parser<'_>,
+    fn start_tag<'a>(
+        parser: &mut Parser<'a>,
         open: &mut Vec<(String, ExpandedName)>,
-    ) -> Result<Scanned> {
+    ) -> Result<Scanned<'a>> {
         // Before scanning, not after. `parse_element` checks depth on
         // entry, so for a malformed tag at the limit the tree parser
         // reports the depth and the reader reported whatever the scan
@@ -1206,7 +1287,12 @@ impl Reader {
                     at,
                 ));
             }
-            attributes.push((name, value.as_str(parser.input).to_owned()));
+            let val_cow = if let Some((start, len)) = value.as_span() {
+                Cow::Borrowed(&parser.input[start..start + len])
+            } else {
+                Cow::Owned(value.as_str(parser.input).to_owned())
+            };
+            attributes.push((name, val_cow));
         }
 
         // `tag.declared` is not used here. `scan_start_tag` has already
@@ -1222,13 +1308,13 @@ impl Reader {
             .cloned()
             .unwrap_or_else(|| ExpandedName::local(tag.qname));
 
-        let start = Event::StartElement {
+        let start = BorrowedEvent::StartElement {
             name: name.clone(),
             attributes,
         };
         if tag.self_closing {
             parser.ns.pop_scope();
-            return Ok(Scanned::SelfClosed(start, Event::EndElement { name }));
+            return Ok(Scanned::SelfClosed(start, name));
         }
         parser.depth += 1;
         open.push((tag.qname.to_owned(), name));
@@ -1237,11 +1323,28 @@ impl Reader {
 }
 
 /// What one turn of the scanner produced.
-enum Scanned {
-    Event(Event),
-    /// A self-closing tag, which is two events.
-    SelfClosed(Event, Event),
+enum Scanned<'a> {
+    Event(BorrowedEvent<'a>),
+    /// A self-closing tag, which is two events: start event and end tag name.
+    SelfClosed(BorrowedEvent<'a>, ExpandedName),
     Eof,
+}
+
+/// Convert a parser character span/expansion into a `Cow<'a, str>`.
+fn chars_to_cow<'a>(
+    parser: &Parser<'a>,
+    c: crate::tree::Chars,
+) -> Cow<'a, str> {
+    match c {
+        crate::tree::Chars::Span(s, l) => {
+            let start = s as usize;
+            let end = (s + l) as usize;
+            Cow::Borrowed(parser.input.get(start..end).unwrap_or_default())
+        }
+        crate::tree::Chars::Expanded(_) => {
+            Cow::Owned(parser.owned(c).to_owned())
+        }
+    }
 }
 
 /// Unused, but keeps `Attribute` referenced for the doc link above.
