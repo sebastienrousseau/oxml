@@ -10,6 +10,15 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [0.0.10] - 2026-10-05
+
+### Changed
+
+- **Ecosystem release cycle v0.0.10.** Begin next iteration cycle across the
+  entire lockstep suite.
+- **Documentation migration.** Migrated website and rendered manual to
+  `oxmllib.com` (`oxmllib.github.io`) using the Lucid SSG theme.
+
 ## [0.0.9] - 2026-10-04
 
 ### Added
