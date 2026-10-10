@@ -101,7 +101,7 @@ jobs:
         with:
           toolchain: nightly
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # main
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # main
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -231,7 +231,7 @@ jobs:
         with:
           toolchain: 1.98.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # main
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # main
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -268,7 +268,7 @@ jobs:
         with:
           toolchain: 1.98.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # main
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # main
         with:
           tool: cargo-llvm-cov
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -356,7 +356,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
           toolchain: 1.98.0
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # main
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # main
         with:
           tool: cargo-hack
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
