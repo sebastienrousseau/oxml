@@ -164,8 +164,8 @@ fn main() {
     // that never closes one would otherwise be buffered until memory
     // ran out. `max_construct_bytes` is the cap on that buffer.
     let mut limits = Limits::default();
-    limits.max_construct_bytes = Some(4096);
-    let endless = std::io::Cursor::new(format!("<a>{}", "y".repeat(10_000)));
+    limits.max_construct_bytes = Some(16 * 1024);
+    let endless = std::io::Cursor::new(format!("<a>{}", "y".repeat(30_000)));
     let mut reader = oxml::stream::Reader::from_reader_with(endless, limits)
         .expect("the prolog is fine");
     let outcome = loop {
@@ -175,5 +175,5 @@ fn main() {
             Err(e) => break e.to_string(),
         }
     };
-    println!("  10,000 bytes of text under a 4 KB cap: {outcome}");
+    println!("  30,000 bytes of text under a 16 KB cap: {outcome}");
 }

@@ -39,9 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(event) = reader.next_event().await? {
         match event {
             Event::StartElement {
-                name,
-                attributes,
-                ..
+                name, attributes, ..
             } => {
                 if name.local == "item" {
                     item_count += 1;
