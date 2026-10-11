@@ -138,4 +138,42 @@ fn main() {
         limits.edition = edition;
         println!("  {name:<7}: {:?}", parse_with(doc, limits).is_ok());
     }
+
+    println!("\n== parameter entities ==");
+    // The width variant of billion laughs, written with parameter
+    // entities: three levels of a hundred references each, so `%c;`
+    // is ten thousand copies of `%a;` from under a kilobyte. Depth
+    // never notices -- three is nothing -- so the replacement text
+    // produced is charged against `max_pe_expansion`, as general
+    // entities are charged against `max_entity_expansion`.
+    let width_bomb = format!(
+        "<!DOCTYPE d SYSTEM \"d.dtd\" [<!ENTITY % a \"<!-- {} -->\">\
+         <!ENTITY % b \"{}\"><!ENTITY % c \"{}\">%c;]><d/>",
+        "x".repeat(1024),
+        "%a;".repeat(100),
+        "%b;".repeat(100),
+    );
+    let started = std::time::Instant::now();
+    match parse(&width_bomb) {
+        Ok(_) => println!("  width bomb: expanded (this would be a bug)"),
+        Err(e) => println!("  width bomb: {e} in {:?}", started.elapsed()),
+    }
+
+    println!("\n== streaming ==");
+    // The streaming reader holds one construct at a time, and a source
+    // that never closes one would otherwise be buffered until memory
+    // ran out. `max_construct_bytes` is the cap on that buffer.
+    let mut limits = Limits::default();
+    limits.max_construct_bytes = Some(4096);
+    let endless = std::io::Cursor::new(format!("<a>{}", "y".repeat(10_000)));
+    let mut reader = oxml::stream::Reader::from_reader_with(endless, limits)
+        .expect("the prolog is fine");
+    let outcome = loop {
+        match reader.next_event() {
+            Ok(Some(_)) => {}
+            Ok(None) => break "accepted (this would be a bug)".to_owned(),
+            Err(e) => break e.to_string(),
+        }
+    };
+    println!("  10,000 bytes of text under a 4 KB cap: {outcome}");
 }

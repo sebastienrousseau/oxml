@@ -1,0 +1,5 @@
+# Target tier and criticality for the portfolio compliance audit.
+# L3 is explicit on purpose: tooling must not infer criticality.
+tier: L3
+criticality: core
+owner: sebastienrousseau

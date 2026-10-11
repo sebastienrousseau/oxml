@@ -61,6 +61,35 @@ protected branch.
 cargo publish --dry-run
 ```
 
+## What the tag does
+
+Pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which refuses
+to continue unless:
+
+- the tag matches `Cargo.toml` and is reachable from `main`;
+- the tag is an annotated tag signed by a key listed in
+  `.github/allowed_signers`, with the message `oxml vX.Y.Z`;
+- `doc/release-notes/X.Y.Z.md` exists and has a `## Highlights`
+  section.
+
+It then publishes through crates.io **Trusted Publishing**: the
+runner exchanges a GitHub OIDC token for a short-lived crates.io
+token, so no `CARGO_REGISTRY_TOKEN` is stored. Trusted Publishing is
+enabled once per crate on crates.io (Settings, Trusted Publishing:
+repository `sebastienrousseau/oxml`, workflow `release.yml`,
+environment none). Until that is done the publish step fails to
+authenticate; nothing is half-published, because the preflight runs
+first and the page is composed only after the registry confirms.
+
+Last, it creates the GitHub release page: the Highlights from the
+notes file, the generated pull-request list, and a `## Checksums`
+block for the `.crate`, a CycloneDX SBOM and the checksum file, each
+with SLSA provenance attached (`gh attestation verify <file> --repo
+sebastienrousseau/oxml`).
+
+`scripts/publish.sh` remains for a dry run only. A real publish from
+a laptop bypasses the signature check and the attestation.
+
 ## What went wrong in 0.0.4, so it does not go wrong again
 
 - **A `target` symlink was committed.** A local per-project target-dir

@@ -38,7 +38,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     while let Some(event) = reader.next_event().await? {
         match event {
-            Event::StartElement { name, attributes } => {
+            Event::StartElement {
+                name,
+                attributes,
+                ..
+            } => {
                 if name.local == "item" {
                     item_count += 1;
                     if let Some((_, sku)) =
@@ -58,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("{trimmed}");
                 }
             }
-            Event::EndElement { name } => {
+            Event::EndElement { name, .. } => {
                 if name.local == "item" {
                     current_item_sku = None;
                 }

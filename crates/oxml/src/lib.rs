@@ -60,11 +60,24 @@
 //!   compile time. The tree is an arena of index-addressed nodes, so
 //!   parent links cost no `Rc`, no `RefCell`, and no raw pointers.
 //!
-//! - **No entity expansion** — only the five predefined entities and
-//!   numeric character references are resolved. External and custom
-//!   entities are not, which forecloses XXE and billion-laughs by
-//!   construction rather than by configuration. A parser that cannot
-//!   expand them cannot be talked into leaking a file.
+//! - **No I/O, so no XXE** — the crate contains no code that opens a
+//!   file or a socket. An external entity is parsed, because the
+//!   declaration is part of the grammar, and then expands to nothing
+//!   unless the caller hands its text over through
+//!   [`external::ExternalSource`]; the parser never fetches anything
+//!   itself.
+//!
+//! - **Entity expansion is bounded** — internal entities are expanded,
+//!   as XML requires, under a per-document budget
+//!   ([`Limits::max_entity_expansion`]) and a nesting ceiling
+//!   ([`Limits::max_entity_depth`]), so a billion-laughs document is
+//!   rejected in microseconds rather than expanded.
+//!
+//! - **Every limit is a field of [`Limits`]** — depth, attribute
+//!   count and size, name length, node and text counts, entity
+//!   budgets, and the `XPath` expression budget. The defaults accept
+//!   any document a person would write; [`Limits::strict`] is for
+//!   input from the network.
 //!
 //! - **Namespace-correct** — names compare by URI and local part,
 //!   never by prefix. An unprefixed *element* takes the default
@@ -78,6 +91,13 @@
 //!   `std::error::Error`.
 //! - `xpath` *(default)* — the `XPath` engine. Turn it off if you only
 //!   need to parse.
+//! - `libm` — floating-point functions for `xpath` without `std`;
+//!   required for a `no_std` build that keeps `XPath`.
+//! - `async` — [`stream::AsyncReader`] over `tokio::io::AsyncRead`.
+//!   Implies `std` and adds `tokio` (with `io-util` and `sync` only).
+//! - `tracing` — `tracing` spans around parsing, evaluation,
+//!   serialisation and streaming. Adds `tracing` with no default
+//!   features.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

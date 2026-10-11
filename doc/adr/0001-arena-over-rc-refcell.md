@@ -1,6 +1,10 @@
 # 0001 — An arena of indices, not `Rc<RefCell<Node>>`
 
-**Status:** Accepted
+**Status:** Accepted. The "no mutation" consequence below is superseded
+by [0008](0008-generational-slots-and-block-relocation.md), which adds
+mutation without changing the arena: slots carry a generation, and a
+block that must grow is moved with spare capacity rather than copied on
+every append.
 
 ## Context
 

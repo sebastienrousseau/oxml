@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/sebastienrousseau/oxml/security/advisories/new
+    about: Report privately. Please do not open a public issue for a vulnerability.
+  - name: Question
+    url: https://github.com/sebastienrousseau/oxml/discussions
+    about: Ask about usage, limits, or which crate in the suite to use.

@@ -24,10 +24,46 @@ fn the_public_types_cross_thread_boundaries() {
     assert_send_sync::<Error>();
     assert_send_sync::<ErrorKind>();
     assert_send_sync::<Limits>();
+    // The mutation API must not take this away: the document-order
+    // cache is a plain `Vec` behind a dirty flag, not a `Cell`.
+    assert_send_sync::<oxml::tree::NodeError>();
+    assert_send_sync::<oxml::tree::Descendants<'_>>();
+    assert_send::<oxml::tree::Builder<'_>>();
     #[cfg(feature = "xpath")]
     assert_send_sync::<oxml::XPath>();
     #[cfg(feature = "xpath")]
     assert_send_sync::<oxml::XPathError>();
+}
+
+const fn assert_send<T: Send>() {}
+
+#[test]
+fn a_mutated_document_can_still_be_shared() {
+    // The static assertion says the type allows it; this says a
+    // document that has been through the mutation API, cache and
+    // all, still answers the same from every thread.
+    let mut doc = parse("<r><a id='1'>x</a></r>").expect("well-formed");
+    let root = doc.root_element().expect("a root element");
+    let b = doc.append_element(root, None, "a").expect("live");
+    doc.set_attribute(b, None, "id", "2").expect("live");
+    let _ = doc.document_order();
+
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    let ids: Vec<_> = doc
+                        .descendants_of(root)
+                        .filter_map(|c| doc.attribute(c, "id"))
+                        .collect();
+                    ids.join(",")
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert_eq!(handle.join().expect("no panic"), "1,2");
+        }
+    });
 }
 
 #[test]

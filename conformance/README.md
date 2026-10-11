@@ -9,9 +9,16 @@ Suite release **`xmlts20130923`**, 2,585 tests.
 
 | | |
 |---|---|
-| **Pass rate** | **93.6%** (2,393 of 2,557 decided) |
+| **Pass rate** | **100%** (2,557 of 2,557 decided) |
 | **Coverage** | **98.9%** (2,557 of 2,585) |
 | Panics | **0** |
+
+As the harness prints it (`cargo run -p oxml-conformance --release --bin report`):
+
+```text
+overall  2557 pass, 0 fail, 0 panic, 28 unsupported, 0 blocked
+         100% of 2557 decided (98.9% coverage of 2585)
+```
 
 Both numbers are given because either alone is misleading. A pass rate
 without a denominator can be raised by skipping the hard tests; coverage
@@ -47,17 +54,6 @@ denominator:
 The 28 still unsupported are Namespaces 1.1 (prefix undeclaration),
 `NAMESPACE="no"`, and encodings outside UTF-8/UTF-16/Latin-1.
 
-### By submission
-
-| Submission | Pass rate | Decided | Unsupported |
-|---|---|---|---|
-| sun | 64.0% | 150 | 9 |
-| xmltest (James Clark) | 62.4% | 356 | 9 |
-| eduni (Edinburgh) | 60.8% | 102 | 463 |
-| oasis | 56.2% | 313 | 35 |
-| japanese (Fuji Xerox) | 50.0% | 2 | 10 |
-| ibm | 35.2% | 908 | 228 |
-
 ### Why tests are skipped
 
 Every exclusion is a feature `oxml` does not claim. None of them is a
@@ -73,22 +69,10 @@ judgement about whether a test is fair.
 
 ### What the failures are
 
-| Kind | Count |
-|---|---|
-| Accepted a document that is not well-formed | 163 |
-| Rejected a valid document | 1 |
-
-Effectively every remaining failure is a document accepted that should
-have been rejected. The wrongly-*rejected* class is gone: only one
-remains, down from 126.
-
-By spec section, the largest clusters are 2.8 (prolog and document type
-declaration), 3.4 (conditional sections), 3.2.1 (element content
-models) and 2.3 (common syntactic constructs). These are the
-well-formedness constraints the DTD parser does not yet enforce — it
-checks the *grammar* of a declaration but not, for example, that a
-conditional section keyword is `INCLUDE` or `IGNORE`.
-
+There are none. Every decided test passes, and the count was 37 when
+the harness was first run; the ratchet in `baselines/w3c-xml.tsv`
+refuses both a regression and an unrecorded improvement, so the
+figure above is the one the harness produces, not one typed here.
 ## Running it
 
 ```sh

@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use oxml in research, please cite it as below."
+title: "oxml: a pure Rust XML toolkit with zero unsafe code"
+type: software
+authors:
+  - family-names: Rousseau
+    given-names: Sebastien
+    email: sebastian.rousseau@gmail.com
+repository-code: "https://github.com/sebastienrousseau/oxml"
+url: "https://oxmllib.com"
+license: "MIT OR Apache-2.0"
+keywords:
+  - xml
+  - xpath
+  - parser
+  - rust
+  - no_std

@@ -73,6 +73,8 @@ Two bounds apply:
 |---|---|
 | `max_entity_depth` | Exponential growth — entities referencing entities |
 | `max_entity_expansion` | Total expanded bytes, across the whole document |
+| `max_pe_expansion` | The same, for parameter entities inside the DTD |
+| `max_dtd_bytes` | The size of the internal and external subset the DTD parser will read |
 
 ## Stack exhaustion: bounded by depth
 
@@ -95,7 +97,12 @@ found by setting it to 10,000 and watching the process abort.
 
 `max_nodes`, `max_text_length`, `max_attribute_size`,
 `max_attributes_per_element` and `max_name_length` bound how much a
-document can allocate.
+document can allocate. For the streaming reader, `max_construct_bytes`
+bounds how much of a single construct is buffered before it can be
+scanned, so an unterminated comment or an endless text run from the
+network fails instead of growing until memory runs out. For `XPath`,
+`max_xpath_depth` and `max_xpath_operators` bound the expression,
+through `XPath::compile_with_limits`.
 
 **The defaults leave `max_nodes` and `max_text_length` unbounded.**
 That is a deliberate choice for the common case — a build tool parsing

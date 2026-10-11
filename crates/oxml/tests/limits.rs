@@ -244,3 +244,107 @@ fn the_fifth_edition_is_the_default() {
     assert_eq!(Limits::strict().edition, oxml::Edition::Fifth);
     assert_eq!(Limits::permissive().edition, oxml::Edition::Fifth);
 }
+
+/// A parameter-entity width bomb: three levels, a hundred references
+/// each, so `%c;` produces ten thousand copies of a kilobyte from
+/// under a kilobyte of declarations.
+///
+/// Depth alone does not catch it -- three is well inside any depth
+/// bound -- so the replacement text produced is charged against
+/// `max_pe_expansion`, exactly as general entities are charged against
+/// `max_entity_expansion`.
+#[test]
+fn a_parameter_entity_width_bomb_is_rejected_by_the_budget() {
+    let a = format!("<!-- {} -->", "x".repeat(1024));
+    let doc = format!(
+        "<!DOCTYPE d SYSTEM \"d.dtd\" [\
+         <!ENTITY % a \"{a}\">\
+         <!ENTITY % b \"{}\">\
+         <!ENTITY % c \"{}\">\
+         %c;\
+         ]><d/>",
+        "%a;".repeat(100),
+        "%b;".repeat(100),
+    );
+    assert_eq!(
+        err_kind(&doc, Limits::default()),
+        ErrorKind::EntityLimitExceeded
+    );
+}
+
+#[test]
+fn a_name_declared_in_the_dtd_is_bounded_by_max_name_length() {
+    let long = "n".repeat(Limits::default().max_name_length + 1);
+    for decl in [
+        format!("<!ELEMENT {long} ANY>"),
+        format!("<!ATTLIST d {long} CDATA #IMPLIED>"),
+        format!("<!ENTITY {long} \"v\">"),
+        format!("<!NOTATION {long} SYSTEM \"s\">"),
+    ] {
+        let doc = format!("<!DOCTYPE d [{decl}]><d/>");
+        assert_eq!(
+            err_kind(&doc, Limits::default()),
+            ErrorKind::NameTooLong,
+            "{}",
+            &decl[..12]
+        );
+    }
+    let fine = format!(
+        "<!DOCTYPE d [<!ELEMENT {} ANY>]><d/>",
+        "n".repeat(Limits::default().max_name_length)
+    );
+    assert!(parse(&fine).is_ok(), "a name at the limit is accepted");
+}
+
+#[test]
+fn an_attlist_default_is_bounded_by_max_attribute_size() {
+    let value = "v".repeat(600 * 1024);
+    for default in [format!("\"{value}\""), format!("#FIXED \"{value}\"")] {
+        let doc = format!("<!DOCTYPE d [<!ATTLIST d a CDATA {default}>]><d/>");
+        assert_eq!(
+            err_kind(&doc, Limits::default()),
+            ErrorKind::AttributeTooLarge
+        );
+    }
+}
+
+#[test]
+fn max_dtd_bytes_bounds_the_internal_subset() {
+    // Seventeen megabytes of comments: harmless to parse, and over
+    // the default budget for a doctype.
+    let comment = format!("<!-- {} -->", "c".repeat(1_000));
+    let subset = comment.repeat(17 * 1024 * 1024 / comment.len() + 1);
+    let doc = format!("<!DOCTYPE d [{subset}]><d/>");
+    assert_eq!(err_kind(&doc, Limits::default()), ErrorKind::DtdTooLarge);
+}
+
+/// The doctype bounds follow the profile handed to `parse_with`, not
+/// the defaults.
+#[test]
+fn permissive_limits_do_not_bound_the_doctype() {
+    let comment = format!("<!-- {} -->", "c".repeat(1_000));
+    let subset = comment.repeat(17 * 1024 * 1024 / comment.len() + 1);
+    let doc = format!("<!DOCTYPE d [{subset}]><d/>");
+    assert!(
+        parse_with(&doc, Limits::permissive()).is_ok(),
+        "permissive() leaves max_dtd_bytes unbounded"
+    );
+    let mut tight = Limits::default();
+    tight.max_pe_expansion = 64;
+    let doc = "<!DOCTYPE d SYSTEM \"d.dtd\" [\
+               <!ENTITY % a \"<!-- thirty-two bytes of comment -->\">\
+               %a;%a;%a;]><d/>";
+    assert_eq!(err_kind(doc, tight), ErrorKind::EntityLimitExceeded);
+    assert!(parse(doc).is_ok(), "and the default budget is ample");
+}
+
+#[test]
+fn the_profiles_order_the_dtd_and_stream_bounds() {
+    let (s, d, p) = (Limits::strict(), Limits::default(), Limits::permissive());
+    assert!(s.max_pe_expansion < d.max_pe_expansion);
+    assert!(d.max_pe_expansion < p.max_pe_expansion);
+    assert!(s.max_dtd_bytes < d.max_dtd_bytes);
+    assert_eq!(p.max_dtd_bytes, None);
+    assert!(s.max_construct_bytes < d.max_construct_bytes);
+    assert_eq!(p.max_construct_bytes, None);
+}

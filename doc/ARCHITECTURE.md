@@ -186,11 +186,56 @@ evaluates them per request, across threads, because `XPath` is
 `evaluate_from` takes a context node, which is how a relative
 expression runs against each match of an outer one.
 
+## Mutation and serialisation
+
+They are one feature, not two: a tree that can be changed is only
+useful if what comes out parses back to the same tree. Both live on
+the same arena the parser builds.
+
+**Slots are generational.** Every arena slot carries a generation
+beside its node, even for live and odd for removed. `remove` bumps it,
+so every `NodeId` minted for the slot stops resolving instead of
+addressing whatever occupies the slot next; reuse bumps it again. A
+slot is freed exactly once whatever path reaches it, and `len()`
+counts live nodes.
+
+**Blocks relocate with spare capacity.** Children, attributes and
+namespace nodes are `(start, len)` blocks in three shared arenas, which
+is what makes reading cheap and is why a block cannot grow in place.
+One function edits blocks: removal shifts the tail down in place, and
+an insertion writes in place while the block has capacity. When it has
+none the block is copied to the end of its arena with room for twice
+its length, so appends are O(1) amortised in memory rather than
+quadratic -- the first version retained 537 MB for 10,000 appended
+children. `Document::compact` rebuilds the arenas without the garbage
+that moves leave behind. Details and measurements are in
+[adr/0008](adr/0008-generational-slots-and-block-relocation.md).
+
+**Every operation is gated.** Identifiers must resolve, kinds must fit
+(only the root and elements take children, only one element sits
+under the root, the root is never removed, an attribute node is never
+a child), and content must be XML the serialiser can write: names are
+`NCName`s, text is anything some XML version can express. An error
+comes back from the call that caused it, not from the round trip.
+
+**Document order is cached, not assumed.** The parser appends in
+pre-order, so for a parsed document arena order is document order; a
+move or a slot reuse breaks that. `descendants_of` walks children in
+pre-order, and `document_order` computes a position per slot behind a
+dirty flag that every mutation sets. The cache is a plain `Vec`, so
+`Document` stays `Send + Sync` with no interior mutability.
+
+**The serialiser resolves namespaces as it descends.** A parsed name
+keeps the prefix it was written with; a name the mutation API created
+has only its namespace URI. The writer keeps a scope of bindings and
+uses the stored prefix when it is bound here, else a prefix in scope
+for that URI, else declares one on the element. The output is a fixed
+point over the W3C corpus and parses back to the same expanded names
+for a built document. The XML version is declared only when a C0
+control character or a prefix undeclaration requires 1.1.
+
 ## What is deliberately absent
 
-- **Mutation and serialisation.** They are one feature, not two, and
-  neither is implemented. The tree is built by the parser and read
-  afterwards.
 - **External entity resolution.** There is no code that opens a file or
   a socket on a document's behalf. This is why XXE is foreclosed by
   construction rather than by a default.

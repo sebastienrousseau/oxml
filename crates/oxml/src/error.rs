@@ -120,10 +120,34 @@ pub enum ErrorKind {
     TooManyNodes,
     /// A text or CDATA node longer than the limit allows.
     TextTooLong,
+    /// A single construct grew past [`Limits::max_construct_bytes`]
+    /// before its end arrived.
+    ///
+    /// Only the incremental readers produce this: a start tag, comment
+    /// or run of character data is buffered until it is whole, and a
+    /// source that never closes one would otherwise be buffered until
+    /// memory ran out. The offset is where the construct began.
+    ///
+    /// [`Limits::max_construct_bytes`]: crate::Limits::max_construct_bytes
+    ConstructTooLarge,
+    /// The document type declaration, with everything it pulled in,
+    /// is longer than [`Limits::max_dtd_bytes`] allows.
+    ///
+    /// [`Limits::max_dtd_bytes`]: crate::Limits::max_dtd_bytes
+    DtdTooLarge,
 }
 
 impl Error {
-    pub(crate) const fn new(kind: ErrorKind, offset: usize) -> Self {
+    pub(crate) fn new(kind: ErrorKind, offset: usize) -> Self {
+        // The DTD parser reports everything as an offset and a static
+        // reason, limits included, and arrives here as `MalformedDtd`.
+        // A limit is not malformed input -- the caller's remedy is to
+        // raise a bound, not to fix the document -- so it is given the
+        // kind that names the bound, here, where every error is made.
+        let kind = match kind {
+            ErrorKind::MalformedDtd(reason) => crate::dtd::error_kind(reason),
+            other => other,
+        };
         Self { kind, offset }
     }
 
@@ -158,12 +182,59 @@ impl fmt::Display for Error {
     }
 }
 
+/// The message for each variant that reports a bound in [`Limits`]
+/// being exceeded.
+///
+/// A table rather than arms of `Display`, because these grow with
+/// `Limits` and each one names the limit a caller would raise.
+///
+/// [`Limits`]: crate::Limits
+const LIMIT_MESSAGES: &[(ErrorKind, &str)] = &[
+    (
+        ErrorKind::DepthLimitExceeded,
+        "elements nested past the depth limit",
+    ),
+    (
+        ErrorKind::TooManyAttributes,
+        "too many attributes on one element",
+    ),
+    (
+        ErrorKind::AttributeTooLarge,
+        "attribute value exceeds the size limit",
+    ),
+    (ErrorKind::NameTooLong, "name exceeds the length limit"),
+    (ErrorKind::TooManyNodes, "document exceeds the node limit"),
+    (ErrorKind::TextTooLong, "text node exceeds the length limit"),
+    (
+        ErrorKind::EntityLimitExceeded,
+        "entity expansion exceeds the limit",
+    ),
+    (
+        ErrorKind::ConstructTooLarge,
+        "construct exceeds the streaming buffer limit",
+    ),
+    (ErrorKind::DtdTooLarge, "doctype exceeds the size limit"),
+];
+
+impl ErrorKind {
+    /// The message for a limit variant, or `None` for any other kind.
+    fn limit_message(&self) -> Option<&'static str> {
+        LIMIT_MESSAGES
+            .iter()
+            .find(|(kind, _)| kind == self)
+            .map(|(_, message)| *message)
+    }
+}
+
 /// The message without the offset.
 ///
 /// A caller rendering a caret under the offending line already shows
 /// the position, and repeating "at byte 41" beside the caret is noise.
 impl fmt::Display for ErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(message) = self.limit_message() {
+            return f.write_str(message);
+        }
         match self {
             ErrorKind::UnexpectedEof => f.write_str("input ended unexpectedly"),
             ErrorKind::MismatchedEndTag { expected, found } => {
@@ -194,29 +265,8 @@ impl fmt::Display for ErrorKind {
             ErrorKind::NoRootElement => {
                 f.write_str("document has no root element")
             }
-            ErrorKind::DepthLimitExceeded => {
-                f.write_str("elements nested past the depth limit")
-            }
-            ErrorKind::TooManyAttributes => {
-                f.write_str("too many attributes on one element")
-            }
-            ErrorKind::AttributeTooLarge => {
-                f.write_str("attribute value exceeds the size limit")
-            }
-            ErrorKind::NameTooLong => {
-                f.write_str("name exceeds the length limit")
-            }
-            ErrorKind::TooManyNodes => {
-                f.write_str("document exceeds the node limit")
-            }
-            ErrorKind::TextTooLong => {
-                f.write_str("text node exceeds the length limit")
-            }
             ErrorKind::Unterminated(what) => {
                 write!(f, "unterminated {what}")
-            }
-            ErrorKind::EntityLimitExceeded => {
-                f.write_str("entity expansion exceeds the limit")
             }
             ErrorKind::IllegalCdataEnd => {
                 f.write_str("`]]>` must be written `]]&gt;` in content")
@@ -249,6 +299,11 @@ impl fmt::Display for ErrorKind {
             ErrorKind::MalformedDtd(why) => {
                 write!(f, "malformed doctype: {why}")
             }
+            // A limit variant missing from `LIMIT_MESSAGES`. Rendering
+            // the variant name is deliberate: the test that renders
+            // every kind rejects a message that looks like `Debug`
+            // output, so a new limit cannot ship without its message.
+            _ => write!(f, "{self:?}"),
         }
     }
 }
@@ -304,6 +359,8 @@ mod tests {
             ErrorKind::NameTooLong,
             ErrorKind::TooManyNodes,
             ErrorKind::TextTooLong,
+            ErrorKind::ConstructTooLarge,
+            ErrorKind::DtdTooLarge,
         ]
     }
 

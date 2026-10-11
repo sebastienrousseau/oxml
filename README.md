@@ -137,11 +137,11 @@ line; `0.1.0` follows `0.0.999`.
 | Crate | What it is | Status |
 |---|---|---|
 | [`oxml`](https://github.com/sebastienrousseau/oxml) | Core library — parser, tree, XPath 1.0 | **Available** |
-| [`oxml-cli`](https://github.com/sebastienrousseau/oxml-cli) | Command-line querying and formatting | Planned |
-| [`oxml-lsp`](https://github.com/sebastienrousseau/oxml-lsp) | Language server for XML documents | Planned |
-| [`oxml-mcp`](https://github.com/sebastienrousseau/oxml-mcp) | Model Context Protocol server | Planned |
-| [`oxml-wasm`](https://github.com/sebastienrousseau/oxml-wasm) | WebAssembly bindings | Planned |
-| [`xmlschema`](https://github.com/sebastienrousseau/xmlschema) | XSD validation | Planned |
+| [`oxml-cli`](https://github.com/sebastienrousseau/oxml-cli) | Command-line querying and formatting | [crates.io](https://crates.io/crates/oxml-cli) |
+| [`oxml-lsp`](https://github.com/sebastienrousseau/oxml-lsp) | Language server for XML documents | [crates.io](https://crates.io/crates/oxml-lsp) |
+| [`oxml-mcp`](https://github.com/sebastienrousseau/oxml-mcp) | Model Context Protocol server | [crates.io](https://crates.io/crates/oxml-mcp) |
+| [`oxml-wasm`](https://github.com/sebastienrousseau/oxml-wasm) | WebAssembly bindings | [crates.io](https://crates.io/crates/oxml-wasm) |
+| [`xmlschema`](https://github.com/sebastienrousseau/xmlschema) | XSD validation | [crates.io](https://crates.io/crates/xmlschema) |
 
 `xmlschema` keeps its existing published name rather than being
 repurposed into the core: the name means XSD validation, and that is
@@ -334,12 +334,10 @@ Two architectural choices motivate the design:
 - 484 tests and 30 doctests; 96.8% line coverage, gated in CI
 - Seven fuzz targets, Miri, property tests, and a feature powerset build
 
-**Not yet:** serialisation, mutation, XSD validation and XSLT. The
-external DTD subset is supported when the
-caller supplies it — see [External entities and
-subsets](#external-entities-and-subsets) — but is never fetched, and
-most remaining conformance failures need entity replacement text parsed
-as markup rather than substituted as text.
+**Not here:** XSD validation (that is [`xmlschema`](https://github.com/sebastienrousseau/xmlschema)),
+XSLT, XPath 2.0 and later, and any I/O. The external DTD subset is
+read when the caller supplies it — see [External entities and
+subsets](#external-entities-and-subsets) — and never fetched.
 
 ## Ecosystem comparison
 
@@ -382,6 +380,8 @@ table says what each benchmark isolates.
 | `xpath/eval_descendant` | `//title` over 2,000 books |
 | `xpath/eval_predicate` | `//book[@lang='en']/title` over 2,000 books |
 | `xpath/eval_numeric_predicate` | A positional predicate over the same |
+| `xpath/eval_following_from_every_element` | `count(//*/following::*)` over 6,000 elements |
+| `xpath/eval_preceding_from_every_element` | `count(//*/preceding::*)` over 6,000 elements |
 | `encoding/decode_utf8_borrowed` | The zero-copy path — nothing is transcoded |
 | `encoding/decode_utf16_be` | UTF-16 big-endian, which must allocate |
 | `encoding/decode_utf16_le` | UTF-16 little-endian |
@@ -412,11 +412,14 @@ the optimisation, not after it.
 
 | Flag | Default | What it does |
 |---|---|---|
-| `std` | ✅ | Standard library integration, including `std::error::Error`. |
+| `std` | ✅ | Standard library integration, including `std::error::Error` and `write_xml_to`. |
 | `xpath` | ✅ | The XPath 1.0 engine. Disable if you only need to parse. |
+| `libm` | | Floating-point functions for `xpath` without `std`. |
+| `async` | | `stream::AsyncReader` over `tokio::io::AsyncRead`; implies `std`, adds `tokio` (`io-util`, `sync`). |
+| `tracing` | | `tracing` spans around parsing, evaluation, serialisation and streaming. |
 
-Both are additive. With neither, the crate is `no_std` and provides the
-parser and tree over `alloc`.
+All are additive. With none, the crate is `no_std` and provides the
+parser, tree and serialiser over `alloc`.
 
 ## Attributes are nodes
 
@@ -706,6 +709,10 @@ cargo run --example parse_and_query
 | [`names_and_ids`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/names_and_ids.rs) | Qualified names, DTD-declared IDs, inherited `xml:lang`, and the functions that read them |
 | [`decode_bytes`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/decode_bytes.rs) | The same document in five encodings, and the two kinds of encoding failure |
 | [`stream_events`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/stream_events.rs) | Reading a document as events with no tree built, and the identical errors both entry points give |
+| [`stream_async`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/stream_async.rs) | The same events from a `tokio` reader (feature `async`) |
+| [`build_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/build_a_document.rs) | Building and editing a tree: elements, attributes, namespaces, moves, and what the API refuses |
+| [`serialise_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/serialise_a_document.rs) | `to_xml`, `write_xml_to`, indentation options, and when the output declares XML 1.1 |
+| [`telemetry_tracing`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/telemetry_tracing.rs) | The spans the `tracing` feature emits (feature `tracing`) |
 
 ## Configuration
 
@@ -735,13 +742,16 @@ assert!(parse_with("<a><b/></a>", limits).is_ok());
 | `max_depth` | 64 | 256 | 256 |
 | `max_attributes_per_element` | 64 | 1000 | 100000 |
 | `max_attribute_size` | 8192 | 524288 | 67108864 |
-| `max_name_length` | 256 | 1000 | 1048576 |
+| `max_name_length` | 256 | 8192 | 1048576 |
 | `max_nodes` | 100000 | unbounded | unbounded |
 | `max_text_length` | 1048576 | unbounded | unbounded |
 | `max_entity_depth` | 4 | 10 | 40 |
 | `max_entity_expansion` | 100000 | 10000000 | 1000000000 |
 | `max_xpath_depth` | 32 | 256 | 1000 |
 | `max_xpath_operators` | 1000 | 10000 | 1000000 |
+| `max_dtd_bytes` | 65536 | 16777216 | unbounded |
+| `max_pe_expansion` | 100000 | 10000000 | 1000000000 |
+| `max_construct_bytes` | 1048576 | 67108864 | unbounded |
 
 The numbers are given unformatted because a test parses this table and
 compares every cell against the profile it names. A table of plausible
@@ -773,6 +783,8 @@ give you deeper documents; it gives you a crash.
 | `std` | yes | `std::error::Error` for `Error`, and `String`/`Vec` from `std` |
 | `xpath` | yes | The XPath 1.0 engine. Separable because the tree alone is useful |
 | `libm` | no | `floor`/`ceil`/`trunc` from `libm` rather than `std`. Required to build `xpath` without `std` |
+| `async` | no | `stream::AsyncReader`. Implies `std`; adds `tokio` with only `io-util` and `sync` |
+| `tracing` | no | `tracing` spans; adds `tracing` with no default features |
 
 Building `xpath` with neither `std` nor `libm` is a compile error with
 an explanation, not a link failure: XPath needs three floating-point
@@ -1069,10 +1081,10 @@ some parsers. The error names the constraint and the byte offset.
 ### When should I not use it?
 
 If you need XSLT, XQuery, or XPath 2.0+, none of which exist here — see
-[Xee](https://github.com/Paligo/xee) for XPath 3.1. If you need to
-resolve external entities. If you are parsing multi-gigabyte documents
-where a DOM will not fit; a streaming API is planned and this is not it
-yet.
+[Xee](https://github.com/Paligo/xee) for XPath 3.1. If you need the
+parser to fetch external entities itself. If you need a streaming
+*writer*: the tree serialises, but there is no event writer yet. If raw
+event throughput is the only thing that matters, `quick-xml` is faster.
 
 ### Why is there a `Limits` argument instead of a builder?
 
@@ -1094,10 +1106,14 @@ so `parse` does no transcoding and no validation pass over the bytes.
 
 ### Is the tree mutable?
 
-No. `Document` is built by the parser and read afterwards. Mutation and
-serialisation are the same feature -- there is little point in one
-without the other -- and neither is implemented. If you need to produce
-XML, build the string, or use `quick-xml`'s writer.
+Yes, since 0.0.8. `Document::empty()` and the `Builder` create one;
+`append_element`, `append_text`, `set_attribute`, `declare_namespace`,
+`insert_at`, `reparent`, `detach` and `remove` edit one; `to_xml` and
+`write_xml_to` serialise it, and parsing the output gives the same tree
+back. Names and text are validated on the way in, so the API cannot
+produce a document the parser would reject. See the
+[`build_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/build_a_document.rs)
+example.
 
 ### How much memory does a document take?
 

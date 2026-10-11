@@ -18,19 +18,29 @@
 //! *no* namespace only.
 
 mod ast;
+mod axes;
+mod compare;
+mod context;
+mod display;
 mod eval;
 
-use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 mod float;
+mod functions;
+mod names;
 mod parser;
+mod typed;
+mod value;
 
-pub use ast::{Axis, BinaryOp, Expr, NodeTest, Step};
-pub use eval::Value;
+pub use ast::{Axis, BinaryOp, Expr, Filter, Func, NodeTest, Step};
+pub use context::{EvalContext, EvalError};
 pub use parser::XPathError;
+pub use typed::{FromXPath, QueryError, TypeError};
+pub use value::Value;
 
-use crate::tree::{Document, NodeId};
+use crate::Limits;
+use crate::tree::{Document, ExpandedName, NodeId};
 
 /// A compiled `XPath` expression.
 ///
@@ -38,9 +48,29 @@ use crate::tree::{Document, NodeId};
 /// document-independent and reusable — evaluating the same expression
 /// across a thousand documents should parse it once, not a thousand
 /// times.
+///
+/// `Display` renders the expression back as canonical unabbreviated
+/// `XPath` 1.0 -- `//a[1]` as
+/// `/descendant-or-self::node()/child::a[1]` -- using the namespace
+/// bindings it was compiled with, so that compiling the rendering
+/// under the same bindings gives back an equal `XPath`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct XPath {
     expr: Expr,
+    /// The prefix bindings the expression was compiled under, kept so
+    /// that `Display` can write a namespaced name with its prefix.
+    namespaces: Vec<(String, String)>,
+    /// Every distinct variable the expression references.
+    variables: Vec<ExpandedName>,
+}
+
+impl core::fmt::Display for XPath {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        display::Render {
+            namespaces: &self.namespaces,
+        }
+        .expr(&self.expr, f)
+    }
 }
 
 impl XPath {
@@ -63,9 +93,7 @@ impl XPath {
     /// # Ok::<(), oxml::XPathError>(())
     /// ```
     pub fn compile(expr: &str) -> Result<Self, XPathError> {
-        Ok(Self {
-            expr: parser::compile(expr)?,
-        })
+        Self::compile_with_limits(expr, &Limits::default())
     }
 
     /// Compile with namespace prefixes bound to URIs.
@@ -105,27 +133,170 @@ impl XPath {
         expr: &str,
         namespaces: &[(&str, &str)],
     ) -> Result<Self, XPathError> {
+        Self::compile_with_namespaces_and_limits(
+            expr,
+            namespaces,
+            &Limits::default(),
+        )
+    }
+
+    /// Compile under explicit [`Limits`].
+    ///
+    /// An expression is untrusted input in every front end of this
+    /// crate, and two of its shapes cost more than their length
+    /// suggests: nesting (`((((...))))`, `not(not(...))`, `a[b[c[...]]]`)
+    /// drives recursion, and a long flat run of operators
+    /// (`1+1+1+...`) drives work. [`Limits::max_xpath_depth`] bounds
+    /// the first and [`Limits::max_xpath_operators`] the second,
+    /// counting every binary operator, unary minus, location step,
+    /// predicate and function call. The other fields of `Limits`
+    /// concern documents and are not consulted here.
+    ///
+    /// [`XPath::compile`] is this with [`Limits::default`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XPathError`] as [`XPath::compile`] does, and
+    /// additionally when the expression exceeds either bound; the
+    /// message says which, and the offset is where the bound was
+    /// crossed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oxml::{Limits, XPath};
+    ///
+    /// let strict = Limits::strict();
+    /// assert!(XPath::compile_with_limits("//book[@lang='en']", &strict).is_ok());
+    ///
+    /// let deep = format!("{}1{}", "(".repeat(40), ")".repeat(40));
+    /// let e = XPath::compile_with_limits(&deep, &strict).unwrap_err();
+    /// assert!(e.message.contains("deep"));
+    /// ```
+    pub fn compile_with_limits(
+        expr: &str,
+        limits: &Limits,
+    ) -> Result<Self, XPathError> {
+        Self::compile_with_namespaces_and_limits(expr, &[], limits)
+    }
+
+    /// Compile with namespace prefixes bound to URIs, under explicit
+    /// [`Limits`].
+    ///
+    /// The bindings work as in [`XPath::compile_with_namespaces`] and
+    /// the limits as in [`XPath::compile_with_limits`]; this is the
+    /// one constructor the other three delegate to.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XPathError`] for a malformed expression, an unbound
+    /// prefix, or an expression over either limit.
+    pub fn compile_with_namespaces_and_limits(
+        expr: &str,
+        namespaces: &[(&str, &str)],
+        limits: &Limits,
+    ) -> Result<Self, XPathError> {
+        let compiled = parser::compile(expr, namespaces, limits)?;
         Ok(Self {
-            expr: parser::compile_with(expr, namespaces)?,
+            expr: compiled.expr,
+            namespaces: namespaces
+                .iter()
+                .map(|(p, u)| (p.to_string(), u.to_string()))
+                .collect(),
+            variables: compiled.variables,
         })
     }
 
     /// Evaluate against a document, starting at its root.
+    ///
+    /// This cannot fail, as `XPath` 1.0 has no exceptions: a function
+    /// given the wrong type answers its documented silent value
+    /// (`count('x')` is `0`), and an expression that references
+    /// variables evaluates to an empty node-set, since nothing binds
+    /// them here. [`XPath::evaluate_with`] reports both as errors.
+    ///
+    /// A document mutated since its order cache was last refreshed
+    /// (see [`Document::is_order_dirty`]) costs one extra pre-order
+    /// walk per evaluation, so that node-sets still come back in
+    /// document order; [`Document::document_order`] refreshes the
+    /// cache once for a batch of mutations.
     #[must_use]
     pub fn evaluate(&self, doc: &Document) -> Value {
         #[cfg(feature = "tracing")]
         let _span = tracing::trace_span!("oxml.xpath.evaluate").entered();
 
-        eval::evaluate(doc, &self.expr, doc.root())
+        self.lenient(doc, doc.root())
     }
 
     /// Evaluate with an explicit context node.
+    ///
+    /// Infallible under the same rules as [`XPath::evaluate`]; a
+    /// context node that no longer belongs to the document selects
+    /// nothing.
     #[must_use]
     pub fn evaluate_from(&self, doc: &Document, context: NodeId) -> Value {
         #[cfg(feature = "tracing")]
         let _span = tracing::trace_span!("oxml.xpath.evaluate_from").entered();
 
-        eval::evaluate(doc, &self.expr, context)
+        self.lenient(doc, context)
+    }
+
+    /// The infallible evaluation both entry points share.
+    fn lenient(&self, doc: &Document, context: NodeId) -> Value {
+        if !self.variables.is_empty() {
+            return Value::NodeSet(Vec::new());
+        }
+        // Outside strict mode the evaluator reports nothing: every
+        // type error has a silent value, and the only variables it
+        // could fail to find were refused above.
+        eval::evaluate(doc, &self.expr, context, &EvalContext::default(), false)
+            .unwrap_or_else(|_| Value::NodeSet(Vec::new()))
+    }
+
+    /// Evaluate against a document with variables bound, reporting
+    /// what [`XPath::evaluate`] answers silently.
+    ///
+    /// # Errors
+    ///
+    /// [`EvalError::UnboundVariable`] if the expression references a
+    /// variable `ctx` does not bind; [`EvalError::TypeError`] if a
+    /// function or predicate that requires a node-set is given
+    /// another type.
+    pub fn evaluate_with(
+        &self,
+        doc: &Document,
+        ctx: &EvalContext,
+    ) -> Result<Value, EvalError> {
+        self.evaluate_from_with(doc, doc.root(), ctx)
+    }
+
+    /// [`XPath::evaluate_with`] from an explicit context node.
+    ///
+    /// # Errors
+    ///
+    /// As [`XPath::evaluate_with`], and [`EvalError::Stale`] if
+    /// `context` does not belong to `doc`.
+    pub fn evaluate_from_with(
+        &self,
+        doc: &Document,
+        context: NodeId,
+        ctx: &EvalContext,
+    ) -> Result<Value, EvalError> {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::trace_span!("oxml.xpath.evaluate_with").entered();
+
+        if doc.kind(context).is_none() {
+            return Err(EvalError::Stale);
+        }
+        eval::evaluate(doc, &self.expr, context, ctx, true)
+    }
+
+    /// Every distinct variable the expression references, in order of
+    /// first reference. Empty for an expression that
+    /// [`XPath::evaluate`] can answer in full.
+    #[must_use]
+    pub fn variables(&self) -> &[ExpandedName] {
+        &self.variables
     }
 
     /// The compiled expression tree.
@@ -135,230 +306,5 @@ impl XPath {
     #[must_use]
     pub const fn expr(&self) -> &Expr {
         &self.expr
-    }
-}
-
-/// A type an [`XPath`] result can be extracted into.
-///
-/// Implemented for `String`, `f64`, `i64`, `bool` and
-/// [`NodeId`]. The conversions follow `XPath` 1.0's own
-/// rules with one deliberate exception, documented on the `f64`
-/// implementation: a value that is not a number is an error rather
-/// than `NaN`, because a caller who names a numeric type wants a
-/// number, not a value that poisons every comparison downstream.
-pub trait FromXPath: Sized {
-    /// Extract `Self` from an evaluated value.
-    ///
-    /// # Errors
-    ///
-    /// [`TypeError`] when the value cannot represent `Self` -- what
-    /// that means is documented per implementation.
-    fn from_value(value: &Value, doc: &Document) -> Result<Self, TypeError>;
-}
-
-/// Why a value could not be extracted as the requested type.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeError {
-    /// What went wrong, in a form a person can act on.
-    pub message: String,
-}
-
-impl core::fmt::Display for TypeError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for TypeError {}
-
-impl FromXPath for String {
-    /// `XPath`'s `string()` conversion, which cannot fail.
-    fn from_value(value: &Value, doc: &Document) -> Result<Self, TypeError> {
-        Ok(value.to_str(doc))
-    }
-}
-
-impl FromXPath for f64 {
-    /// `XPath`'s `number()` conversion, except that `NaN` is an error.
-    ///
-    /// The specification says a non-numeric string converts to `NaN`.
-    /// That is the right behaviour *inside* an expression, where
-    /// `NaN`'s comparison rules are part of the language, and this
-    /// crate's `Value::to_number` implements it faithfully. At the
-    /// boundary into Rust it is the wrong default: a caller writing
-    /// `xpath_one::<f64>("//price")` wants the price, and handing back
-    /// `NaN` defers the failure to whatever arithmetic touches it
-    /// next, stripped of any hint of where it came from.
-    fn from_value(value: &Value, doc: &Document) -> Result<Self, TypeError> {
-        let n = value.to_number(doc);
-        if n.is_nan() {
-            return Err(TypeError {
-                message: format!("`{}` is not a number", value.to_str(doc)),
-            });
-        }
-        Ok(n)
-    }
-}
-
-impl FromXPath for i64 {
-    /// An `f64` extraction that must also be integral and in range.
-    ///
-    /// `XPath` 1.0 has no integer type -- every number is an `f64` --
-    /// so this is a convenience for the common case of counts and
-    /// years. `1.5` is an error, not a truncation: a caller asking for
-    /// an integer should not silently receive the floor of something
-    /// that was not one.
-    fn from_value(value: &Value, doc: &Document) -> Result<Self, TypeError> {
-        let n = f64::from_value(value, doc)?;
-        // `fract` lives in std, not core; `float::trunc` is the shim
-        // this module routes every such call through, so the no_std
-        // build breaks in one file rather than a dozen.
-        //
-        // `n != trunc(n)` is an exact integrality test -- the one case
-        // where comparing floats for equality is right rather than
-        // sloppy. An epsilon would misclassify values near an integer.
-        #[allow(clippy::float_cmp)]
-        let fractional = n != float::trunc(n);
-        if fractional {
-            return Err(TypeError {
-                message: format!("`{n}` is not an integer"),
-            });
-        }
-        // Beyond 2^53 an f64 no longer represents every integer, so a
-        // value out there may not be the integer it appears to be.
-        if n.abs() > 9_007_199_254_740_992.0 {
-            return Err(TypeError {
-                message: format!(
-                    "`{n}` is outside the exactly-representable range"
-                ),
-            });
-        }
-        #[allow(clippy::cast_possible_truncation)]
-        Ok(n as Self)
-    }
-}
-
-impl FromXPath for bool {
-    /// `XPath`'s `boolean()` conversion, which cannot fail.
-    fn from_value(value: &Value, doc: &Document) -> Result<Self, TypeError> {
-        let _ = doc;
-        Ok(value.to_boolean())
-    }
-}
-
-impl FromXPath for crate::NodeId {
-    /// The first node of a node-set, in document order.
-    ///
-    /// An empty node-set is an error, and so is a value that is not a
-    /// node-set at all -- `string(//a)` produces a string, and there
-    /// is no node to hand back.
-    fn from_value(value: &Value, doc: &Document) -> Result<Self, TypeError> {
-        let _ = doc;
-        match value.nodes() {
-            Some([first, ..]) => Ok(*first),
-            Some([]) => Err(TypeError {
-                message: String::from("the expression matched no nodes"),
-            }),
-            None => Err(TypeError {
-                message: String::from(
-                    "the expression does not produce a node-set",
-                ),
-            }),
-        }
-    }
-}
-
-/// Why a typed query failed: either the expression, or the type.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QueryError {
-    /// The expression did not compile.
-    Compile(XPathError),
-    /// The expression evaluated, but its value cannot represent the
-    /// requested type.
-    Type(TypeError),
-}
-
-impl core::fmt::Display for QueryError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Compile(e) => write!(f, "{e}"),
-            Self::Type(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for QueryError {}
-
-impl Document {
-    /// Evaluate an expression and extract one typed value.
-    ///
-    /// ```
-    /// # #[cfg(feature = "xpath")] {
-    /// let doc = oxml::parse("<order><price>9.99</price><qty>3</qty></order>").unwrap();
-    /// let price: f64 = doc.xpath_one("number(//price)").unwrap();
-    /// let qty: i64 = doc.xpath_one("number(//qty)").unwrap();
-    /// let has_discount: bool = doc.xpath_one("count(//discount) > 0").unwrap();
-    /// assert_eq!(price, 9.99);
-    /// assert_eq!(qty, 3);
-    /// assert!(!has_discount);
-    /// # }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// [`QueryError::Compile`] if the expression is invalid,
-    /// [`QueryError::Type`] if its value cannot represent `T` -- for
-    /// `f64` that includes `NaN`, deliberately; see
-    /// [`FromXPath`].
-    pub fn xpath_one<T: FromXPath>(&self, expr: &str) -> Result<T, QueryError> {
-        let compiled = XPath::compile(expr).map_err(QueryError::Compile)?;
-        let value = compiled.evaluate(self);
-        T::from_value(&value, self).map_err(QueryError::Type)
-    }
-
-    /// Evaluate an expression and extract every matched node as `T`.
-    ///
-    /// The expression must produce a node-set; each node's
-    /// string-value is then converted independently, so one
-    /// unconvertible node fails the whole call rather than being
-    /// silently skipped.
-    ///
-    /// ```
-    /// # #[cfg(feature = "xpath")] {
-    /// let doc = oxml::parse(
-    ///     "<cart><item price='9.99'/><item price='7.50'/></cart>",
-    /// ).unwrap();
-    /// let prices: Vec<f64> = doc.xpath_all("//item/@price").unwrap();
-    /// assert_eq!(prices, [9.99, 7.5]);
-    /// # }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// [`QueryError::Compile`] if the expression is invalid,
-    /// [`QueryError::Type`] if it does not produce a node-set or any
-    /// node's value cannot represent `T`.
-    pub fn xpath_all<T: FromXPath>(
-        &self,
-        expr: &str,
-    ) -> Result<Vec<T>, QueryError> {
-        let compiled = XPath::compile(expr).map_err(QueryError::Compile)?;
-        let value = compiled.evaluate(self);
-        let Some(nodes) = value.nodes() else {
-            return Err(QueryError::Type(TypeError {
-                message: String::from(
-                    "the expression does not produce a node-set",
-                ),
-            }));
-        };
-        nodes
-            .iter()
-            .map(|id| {
-                let single = Value::NodeSet(alloc::vec![*id]);
-                T::from_value(&single, self).map_err(QueryError::Type)
-            })
-            .collect()
     }
 }

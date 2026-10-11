@@ -28,7 +28,7 @@ fn a_document_yields_its_constructs_in_order() {
         .iter()
         .map(|e| match e {
             Event::StartElement { name, .. } => format!("<{}>", name.local),
-            Event::EndElement { name } => format!("</{}>", name.local),
+            Event::EndElement { name, .. } => format!("</{}>", name.local),
             Event::Text(t) => format!("text {t:?}"),
             Event::Comment(c) => format!("comment {c:?}"),
             Event::ProcessingInstruction { target, .. } => {
@@ -72,7 +72,10 @@ fn a_self_closing_element_yields_both_halves() {
 fn namespaces_are_resolved_as_the_tree_parser_resolves_them() {
     let found =
         events(r#"<r xmlns:m="urn:u"><m:a k="1"/></r>"#).expect("valid");
-    let Event::StartElement { name, attributes } = &found[1] else {
+    let Event::StartElement {
+        name, attributes, ..
+    } = &found[1]
+    else {
         panic!("expected a start element, got {:?}", found[1]);
     };
     assert_eq!(name.local, "a");
@@ -507,7 +510,9 @@ fn streaming_text_and_attribute_borrowing() {
 
     // StartElement catalog
     let ev1 = reader.next_borrowed().expect("ok").expect("some");
-    if let oxml::stream::BorrowedEvent::StartElement { name, attributes } = ev1
+    if let oxml::stream::BorrowedEvent::StartElement {
+        name, attributes, ..
+    } = ev1
     {
         assert_eq!(name.local, "catalog");
         assert_eq!(attributes.len(), 1);
@@ -522,7 +527,9 @@ fn streaming_text_and_attribute_borrowing() {
 
     // StartElement book
     let ev2 = reader.next_borrowed().expect("ok").expect("some");
-    if let oxml::stream::BorrowedEvent::StartElement { name, attributes } = ev2
+    if let oxml::stream::BorrowedEvent::StartElement {
+        name, attributes, ..
+    } = ev2
     {
         assert_eq!(name.local, "book");
         assert_eq!(attributes.len(), 1);
@@ -561,4 +568,292 @@ fn streaming_text_and_attribute_borrowing() {
     } else {
         panic!("expected Text");
     }
+}
+
+/// The node limit trips at the same offset on both paths.
+///
+/// The tree parser checks the arena before each child; the reader
+/// builds no arena, so it counts what the arena would hold -- the
+/// document node, elements, their attribute and namespace nodes, text
+/// runs, comments and processing instructions -- and checks the count
+/// at the same point. `Limits::strict()` bounds nodes, so without this
+/// the reader accepted a document the tree parser refused.
+#[test]
+fn the_node_limit_trips_at_the_same_offset() {
+    type Outcome = Result<(), (oxml::ErrorKind, usize)>;
+    fn outcome(doc: &str, limits: oxml::Limits) -> (Outcome, Outcome) {
+        let tree = oxml::parse_with(doc, limits)
+            .map(|_| ())
+            .map_err(|e| (e.kind, e.offset));
+        let mut reader =
+            Reader::with_limits(doc, limits).expect("prolog is fine");
+        let stream = loop {
+            match reader.next_event() {
+                Ok(Some(_)) => {}
+                Ok(None) => break Ok(()),
+                Err(e) => break Err((e.kind, e.offset)),
+            }
+        };
+        (tree, stream)
+    }
+
+    let wide = format!("<r>{}</r>", "<e/>".repeat(100_001));
+    let (tree, stream) = outcome(&wide, oxml::Limits::strict());
+    assert!(
+        matches!(tree, Err((oxml::ErrorKind::TooManyNodes, _))),
+        "{tree:?}"
+    );
+    assert_eq!(tree, stream, "100,001 elements under strict()");
+
+    // Every kind of node, at every small limit, so an off-by-one in
+    // what is counted or when shows up as a disagreement.
+    let docs = [
+        "<r><e/><e/><e/><e/></r>",
+        "<r>text<e/>more<e/>tail</r>",
+        "<r><!--c--><e/><?p d?><e/></r>",
+        "<r a=\"1\" b=\"2\"><e c=\"3\"/><e/></r>",
+        "<r xmlns=\"u\" xmlns:p=\"v\"><p:e/><e xmlns:q=\"w\"/></r>",
+        "<r><e>one</e><e>two</e><e><![CDATA[three]]></e></r>",
+        "<!--before--><?pi?><r><e/></r><!--after-->",
+        "<r/>",
+    ];
+    for doc in docs {
+        for max in 1..16usize {
+            let mut limits = oxml::Limits::default();
+            limits.max_nodes = Some(max);
+            let (tree, stream) = outcome(doc, limits);
+            assert_eq!(tree, stream, "{doc:?} with max_nodes={max}");
+        }
+    }
+}
+
+/// A tokenized attribute -- one the DTD declares with a type other
+/// than `CDATA` -- is collapsed in events as it is in the tree.
+#[test]
+fn a_tokenized_attribute_collapses_as_it_does_in_the_tree() {
+    let doc = "<!DOCTYPE a [<!ATTLIST a x NMTOKEN #IMPLIED>]>\
+               <a x=\"  p   q  \" y=\"  r \"/>";
+    let tree = parse(doc).expect("valid");
+    let root = tree.root_element().expect("root");
+    let found = events(doc).expect("valid");
+    let Event::StartElement { attributes, .. } = &found[0] else {
+        panic!("expected a start element, got {:?}", found[0]);
+    };
+    let value = |local: &str| {
+        attributes
+            .iter()
+            .find(|(n, _)| n.local == local)
+            .map(|(_, v)| v.as_str())
+    };
+    assert_eq!(value("x"), Some("p q"), "declared NMTOKEN, so collapsed");
+    assert_eq!(value("x"), tree.attribute(root, "x"));
+    assert_eq!(value("y"), Some("  r "), "undeclared, so CDATA");
+    assert_eq!(value("y"), tree.attribute(root, "y"));
+}
+
+/// A start event carries what a writer needs to put the tag back:
+/// the prefix, the declarations, the attributes.
+///
+/// The writer here is deliberately naive -- it writes what the
+/// events say and nothing more -- and the written document must read
+/// back as the same events.
+fn qname(prefix: Option<&str>, local: &str) -> String {
+    prefix.map_or_else(|| local.to_owned(), |p| format!("{p}:{local}"))
+}
+
+fn escape_xml(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('"', "&quot;")
+}
+
+/// A prefix bound to `uri` in the scopes open, innermost first.
+fn prefix_for(scopes: &[Vec<(Option<String>, String)>], uri: &str) -> String {
+    scopes
+        .iter()
+        .rev()
+        .flat_map(|scope| scope.iter())
+        .find_map(|(p, u)| (u == uri).then(|| p.clone()).flatten())
+        .expect("an attribute's namespace was declared somewhere above")
+}
+
+fn write_naive_events(found: &[Event]) -> String {
+    use core::fmt::Write as _;
+    let mut out = String::new();
+    let mut scopes: Vec<Vec<(Option<String>, String)>> = Vec::new();
+    for event in found {
+        match event {
+            Event::StartElement {
+                name,
+                prefix,
+                attributes,
+                namespaces,
+                ..
+            } => {
+                scopes.push(namespaces.clone());
+                let _ =
+                    write!(out, "<{}", qname(prefix.as_deref(), &name.local));
+                for (p, uri) in namespaces {
+                    match p {
+                        Some(p) => {
+                            let _ = write!(
+                                out,
+                                " xmlns:{p}=\"{}\"",
+                                escape_xml(uri)
+                            );
+                        }
+                        None => {
+                            let _ =
+                                write!(out, " xmlns=\"{}\"", escape_xml(uri));
+                        }
+                    }
+                }
+                for (attr, value) in attributes {
+                    let p = attr
+                        .namespace
+                        .as_deref()
+                        .map(|ns| prefix_for(&scopes, ns));
+                    let _ = write!(
+                        out,
+                        " {}=\"{}\"",
+                        qname(p.as_deref(), &attr.local),
+                        escape_xml(value)
+                    );
+                }
+                out.push('>');
+            }
+            Event::EndElement { name, prefix, .. } => {
+                let _ = scopes.pop();
+                let _ =
+                    write!(out, "</{}>", qname(prefix.as_deref(), &name.local));
+            }
+            Event::Text(t) => out.push_str(&escape_xml(t)),
+            Event::Comment(c) => {
+                let _ = write!(out, "<!--{c}-->");
+            }
+            Event::ProcessingInstruction { target, data } => {
+                let _ = write!(out, "<?{target} {data}?>");
+            }
+            _ => panic!("an event this writer does not know"),
+        }
+    }
+    out
+}
+
+#[test]
+fn start_events_carry_enough_to_rewrite_the_document() {
+    for doc in [
+        r#"<r xmlns="urn:d" xmlns:p="urn:p"><p:a p:x="1" y="2">t &amp; u</p:a><b/></r>"#,
+        r#"<?pi data?><r><s xmlns:q="urn:q" q:k="v"><q:t/></s><!-- c --></r>"#,
+        r#"<p:r xmlns:p="urn:p" xmlns:q="urn:p"><q:a q:b='1'/></p:r>"#,
+    ] {
+        let original = events(doc).expect("valid");
+        let written = write_naive_events(&original);
+        let reread = events(&written).unwrap_or_else(|e| {
+            panic!("the rewritten {written:?} does not read: {e}")
+        });
+        assert_eq!(reread, original, "{doc:?} rewritten as {written:?}");
+    }
+    // The element's own prefix is the one it was written with, even
+    // when two prefixes name one namespace.
+    let found = events(r#"<p:r xmlns:p="urn:p" xmlns:q="urn:p"><q:a/></p:r>"#)
+        .expect("valid");
+    let prefixes: Vec<Option<String>> = found
+        .iter()
+        .filter_map(|e| match e {
+            Event::StartElement { prefix, .. }
+            | Event::EndElement { prefix, .. } => Some(prefix.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        prefixes,
+        [
+            Some("p".into()),
+            Some("q".into()),
+            Some("q".into()),
+            Some("p".into())
+        ]
+    );
+}
+
+/// `offset()` is where the scanner will resume: the start of the
+/// next construct, which is where the tree parser reports an error
+/// that construct is to blame for.
+#[test]
+fn offset_is_where_the_tree_parser_would_report_the_next_error() {
+    for doc in [
+        "<a><b></c></a>",
+        "<a><b/>&undefined;</a>",
+        "<a/><b/>",
+        "<a><!-- c --><b x='1' x='2'/></a>",
+        "<a>text</b>",
+    ] {
+        let tree = parse(doc).expect_err("malformed");
+        let mut reader = Reader::new(doc).expect("prolog is fine");
+        let mut before_error = reader.offset();
+        let error = loop {
+            match reader.next_event() {
+                Ok(Some(_)) => before_error = reader.offset(),
+                Ok(None) => panic!("{doc:?} must fail"),
+                Err(e) => break e,
+            }
+        };
+        assert_eq!(error.offset, tree.offset, "{doc:?}: the same error");
+        assert_eq!(
+            before_error, tree.offset,
+            "{doc:?}: offset() pointed at it"
+        );
+    }
+    // And on a complete document, it ends where the document does.
+    let doc = "<a><b/></a>";
+    let mut reader = Reader::new(doc).expect("valid");
+    assert_eq!(reader.offset(), 0);
+    let _ = reader.next_event().expect("<a>");
+    assert_eq!(reader.offset(), 3);
+    let _ = reader.next_event().expect("<b/>");
+    assert_eq!(reader.offset(), 7, "a self-closing tag is passed whole");
+    let _ = reader.next_event().expect("</b>, held back");
+    assert_eq!(reader.offset(), 7);
+    while reader.next_event().expect("valid").is_some() {}
+    assert_eq!(reader.offset(), doc.len());
+}
+
+/// An external source given to the reader reaches the DTD parser, as
+/// it does through `parse_with_external`.
+#[test]
+fn an_external_source_supplies_the_external_subset() {
+    struct Dtd;
+    impl oxml::external::ExternalSource for Dtd {
+        fn fetch(&self, system: &str, _public: Option<&str>) -> Option<&str> {
+            (system == "x.dtd").then_some("<!ENTITY e \"from outside\">")
+        }
+    }
+    let doc = "<!DOCTYPE a SYSTEM \"x.dtd\"><a>&e;</a>";
+    let source = Dtd;
+    let text: String = Reader::new(doc)
+        .expect("valid")
+        .with_external(&source)
+        .filter_map(|e| match e {
+            Ok(Event::Text(t)) => Some(t),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "from outside");
+    let tree = oxml::parse_with_external(doc, oxml::Limits::default(), &source)
+        .expect("valid");
+    assert_eq!(tree.text(tree.root()), text, "as the tree parser has it");
+    // Without one the subset is unavailable, and a reference to an
+    // entity it might have declared expands to nothing -- on both
+    // paths.
+    let without: String = events(doc)
+        .expect("not an error while the subset is unknown")
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Text(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(without, "");
+    assert_eq!(parse(doc).expect("valid").text(tree.root()), "");
 }

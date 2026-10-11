@@ -5,14 +5,27 @@
 //!
 //! A recursive-descent parser following the `XPath` 1.0 grammar's
 //! precedence ladder: `or` binds loosest, then `and`, equality,
-//! relational, additive, multiplicative, unary, and finally paths.
+//! relational, additive, multiplicative, unary, union, and finally
+//! paths. The six binary levels are one precedence-climbing function
+//! rather than one function each, so that a nested sub-expression
+//! costs five stack frames instead of ten: an expression is untrusted
+//! input, and [`Limits::max_xpath_depth`] levels of nesting have to
+//! fit on a small thread's stack before the limit refuses the next.
 
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::ast::{Axis, BinaryOp, Expr, NodeTest, Step};
+mod binary;
+mod lex;
+mod node_test;
+
+use binary::chain;
+
+use super::ast::{Axis, BinaryOp, Expr, Filter, Func, NodeTest, Step};
+use crate::Limits;
+use crate::tree::ExpandedName;
 
 /// Why an `XPath` expression could not be compiled.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,55 +35,6 @@ pub struct XPathError {
     /// Byte offset into the expression.
     pub offset: usize,
 }
-
-/// Every function `XPath` 1.0 defines, section 4, with the number of
-/// arguments each accepts as `(name, minimum, maximum)`.
-///
-/// The evaluator matches on these names; the parser checks against the
-/// same list so an expression naming anything else, or passing the
-/// wrong number of arguments, fails to compile instead of quietly
-/// evaluating to something plausible. There are no extension
-/// functions, so the two sets are the same by construction.
-///
-/// Arity matters as much as the name. A missing argument used to read
-/// as an empty string, so `starts-with("abc")` answered **true** --
-/// every string starts with the empty string -- and
-/// `translate("abc", "ab")` silently deleted the characters it had no
-/// replacement for. Both are wrong answers that look like real ones.
-const FUNCTIONS: &[(&str, usize, usize)] = &[
-    // Node-set
-    ("last", 0, 0),
-    ("position", 0, 0),
-    ("count", 1, 1),
-    ("id", 1, 1),
-    ("local-name", 0, 1),
-    ("namespace-uri", 0, 1),
-    ("name", 0, 1),
-    // String
-    ("string", 0, 1),
-    // `concat` is the one variadic function: two arguments or more.
-    ("concat", 2, usize::MAX),
-    ("starts-with", 2, 2),
-    ("contains", 2, 2),
-    ("substring-before", 2, 2),
-    ("substring-after", 2, 2),
-    ("substring", 2, 3),
-    ("string-length", 0, 1),
-    ("normalize-space", 0, 1),
-    ("translate", 3, 3),
-    // Boolean
-    ("boolean", 1, 1),
-    ("not", 1, 1),
-    ("true", 0, 0),
-    ("false", 0, 0),
-    ("lang", 1, 1),
-    // Number
-    ("number", 0, 1),
-    ("sum", 1, 1),
-    ("floor", 1, 1),
-    ("ceiling", 1, 1),
-    ("round", 1, 1),
-];
 
 impl core::fmt::Display for XPathError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -88,8 +52,19 @@ struct P<'a> {
     /// How many nested sub-expressions are open. Parsing is recursive
     /// descent, so `((((...))))` would otherwise exhaust the stack —
     /// and an expression is untrusted input in every front end of this
-    /// crate. Bounded by [`crate::MAX_DEPTH`].
+    /// crate. Bounded by `max_depth`, from
+    /// [`Limits::max_xpath_depth`].
     depth: usize,
+    /// The nesting depth at which the expression is refused.
+    max_depth: usize,
+    /// How many operators, steps, predicates and calls have been
+    /// parsed so far. Nesting alone does not bound work: `1+1+1+...`
+    /// is flat, and both compiling and evaluating it cost in
+    /// proportion to its length.
+    ops: usize,
+    /// The operator count at which the expression is refused, from
+    /// [`Limits::max_xpath_operators`].
+    max_ops: usize,
     /// Prefix-to-URI bindings for name tests.
     ///
     /// `XPath` 1.0 resolves a prefix against the *expression's* context,
@@ -98,268 +73,186 @@ struct P<'a> {
     /// would make an expression's meaning depend on which document it
     /// ran against.
     namespaces: &'a [(&'a str, &'a str)],
+    /// Every distinct variable the expression references, in order
+    /// of first reference.
+    variables: Vec<ExpandedName>,
 }
 
-/// Compile an `XPath` 1.0 expression.
+/// A compiled expression and what it needs from its evaluation
+/// context.
+pub struct Compiled {
+    /// The expression tree.
+    pub expr: Expr,
+    /// Every distinct variable the expression references.
+    pub variables: Vec<ExpandedName>,
+}
+
+/// Compile an `XPath` 1.0 expression with namespace prefixes bound
+/// to URIs, under `limits`.
+///
+/// Only [`Limits::max_xpath_depth`] and
+/// [`Limits::max_xpath_operators`] apply to an expression; the other
+/// fields bound documents.
 ///
 /// # Errors
 ///
-/// Returns [`XPathError`] if the expression is malformed.
-pub fn compile(expr: &str) -> Result<Expr, XPathError> {
-    compile_with(expr, &[])
-}
-
-/// Compile with namespace prefixes bound to URIs.
-///
-/// # Errors
-///
-/// Returns [`XPathError`] if the expression is malformed, or uses a
-/// prefix that `namespaces` does not bind.
-pub fn compile_with(
+/// Returns [`XPathError`] if the expression is malformed, uses a
+/// prefix that `namespaces` does not bind, or exceeds either limit.
+pub fn compile(
     expr: &str,
     namespaces: &[(&str, &str)],
-) -> Result<Expr, XPathError> {
+    limits: &Limits,
+) -> Result<Compiled, XPathError> {
     let mut p = P {
         s: expr,
         b: expr.as_bytes(),
         i: 0,
         depth: 0,
+        max_depth: limits.max_xpath_depth,
+        ops: 0,
+        max_ops: limits.max_xpath_operators,
         namespaces,
+        variables: Vec::new(),
     };
     let e = p.parse_or()?;
     p.ws();
     if p.i < p.b.len() {
         return Err(p.err("unexpected trailing input"));
     }
-    Ok(e)
+    Ok(Compiled {
+        expr: e,
+        variables: p.variables,
+    })
 }
 
 impl P<'_> {
     fn err(&self, m: &str) -> XPathError {
-        XPathError {
-            message: m.to_owned(),
-            offset: self.i,
-        }
-    }
-
-    fn ws(&mut self) {
-        while self.i < self.b.len()
-            && matches!(self.b[self.i], b' ' | b'\t' | b'\r' | b'\n')
-        {
-            self.i += 1;
-        }
-    }
-
-    fn eat(&mut self, tok: &str) -> bool {
-        self.ws();
-        if self.s[self.i..].starts_with(tok) {
-            self.i += tok.len();
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Match a word operator, ensuring it is not the prefix of a name.
-    ///
-    /// Without the boundary check, `andover` would lex as `and` +
-    /// `over`, and a path step named `divide` would become a division.
-    fn eat_word(&mut self, w: &str) -> bool {
-        self.ws();
-        let rest = &self.s[self.i..];
-        if let Some(after) = rest.strip_prefix(w) {
-            if after.chars().next().is_none_or(|c| !is_name_char(c)) {
-                self.i += w.len();
-                return true;
-            }
-        }
-        false
-    }
-
-    fn peek(&mut self) -> Option<u8> {
-        self.ws();
-        self.b.get(self.i).copied()
+        error_at(m, self.i)
     }
 
     fn parse_or(&mut self) -> Result<Expr, XPathError> {
         // The single entry point of the recursive-descent chain, so
-        // one check here bounds every path back into it.
-        if self.depth >= crate::MAX_DEPTH {
+        // one check here bounds every path back into it. `depth` is
+        // the number of sub-expressions already open around this one:
+        // the top-level expression is at depth 0, and `max_depth`
+        // nested parentheses, predicates or arguments are accepted.
+        if self.depth > self.max_depth {
             return Err(self.err("expression nested too deeply"));
         }
         self.depth += 1;
-        let result = self.parse_or_inner();
+        let result = self.parse_binary(0);
         self.depth -= 1;
         result
     }
 
-    fn parse_or_inner(&mut self) -> Result<Expr, XPathError> {
-        let mut lhs = self.parse_and()?;
-        while self.eat_word("or") {
-            let rhs = self.parse_and()?;
-            lhs = bin(BinaryOp::Or, lhs, rhs);
+    /// Count one operator, step, predicate or call against the budget.
+    fn charge(&mut self) -> Result<(), XPathError> {
+        self.ops += 1;
+        if self.ops > self.max_ops {
+            return Err(self.err("expression has too many operators"));
         }
-        Ok(lhs)
-    }
-
-    fn parse_and(&mut self) -> Result<Expr, XPathError> {
-        let mut lhs = self.parse_equality()?;
-        while self.eat_word("and") {
-            let rhs = self.parse_equality()?;
-            lhs = bin(BinaryOp::And, lhs, rhs);
-        }
-        Ok(lhs)
-    }
-
-    fn parse_equality(&mut self) -> Result<Expr, XPathError> {
-        let mut lhs = self.parse_relational()?;
-        loop {
-            let op = if self.eat("!=") {
-                BinaryOp::Ne
-            } else if self.eat("=") {
-                BinaryOp::Eq
-            } else {
-                break;
-            };
-            let rhs = self.parse_relational()?;
-            lhs = bin(op, lhs, rhs);
-        }
-        Ok(lhs)
-    }
-
-    fn parse_relational(&mut self) -> Result<Expr, XPathError> {
-        let mut lhs = self.parse_additive()?;
-        loop {
-            // `<=` before `<`, or the longer operator never matches.
-            let op = if self.eat("<=") {
-                BinaryOp::Le
-            } else if self.eat(">=") {
-                BinaryOp::Ge
-            } else if self.eat("<") {
-                BinaryOp::Lt
-            } else if self.eat(">") {
-                BinaryOp::Gt
-            } else {
-                break;
-            };
-            let rhs = self.parse_additive()?;
-            lhs = bin(op, lhs, rhs);
-        }
-        Ok(lhs)
-    }
-
-    fn parse_additive(&mut self) -> Result<Expr, XPathError> {
-        let mut lhs = self.parse_multiplicative()?;
-        loop {
-            let op = if self.eat("+") {
-                BinaryOp::Add
-            } else if self.eat("-") {
-                BinaryOp::Sub
-            } else {
-                break;
-            };
-            let rhs = self.parse_multiplicative()?;
-            lhs = bin(op, lhs, rhs);
-        }
-        Ok(lhs)
-    }
-
-    fn parse_multiplicative(&mut self) -> Result<Expr, XPathError> {
-        let mut lhs = self.parse_unary()?;
-        loop {
-            let op = if self.eat("*") {
-                BinaryOp::Mul
-            } else if self.eat_word("div") {
-                BinaryOp::Div
-            } else if self.eat_word("mod") {
-                BinaryOp::Mod
-            } else {
-                break;
-            };
-            let rhs = self.parse_unary()?;
-            lhs = bin(op, lhs, rhs);
-        }
-        Ok(lhs)
-    }
-
-    fn parse_unary(&mut self) -> Result<Expr, XPathError> {
-        if self.eat("-") {
-            let e = self.parse_unary()?;
-            return Ok(Expr::Negate(Box::new(e)));
-        }
-        self.parse_union()
+        Ok(())
     }
 
     fn parse_union(&mut self) -> Result<Expr, XPathError> {
-        let mut lhs = self.parse_primary()?;
+        let first = self.parse_path_expr()?;
+        let mut rest = Vec::new();
         while self.eat("|") {
-            let rhs = self.parse_primary()?;
-            lhs = bin(BinaryOp::Union, lhs, rhs);
+            self.charge()?;
+            rest.push((BinaryOp::Union, self.parse_path_expr()?));
         }
-        Ok(lhs)
+        Ok(chain(first, rest))
     }
 
-    fn parse_primary(&mut self) -> Result<Expr, XPathError> {
-        self.ws();
+    /// `PathExpr`: a location path, or a primary expression with any
+    /// predicates and a continuing path (`FilterExpr`, section 3.3).
+    ///
+    /// Kept to two calls so that its frame, which is on the stack for
+    /// every level of nesting, stays small.
+    fn parse_path_expr(&mut self) -> Result<Expr, XPathError> {
+        match self.try_primary()? {
+            Some(primary) => self.parse_filter_tail(primary),
+            None => self.parse_path(),
+        }
+    }
+
+    /// A primary expression, if one is next; `None` leaves the input
+    /// where it was for a location path.
+    ///
+    /// Which of the two is decided by the first token. `.` is the
+    /// ambiguous one: `.5` is a number, `.` and `..` are steps, so a
+    /// dot commits to a number only when a digit follows it.
+    fn try_primary(&mut self) -> Result<Option<Expr>, XPathError> {
         match self.peek() {
-            Some(b'(') => {
-                self.i += 1;
-                let e = self.parse_or()?;
-                if !self.eat(")") {
-                    return Err(self.err("expected )"));
-                }
-                Ok(e)
+            Some(b'(') => self.parse_parenthesised().map(Some),
+            Some(b'\'' | b'"') => self.parse_literal().map(Some),
+            Some(b'$') => self.parse_variable().map(Some),
+            Some(c) if c.is_ascii_digit() => self.parse_number().map(Some),
+            Some(b'.')
+                if self.b.get(self.i + 1).is_some_and(u8::is_ascii_digit) =>
+            {
+                self.parse_number().map(Some)
             }
-            Some(b'\'' | b'"') => self.parse_literal(),
-            Some(c) if c.is_ascii_digit() || c == b'.' => {
-                // `.` is ambiguous: `.5` is a number, `.` and `..` are
-                // steps. Only commit to a number if a digit follows.
-                if c == b'.'
-                    && !self.b.get(self.i + 1).is_some_and(u8::is_ascii_digit)
-                {
-                    self.parse_path()
-                } else {
-                    self.parse_number()
-                }
-            }
-            _ => self.parse_path_or_function(),
+            _ => self.try_function_call(),
         }
     }
 
-    /// A quoted string, if one is next. Used by
-    /// `processing-instruction('target')`, the only node test that
-    /// takes an argument.
-    fn try_literal(&mut self) -> Option<String> {
-        let quote = *self.b.get(self.i)?;
-        if quote != b'\'' && quote != b'"' {
-            return None;
-        }
+    fn parse_parenthesised(&mut self) -> Result<Expr, XPathError> {
         self.i += 1;
-        let start = self.i;
-        while self.i < self.b.len() && self.b[self.i] != quote {
-            self.i += 1;
+        let e = self.parse_or()?;
+        if !self.eat(")") {
+            return Err(self.err("expected )"));
         }
-        if self.i >= self.b.len() {
-            return None;
+        Ok(e)
+    }
+
+    /// The predicates and continuing path that may follow a primary
+    /// expression. A primary followed by neither is itself.
+    fn parse_filter_tail(&mut self, base: Expr) -> Result<Expr, XPathError> {
+        let predicates = self.parse_predicates()?;
+        let mut steps = Vec::new();
+        match self.eat_separator() {
+            Some(Separator::Double) => {
+                steps.push(self.descendant_step());
+                self.parse_relative_path(&mut steps)?;
+            }
+            Some(Separator::Single) => self.parse_relative_path(&mut steps)?,
+            None => {}
         }
-        let v = self.s[start..self.i].to_owned();
+        if predicates.is_empty() && steps.is_empty() {
+            return Ok(base);
+        }
+        Ok(Expr::Filter(Box::new(Filter {
+            base,
+            predicates,
+            steps,
+        })))
+    }
+
+    /// `$name` or `$prefix:name`, resolved like a name test.
+    fn parse_variable(&mut self) -> Result<Expr, XPathError> {
         self.i += 1;
-        Some(v)
+        let at = self.i;
+        let Some(name) = self.try_name() else {
+            return Err(error_at("expected a variable name after `$`", at));
+        };
+        let resolved = match name.split_once(':') {
+            Some((prefix, local)) => {
+                ExpandedName::qualified(self.resolve_prefix(prefix)?, local)
+            }
+            None => ExpandedName::local(name),
+        };
+        if !self.variables.contains(&resolved) {
+            self.variables.push(resolved.clone());
+        }
+        Ok(Expr::Variable(Box::new(resolved)))
     }
 
     fn parse_literal(&mut self) -> Result<Expr, XPathError> {
-        let quote = self.b[self.i];
-        self.i += 1;
-        let start = self.i;
-        while self.i < self.b.len() && self.b[self.i] != quote {
-            self.i += 1;
-        }
-        if self.i >= self.b.len() {
-            return Err(self.err("unterminated string literal"));
-        }
-        let v = self.s[start..self.i].to_owned();
-        self.i += 1;
-        Ok(Expr::Literal(v))
+        let at = self.i;
+        self.try_literal()
+            .map(Expr::Literal)
+            .ok_or_else(|| error_at("unterminated string literal", at))
     }
 
     fn parse_number(&mut self) -> Result<Expr, XPathError> {
@@ -375,88 +268,108 @@ impl P<'_> {
             .map_err(|_| self.err("invalid number"))
     }
 
-    fn parse_path_or_function(&mut self) -> Result<Expr, XPathError> {
-        let save = self.i;
-        if let Some(name) = self.try_name() {
-            self.ws();
-            if self.peek() == Some(b'(')
-                && !matches!(
-                    name.as_str(),
-                    "text" | "comment" | "node" | "processing-instruction"
-                )
-            {
-                self.i += 1;
-                let mut args = Vec::new();
-                if self.peek() != Some(b')') {
-                    loop {
-                        args.push(self.parse_or()?);
-                        if !self.eat(",") {
-                            break;
-                        }
-                    }
+    /// A function call, if one is next: a name that is not a node
+    /// type, followed by `(`. Anything else is left for the path
+    /// parser, with the input rewound.
+    ///
+    /// An unknown name is refused here rather than left to evaluate
+    /// to an empty node-set. Returning empty makes a misspelling
+    /// indistinguishable from a document that genuinely has no match
+    /// -- the caller gets a wrong answer with nothing attached to say
+    /// so. Both this and the arity check report at the name's offset,
+    /// which is where an editor should underline.
+    fn try_function_call(&mut self) -> Result<Option<Expr>, XPathError> {
+        self.ws();
+        let at = self.i;
+        let Some(name) = self.try_name() else {
+            return Ok(None);
+        };
+        if self.peek() != Some(b'(') || is_node_type(&name) {
+            self.i = at;
+            return Ok(None);
+        }
+        let Some(func) = Func::from_name(&name) else {
+            return Err(error_at("unknown function", at));
+        };
+        self.i += 1;
+        self.charge()?;
+        let args = self.parse_arguments()?;
+        let (min, max) = func.arity();
+        if args.len() < min || args.len() > max {
+            return Err(error_at("wrong number of arguments", at));
+        }
+        Ok(Some(Expr::Function { func, args }))
+    }
+
+    /// The comma-separated arguments of a call, through the closing
+    /// parenthesis. The opening one has been consumed.
+    fn parse_arguments(&mut self) -> Result<Vec<Expr>, XPathError> {
+        let mut args = Vec::new();
+        if self.peek() != Some(b')') {
+            loop {
+                args.push(self.parse_or()?);
+                if !self.eat(",") {
+                    break;
                 }
-                if !self.eat(")") {
-                    return Err(self.err("expected ) after arguments"));
-                }
-                // An unknown name is rejected here rather than left to
-                // evaluate to an empty node-set. Returning empty makes
-                // a misspelling indistinguishable from a document that
-                // genuinely has no match -- the caller gets a wrong
-                // answer with nothing attached to say so.
-                let Some(&(_, min, max)) =
-                    FUNCTIONS.iter().find(|(f, _, _)| *f == name)
-                else {
-                    return Err(self.err("unknown function"));
-                };
-                if args.len() < min || args.len() > max {
-                    return Err(self.err("wrong number of arguments"));
-                }
-                return Ok(Expr::Function { name, args });
             }
         }
-        self.i = save;
-        self.parse_path()
+        if !self.eat(")") {
+            return Err(self.err("expected ) after arguments"));
+        }
+        Ok(args)
     }
 
     fn parse_path(&mut self) -> Result<Expr, XPathError> {
-        self.ws();
-        let mut absolute = false;
+        let leading = self.eat_separator();
+        let absolute = leading.is_some();
         let mut steps = Vec::new();
-
-        if self.s[self.i..].starts_with("//") {
-            self.i += 2;
-            absolute = true;
-            steps.push(Step {
-                axis: Axis::DescendantOrSelf,
-                test: NodeTest::Any,
-                predicates: Vec::new(),
-            });
-        } else if self.peek() == Some(b'/') {
-            self.i += 1;
-            absolute = true;
+        if leading == Some(Separator::Double) {
+            steps.push(self.descendant_step());
+        } else if absolute && self.at_path_end() {
             // A lone `/` selects the root and has no steps.
-            if self.at_path_end() {
-                return Ok(Expr::Path { absolute, steps });
-            }
+            return Ok(Expr::Path { absolute, steps });
         }
-
+        // The loop is written out here rather than shared with
+        // `parse_relative_path`: this function is on the recursion
+        // path of a nested predicate (`.[.[.[...]]]`), and one more
+        // frame per level is one less level that fits on a small
+        // stack before `Limits::max_xpath_depth` can refuse the next.
         loop {
             steps.push(self.parse_step()?);
-            self.ws();
-            if self.s[self.i..].starts_with("//") {
-                self.i += 2;
-                steps.push(Step {
-                    axis: Axis::DescendantOrSelf,
-                    test: NodeTest::Any,
-                    predicates: Vec::new(),
-                });
-            } else if self.peek() == Some(b'/') {
-                self.i += 1;
-            } else {
-                break;
+            match self.eat_separator() {
+                Some(Separator::Double) => steps.push(self.descendant_step()),
+                Some(Separator::Single) => {}
+                None => return Ok(Expr::Path { absolute, steps }),
             }
         }
-        Ok(Expr::Path { absolute, steps })
+    }
+
+    /// `RelativeLocationPath`: steps separated by `/` or `//`,
+    /// appended to `steps`.
+    fn parse_relative_path(
+        &mut self,
+        steps: &mut Vec<Step>,
+    ) -> Result<(), XPathError> {
+        loop {
+            steps.push(self.parse_step()?);
+            match self.eat_separator() {
+                Some(Separator::Double) => steps.push(self.descendant_step()),
+                Some(Separator::Single) => {}
+                None => return Ok(()),
+            }
+        }
+    }
+
+    /// `//` or `/`, if one is next. The double form is tried first,
+    /// or it lexes as two singles.
+    fn eat_separator(&mut self) -> Option<Separator> {
+        if self.eat("//") {
+            Some(Separator::Double)
+        } else if self.eat("/") {
+            Some(Separator::Single)
+        } else {
+            None
+        }
     }
 
     fn at_path_end(&mut self) -> bool {
@@ -469,43 +382,31 @@ impl P<'_> {
         }
     }
 
+    /// The `descendant-or-self::node()` step that `//` abbreviates.
+    ///
+    /// Counted against the budget but not checked here: `//` is
+    /// always followed by a step, whose own [`P::charge`] reports the
+    /// overrun one token later.
+    fn descendant_step(&mut self) -> Step {
+        self.ops += 1;
+        Step {
+            axis: Axis::DescendantOrSelf,
+            test: NodeTest::Any,
+            predicates: Vec::new(),
+        }
+    }
+
     fn parse_step(&mut self) -> Result<Step, XPathError> {
+        self.charge()?;
         self.ws();
-        // Abbreviations first: `..` before `.`, or `..` lexes as two.
-        if self.s[self.i..].starts_with("..") {
-            self.i += 2;
+        if let Some(axis) = self.eat_abbreviated_step() {
             return Ok(Step {
-                axis: Axis::Parent,
+                axis,
                 test: NodeTest::Any,
                 predicates: self.parse_predicates()?,
             });
         }
-        if self.peek() == Some(b'.') {
-            self.i += 1;
-            return Ok(Step {
-                axis: Axis::SelfAxis,
-                test: NodeTest::Any,
-                predicates: self.parse_predicates()?,
-            });
-        }
-
-        let axis = if self.eat("@") {
-            Axis::Attribute
-        } else {
-            let save = self.i;
-            match self.try_name() {
-                Some(n) if self.s[self.i..].starts_with("::") => {
-                    self.i += 2;
-                    axis_from_name(&n)
-                        .ok_or_else(|| self.err("unknown axis"))?
-                }
-                _ => {
-                    self.i = save;
-                    Axis::Child
-                }
-            }
-        };
-
+        let axis = self.parse_axis()?;
         let test = self.parse_node_test()?;
         let predicates = self.parse_predicates()?;
         Ok(Step {
@@ -515,89 +416,10 @@ impl P<'_> {
         })
     }
 
-    fn parse_node_test(&mut self) -> Result<NodeTest, XPathError> {
-        self.ws();
-        if self.eat("*") {
-            // `*:local` -- any namespace, one local name. An extension
-            // (XPath 2.0's production, not in 1.0), accepted only with
-            // the colon immediately adjacent, as 2.0's lexical rule
-            // requires. In node-test position `*` is never
-            // multiplication, so there is no ambiguity to resolve.
-            if self.peek() == Some(b':') {
-                self.i += 1;
-                let local = self
-                    .try_name()
-                    .ok_or_else(|| self.err("expected a name after `*:`"))?;
-                // `try_name` reads a full QName; a prefix here would
-                // make the expression `*:p:l`, which nothing defines.
-                if local.contains(':') {
-                    return Err(self
-                        .err("`*:` takes a local name, not a qualified one"));
-                }
-                return Ok(NodeTest::AnyNamespace { local });
-            }
-            return Ok(NodeTest::Wildcard);
-        }
-        let name = self
-            .try_name()
-            .ok_or_else(|| self.err("expected a node test"))?;
-        self.ws();
-        if self.peek() == Some(b'(') {
-            self.i += 1;
-            // `processing-instruction` is the one node test that takes
-            // an argument: an optional literal naming the target.
-            if name == "processing-instruction" {
-                self.ws();
-                let target = self.try_literal();
-                self.ws();
-                if !self.eat(")") {
-                    return Err(self.err("expected )"));
-                }
-                return Ok(NodeTest::ProcessingInstruction(target));
-            }
-            if !self.eat(")") {
-                return Err(self.err("expected ()"));
-            }
-            return match name.as_str() {
-                "text" => Ok(NodeTest::Text),
-                "comment" => Ok(NodeTest::Comment),
-                "node" => Ok(NodeTest::Any),
-                _ => Err(self.err("unknown node type")),
-            };
-        }
-        match name.split_once(':') {
-            Some((prefix, local)) => {
-                // `xml` is bound by specification and never declared.
-                let uri = if prefix == "xml" {
-                    "http://www.w3.org/XML/1998/namespace"
-                } else {
-                    self.namespaces
-                        .iter()
-                        .find(|(p, _)| *p == prefix)
-                        .map(|(_, uri)| *uri)
-                        .ok_or_else(|| {
-                            self.err(&alloc::format!(
-                                "unbound namespace prefix `{prefix}`; bind it \
-                                 with XPath::compile_with_namespaces"
-                            ))
-                        })?
-                };
-                Ok(NodeTest::Name {
-                    namespace: Some(uri.to_owned()),
-                    local: local.to_owned(),
-                })
-            }
-            // Unprefixed: matches nodes in no namespace only.
-            None => Ok(NodeTest::Name {
-                namespace: None,
-                local: name,
-            }),
-        }
-    }
-
     fn parse_predicates(&mut self) -> Result<Vec<Expr>, XPathError> {
         let mut out = Vec::new();
         while self.eat("[") {
+            self.charge()?;
             out.push(self.parse_or()?);
             if !self.eat("]") {
                 return Err(self.err("expected ]"));
@@ -605,68 +427,24 @@ impl P<'_> {
         }
         Ok(out)
     }
+}
 
-    fn try_name(&mut self) -> Option<String> {
-        self.ws();
-        let rest = &self.s[self.i..];
-        let mut end = 0;
-        for (idx, c) in rest.char_indices() {
-            if idx == 0 {
-                if !is_name_start(c) {
-                    return None;
-                }
-            } else if !is_name_char(c) {
-                break;
-            }
-            // A `:` that is doubled is an axis separator, not part of
-            // the name. Without this the name swallows `parent::a`
-            // whole, the `::` test then fails, and the step silently
-            // degrades to the child axis.
-            if c == ':' && rest[idx + 1..].starts_with(':') {
-                break;
-            }
-            end = idx + c.len_utf8();
-        }
-        if end == 0 {
-            return None;
-        }
-        let name = rest[..end].to_owned();
-        self.i += end;
-        Some(name)
+fn error_at(m: &str, offset: usize) -> XPathError {
+    XPathError {
+        message: m.to_owned(),
+        offset,
     }
 }
 
-fn bin(op: BinaryOp, lhs: Expr, rhs: Expr) -> Expr {
-    Expr::Binary {
-        op,
-        lhs: Box::new(lhs),
-        rhs: Box::new(rhs),
-    }
+/// The node-type tests that take `()` and are therefore not calls.
+fn is_node_type(name: &str) -> bool {
+    matches!(name, "text" | "comment" | "node" | "processing-instruction")
 }
 
-fn axis_from_name(n: &str) -> Option<Axis> {
-    Some(match n {
-        "child" => Axis::Child,
-        "descendant" => Axis::Descendant,
-        "descendant-or-self" => Axis::DescendantOrSelf,
-        "parent" => Axis::Parent,
-        "ancestor" => Axis::Ancestor,
-        "ancestor-or-self" => Axis::AncestorOrSelf,
-        "self" => Axis::SelfAxis,
-        "attribute" => Axis::Attribute,
-        "following-sibling" => Axis::FollowingSibling,
-        "preceding-sibling" => Axis::PrecedingSibling,
-        "following" => Axis::Following,
-        "preceding" => Axis::Preceding,
-        "namespace" => Axis::Namespace,
-        _ => return None,
-    })
-}
-
-fn is_name_start(c: char) -> bool {
-    c.is_alphabetic() || c == '_'
-}
-
-fn is_name_char(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':')
+/// A step separator: `/`, or the `//` that abbreviates
+/// `/descendant-or-self::node()/`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Separator {
+    Single,
+    Double,
 }

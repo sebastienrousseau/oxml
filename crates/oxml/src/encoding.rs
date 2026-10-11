@@ -172,7 +172,14 @@ fn check_bom_agrees(text: &str, from_bom: Encoding) -> Result<()> {
 
 /// The `encoding` pseudo-attribute of the XML declaration, if any.
 fn declared_encoding(bytes: &[u8]) -> Result<Option<Encoding>> {
-    if !bytes.starts_with(b"<?xml") {
+    // `<?xml` followed by whitespace, as `parser::xml_declaration`
+    // requires: a processing instruction whose target starts with
+    // `xml` (`<?xml-stylesheet ...?>` at offset 0 is legal and common)
+    // is not a declaration, and `encoding='iso-8859-1'` inside its
+    // attributes silently transcoded the whole document.
+    if !bytes.starts_with(b"<?xml")
+        || !matches!(bytes.get(5), Some(b' ' | b'\t' | b'\r' | b'\n'))
+    {
         return Ok(None);
     }
     let Some(end) = find(bytes, b"?>") else {

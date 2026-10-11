@@ -26,6 +26,10 @@ use crate::tree::{Chars, Document, ExpandedName, NameId, NodeData, NodeId};
 pub(crate) struct Namespaces {
     bindings: Vec<(String, String)>,
     marks: Vec<usize>,
+    /// One id per binding, parallel to `bindings`, each greater than
+    /// every id handed out before it.
+    ids: Vec<u64>,
+    next_id: u64,
 }
 
 impl Namespaces {
@@ -36,11 +40,39 @@ impl Namespaces {
     pub(crate) fn pop_scope(&mut self) {
         if let Some(mark) = self.marks.pop() {
             self.bindings.truncate(mark);
+            self.ids.truncate(mark);
         }
     }
 
     fn bind(&mut self, prefix: String, uri: String) {
+        self.next_id += 1;
         self.bindings.push((prefix, uri));
+        self.ids.push(self.next_id);
+    }
+
+    /// An id that identifies the whole stack of bindings in force.
+    ///
+    /// Bindings form a stack and ids only ever grow, so two moments
+    /// with the same innermost id have the same stack beneath it:
+    /// everything under a binding was pushed before it and cannot
+    /// change while it is live. That makes the innermost id a sound
+    /// key for anything that depends on the full scope, at the cost
+    /// of one integer rather than a clone of the stack.
+    fn scope_id(&self) -> u64 {
+        self.ids.last().copied().unwrap_or(0)
+    }
+
+    /// How many bindings and scopes are open, for [`Self::truncate_to`].
+    fn depths(&self) -> (usize, usize) {
+        (self.bindings.len(), self.marks.len())
+    }
+
+    /// Discard every binding and scope pushed since [`Self::depths`]
+    /// reported these counts.
+    fn truncate_to(&mut self, bindings: usize, marks: usize) {
+        self.bindings.truncate(bindings);
+        self.ids.truncate(bindings);
+        self.marks.truncate(marks);
     }
 
     fn resolve(&self, prefix: &str) -> Option<&str> {
@@ -50,6 +82,143 @@ impl Namespaces {
             .find(|(p, _)| p == prefix)
             .map(|(_, u)| u.as_str())
     }
+}
+
+/// The attribute names an element has declared so far, for the
+/// `WFC: Unique Att Spec` check.
+///
+/// Comparison is by *expanded* name (namespace and local part), never
+/// by id: `p:a` and `q:a` with both prefixes bound to one namespace are
+/// the same attribute however they are spelled. A linear scan over the
+/// earlier names costs O(n²) string comparisons per element, which is
+/// the shape of RUSTSEC-2026-0194; past a handful of attributes the
+/// names go into a set instead.
+#[derive(Default)]
+struct SeenAttributes {
+    /// The first few, compared by a scan. An array rather than a
+    /// `Vec`: the parse is held to half an allocation per node, and a
+    /// `Vec` here would spend one on every element with an attribute.
+    linear: [u32; Self::LINEAR],
+    len: usize,
+    /// Every name once the element is wide, by expanded name.
+    wide: Option<BTreeSet<(Option<String>, String)>>,
+}
+
+impl SeenAttributes {
+    /// Attributes an element may carry before the set is worth its
+    /// allocations.
+    const LINEAR: usize = 16;
+
+    /// Record `name`; `false` if an attribute with the same expanded
+    /// name was already recorded. `names` resolves ids to names.
+    fn insert(&mut self, name: NameId, names: &[ExpandedName]) -> bool {
+        let expanded = &names[name.0 as usize];
+        if let Some(set) = self.wide.as_mut() {
+            return set.insert(Self::key(expanded));
+        }
+        let seen = &self.linear[..self.len];
+        if seen.iter().any(|n| names[*n as usize] == *expanded) {
+            return false;
+        }
+        if self.len < Self::LINEAR {
+            self.linear[self.len] = name.0;
+            self.len += 1;
+        } else {
+            self.widen(expanded, names);
+        }
+        true
+    }
+
+    /// The element is wide: move the names seen so far into a set.
+    fn widen(&mut self, latest: &ExpandedName, names: &[ExpandedName]) {
+        let mut set: BTreeSet<_> = self.linear[..self.len]
+            .iter()
+            .map(|n| Self::key(&names[*n as usize]))
+            .collect();
+        let _ = set.insert(Self::key(latest));
+        self.wide = Some(set);
+    }
+
+    fn key(name: &ExpandedName) -> (Option<String>, String) {
+        (name.namespace.clone(), name.local.clone())
+    }
+}
+
+/// How many arena slots to reserve before parsing `input`.
+///
+/// Every element, comment and processing instruction begins with `<`
+/// and text nodes are bounded by them, so twice the count of `<` is a
+/// good guess that saves the reallocate-and-copy as the tree grows.
+/// It is a guess about a document that has not been checked yet,
+/// though: 4 MB of `<` bytes would reserve 450 MB before the first
+/// limit was consulted, so the reservation is capped by `max_nodes`
+/// and by a fixed ceiling, and the `Vec` grows past it if a document
+/// genuinely needs more.
+fn arena_capacity(input: &str, limits: &Limits) -> usize {
+    const CEILING: usize = 1 << 20;
+    let guess = input.bytes().filter(|b| *b == b'<').count() * 2;
+    let cap = limits.max_nodes.map_or(CEILING, |n| n.min(CEILING));
+    guess.min(cap)
+}
+
+const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+const XMLNS_NS: &str = "http://www.w3.org/2000/xmlns/";
+
+/// The prefix an attribute declares, if it is a namespace
+/// declaration: `""` for `xmlns`, `p` for `xmlns:p`, `None` otherwise.
+fn declared_prefix(name: &str) -> Option<&str> {
+    if name == "xmlns" {
+        Some("")
+    } else {
+        name.strip_prefix("xmlns:")
+    }
+}
+
+/// Namespaces in XML, sections 3 and 6: what a declaration may bind.
+///
+/// `xml` may be bound only to the XML namespace and nothing else may
+/// be bound to it; `xmlns` may not be declared at all; the `xmlns`
+/// namespace may not be bound by anyone. The default declaration was
+/// once checked against neither reserved URI, so
+/// `xmlns="http://www.w3.org/XML/1998/namespace"` went through.
+fn check_declaration(
+    name: &str,
+    prefix: &str,
+    value: &str,
+    version: Version,
+) -> core::result::Result<(), ErrorKind> {
+    if value == XMLNS_NS || (prefix != "xml" && value == XML_NS) {
+        return Err(ErrorKind::ReservedNamespace);
+    }
+    // `xmlns:` with nothing after it parses as a name, but
+    // `PrefixedAttName ::= 'xmlns:' NCName` needs a prefix to declare.
+    if prefix.is_empty() {
+        return if name == "xmlns" {
+            Ok(())
+        } else {
+            Err(ErrorKind::ReservedNamespace)
+        };
+    }
+    check_prefix_declaration(prefix, value, version)
+}
+
+/// The rules that apply to `xmlns:prefix` and not to `xmlns`.
+fn check_prefix_declaration(
+    prefix: &str,
+    value: &str,
+    version: Version,
+) -> core::result::Result<(), ErrorKind> {
+    let malformed = prefix == "xmlns" || prefix.contains(':');
+    let xml_rebound = prefix == "xml" && value != XML_NS;
+    // Undeclaring a prefix -- binding it to the empty string -- is
+    // XML 1.1 only. In a 1.0 document it is an error, not a no-op,
+    // and treating it as one silently changed which namespace the
+    // element was in.
+    let undeclared_in_10 = value.is_empty() && version == Version::V10;
+    if malformed || xml_rebound || undeclared_in_10 {
+        return Err(ErrorKind::ReservedNamespace);
+    }
+    Ok(())
 }
 
 pub(crate) struct Parser<'a> {
@@ -103,8 +272,14 @@ pub(crate) struct Parser<'a> {
     /// out there.
     pub(crate) standalone: bool,
     /// Validated entity replacement texts, keyed by entity name and
-    /// the namespace bindings active when referenced.
-    pub(crate) entity_cache: BTreeSet<(String, Vec<(String, String)>)>,
+    /// the namespace scope in force when referenced.
+    ///
+    /// The scope is the id of the innermost binding (see
+    /// [`Namespaces::scope_id`]). Keying on a clone of the whole
+    /// binding stack cost a `Vec<(String, String)>` per reference:
+    /// 20,000 references under 800 bindings took 711 ms, and nothing
+    /// in `Limits` bounded it.
+    pub(crate) entity_cache: BTreeSet<(String, u64)>,
 }
 
 /// Parse an XML document.
@@ -199,7 +374,10 @@ pub fn parse_with_external(
     // to the document afterwards leaves every range valid.
     let text = normalize_line_endings(input, version).into_owned();
     let mut doc = parse_normalized(&text, limits, version, external)?;
+    let whole = text.len();
     doc.input = text;
+    let root = doc.root();
+    doc.set_span(root, 0, whole);
     Ok(doc)
 }
 
@@ -524,9 +702,7 @@ fn parse_normalized(
         // processing instruction begins with `<`, and text nodes are
         // bounded by them. Counting runs at memory speed; the
         // reallocate-and-copy it avoids does not.
-        doc: Document::with_capacity(
-            input.bytes().filter(|b| *b == b'<').count() * 2,
-        ),
+        doc: Document::with_capacity(arena_capacity(input, &limits)),
         name_index: alloc::collections::BTreeMap::new(),
         external,
         ns: Namespaces::default(),
@@ -543,6 +719,8 @@ fn parse_normalized(
     Ok(p.doc)
 }
 
+type ResolvedAttributes = (Vec<(NameId, Chars)>, Vec<String>);
+
 impl<'a> Parser<'a> {
     fn parse_document(&mut self) -> Result<()> {
         let root = self.doc.root();
@@ -557,29 +735,11 @@ impl<'a> Parser<'a> {
             }
             if self.peek_is(b'<') {
                 if self.starts_with("<!--") {
-                    let c = self.parse_comment()?;
-                    let _ = self.doc.push(NodeData::Comment(c), root);
+                    self.push_comment(root)?;
                 } else if self.starts_with("<?") {
-                    let (t, d) = self.parse_pi()?;
-                    let _ = self.doc.push(
-                        NodeData::ProcessingInstruction { target: t, data: d },
-                        root,
-                    );
+                    self.push_pi(root)?;
                 } else if self.starts_with("<!DOCTYPE") {
-                    // Handled here as well as in `skip_prolog`, because
-                    // the prolog is `Misc* doctypedecl? Misc*` — a
-                    // comment or PI may precede the declaration. The
-                    // prolog loop breaks on anything that is not a
-                    // DOCTYPE, so a leading comment left the DOCTYPE to
-                    // be parsed as an element and reported as
-                    // `expected a name`.
-                    if seen_root || self.dtd.is_some() {
-                        return Err(Error::new(
-                            ErrorKind::TrailingContent,
-                            self.pos,
-                        ));
-                    }
-                    self.skip_doctype()?;
+                    self.late_doctype(seen_root)?;
                 } else if self.starts_with("</") {
                     let name = self.peek_end_tag_name();
                     return Err(Error::new(
@@ -650,10 +810,10 @@ impl<'a> Parser<'a> {
         // well-formed for *every* parser, validating or not — and the
         // general entity declarations are needed so that a document
         // using `&chapter1;` is not rejected as undeclared.
-        let mut p = crate::dtd::DtdParser::new(
+        let mut p = crate::dtd::DtdParser::with_limits(
             self.input,
             self.pos,
-            self.limits.edition,
+            &self.limits,
         )
         // So an external parameter entity the caller supplied can be
         // read. Without this the DTD parser sees no source at all and
@@ -702,10 +862,10 @@ impl<'a> Parser<'a> {
                                 self.pos,
                             ));
                         }
-                        let mut sub = crate::dtd::DtdParser::new(
+                        let mut sub = crate::dtd::DtdParser::with_limits(
                             body,
                             0,
-                            self.limits.edition,
+                            &self.limits,
                         )
                         .with_external(self.external, version);
                         // Which names arrive from out here, so that
@@ -781,11 +941,24 @@ impl<'a> Parser<'a> {
         element: &str,
         raw_attrs: &[(&'a str, Run)],
     ) -> Result<Vec<(String, String)>> {
-        let mut declared = Vec::new();
+        let mut declared: Vec<(String, String)> = Vec::new();
         // Copied out so resolving a run does not borrow `self` while
         // the loop binds into `self.ns`.
         let input = self.input;
         for (name, run) in raw_attrs {
+            let Some(prefix) = declared_prefix(name) else {
+                continue;
+            };
+            // A namespace declaration is an attribute, and `WFC:
+            // Unique Att Spec` applies to it. The general duplicate
+            // check skips `xmlns` attributes, so this is the only place
+            // `<a xmlns:p="u1" xmlns:p="u2"/>` can be caught.
+            if declared.iter().any(|(p, _)| p == prefix) {
+                return Err(Error::new(
+                    ErrorKind::DuplicateAttribute((*name).to_owned()),
+                    self.pos,
+                ));
+            }
             // An `xmlns` attribute is an attribute, so a declaration
             // giving it a non-`CDATA` type normalises its value like
             // any other -- and the *binding* must use the normalised
@@ -804,60 +977,10 @@ impl<'a> Parser<'a> {
             } else {
                 run.as_str(input)
             };
-            if let Some(prefix) = name.strip_prefix("xmlns:") {
-                // Namespaces in XML, section 3: `xml` may be bound only
-                // to the XML namespace and nothing else may be bound to
-                // it; `xmlns` may not be declared at all.
-                const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
-                const XMLNS_NS: &str = "http://www.w3.org/2000/xmlns/";
-                if prefix == "xmlns"
-                    || (prefix == "xml" && value != XML_NS)
-                    || (prefix != "xml" && value == XML_NS)
-                    || value == XMLNS_NS
-                {
-                    return Err(Error::new(
-                        ErrorKind::ReservedNamespace,
-                        self.pos,
-                    ));
-                }
-                // `xmlns:` with nothing after it: the attribute parses
-                // as a name, but `PrefixedAttName ::= 'xmlns:' NCName`
-                // needs a prefix to declare.
-                if prefix.is_empty() || prefix.contains(':') {
-                    return Err(Error::new(
-                        ErrorKind::ReservedNamespace,
-                        self.pos,
-                    ));
-                }
-                // Undeclaring a prefix -- binding it to the empty
-                // string -- is XML 1.1 only. In a 1.0 document it is an
-                // error, not a no-op, and treating it as one silently
-                // changed which namespace the element was in.
-                if value.is_empty() && self.version == Version::V10 {
-                    return Err(Error::new(
-                        ErrorKind::ReservedNamespace,
-                        self.pos,
-                    ));
-                }
-                self.ns.bind(prefix.to_owned(), value.to_owned());
-                declared.push((prefix.to_owned(), value.to_owned()));
-            } else if *name == "xmlns" {
-                // The reserved URIs were checked for *prefixed*
-                // declarations and not for the default one, so
-                // `xmlns="http://www.w3.org/XML/1998/namespace"` --
-                // which the Namespaces specification forbids outright
-                // -- went through.
-                const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
-                const XMLNS_NS: &str = "http://www.w3.org/2000/xmlns/";
-                if value == XML_NS || value == XMLNS_NS {
-                    return Err(Error::new(
-                        ErrorKind::ReservedNamespace,
-                        self.pos,
-                    ));
-                }
-                self.ns.bind(String::new(), value.to_owned());
-                declared.push((String::new(), value.to_owned()));
-            }
+            check_declaration(name, prefix, value, self.version)
+                .map_err(|kind| Error::new(kind, self.pos))?;
+            self.ns.bind(prefix.to_owned(), value.to_owned());
+            declared.push((prefix.to_owned(), value.to_owned()));
         }
         Ok(declared)
     }
@@ -914,14 +1037,49 @@ impl<'a> Parser<'a> {
             tag_start,
         } = self.scan_start_tag()?;
 
-        // Resolve attribute names first so duplicates are detected
-        // before any node is created — otherwise a rejected element
-        // would already be in the arena.
+        let (resolved, id_values) =
+            self.resolve_attributes(qname, raw_attrs, tag_start)?;
+        let name_id = self.intern_qname(qname, true, tag_start)?;
+        let node = self.doc.push(
+            NodeData::Element {
+                name: name_id,
+                attributes: (0, 0),
+                namespaces: (0, 0),
+            },
+            parent,
+        );
+        // Provisionally the start tag alone; the end tag extends it.
+        self.doc.set_span(node, tag_start, self.pos);
+        self.attach_attributes(node, resolved, id_values, declared);
+
+        if self_closing {
+            self.ns.pop_scope();
+            return Ok(());
+        }
+
+        self.parse_children(node, qname)?;
+        self.ns.pop_scope();
+        Ok(())
+    }
+
+    /// Resolve a start tag's attributes to interned names and stored
+    /// values, before any node exists.
+    ///
+    /// Done first so a duplicate is detected before the element is
+    /// created -- otherwise a rejected element would already be in
+    /// the arena. Returns the attributes in document order and the
+    /// values of the element's `ID`-typed attributes, which are held
+    /// until the element node exists to point them at.
+    fn resolve_attributes(
+        &mut self,
+        qname: &str,
+        raw_attrs: Vec<(&'a str, Run)>,
+        tag_start: usize,
+    ) -> Result<ResolvedAttributes> {
         let mut resolved: Vec<(NameId, Chars)> =
             Vec::with_capacity(raw_attrs.len());
+        let mut seen = SeenAttributes::default();
         let input = self.input;
-        // Values of this element's `ID`-typed attributes, held until
-        // the element node exists to point them at.
         let mut id_values: Vec<String> = Vec::new();
         for (raw, run) in raw_attrs {
             if raw == "xmlns" || raw.starts_with("xmlns:") {
@@ -935,11 +1093,7 @@ impl<'a> Parser<'a> {
             // that on their own: they distinguish prefixes, so the two
             // get different ids and an id comparison would let the pair
             // through.
-            let expanded = &self.doc.names[an.0 as usize];
-            if resolved
-                .iter()
-                .any(|(n, _)| self.doc.names[n.0 as usize] == *expanded)
-            {
+            if !seen.insert(an, &self.doc.names) {
                 self.ns.pop_scope();
                 return Err(Error::new(
                     ErrorKind::DuplicateAttribute(raw.to_owned()),
@@ -953,46 +1107,54 @@ impl<'a> Parser<'a> {
             {
                 id_values.push(run.as_str(input).to_owned());
             }
-            // XML 1.0 section 3.3.3: a value whose declared type is
-            // not `CDATA` gets a second pass -- leading and trailing
-            // spaces discarded, runs of spaces collapsed to one. Only
-            // the declaration says which values those are, so this
-            // cannot be decided by looking at the value.
-            let tokenized = self
-                .dtd
-                .as_ref()
-                .is_some_and(|d| d.is_tokenized_attribute(qname, raw));
-            let collapsed = tokenized.then(|| collapse(run.as_str(input)));
-
-            // A value that survived scanning as a slice becomes a
-            // range into the document's own input; one that entity
-            // expansion or normalisation rewrote joins the side table.
-            let value = match (&collapsed, run.as_span()) {
-                // Collapsing changed nothing, so the slice still says
-                // it: the common case, and it stays free.
-                (Some(text), Some((start, len)))
-                    if text == run.as_str(input) =>
-                {
-                    let _ = (start, len);
-                    self.verbatim(start, len)
-                }
-                (Some(text), _) => self.doc.push_expanded(text),
-                (None, Some((start, len))) => self.verbatim(start, len),
-                (None, None) => self.doc.push_expanded(run.as_str(input)),
-            };
+            let value = self.store_attribute_value(qname, raw, &run);
             resolved.push((an, value));
         }
 
-        let name_id = self.intern_qname(qname, true, tag_start)?;
-        let node = self.doc.push(
-            NodeData::Element {
-                name: name_id,
-                attributes: (0, 0),
-                namespaces: (0, 0),
-            },
-            parent,
-        );
+        Ok((resolved, id_values))
+    }
 
+    /// Where an attribute's value lives: a range into the input when
+    /// the scanned slice still says it, the side table otherwise.
+    ///
+    /// XML 1.0 section 3.3.3: a value whose declared type is not
+    /// `CDATA` gets a second pass -- leading and trailing spaces
+    /// discarded, runs of spaces collapsed to one. Only the
+    /// declaration says which values those are, so this cannot be
+    /// decided by looking at the value.
+    fn store_attribute_value(
+        &mut self,
+        qname: &str,
+        raw: &str,
+        run: &Run,
+    ) -> Chars {
+        let input = self.input;
+        let tokenized = self
+            .dtd
+            .as_ref()
+            .is_some_and(|d| d.is_tokenized_attribute(qname, raw));
+        let collapsed = tokenized.then(|| collapse(run.as_str(input)));
+        match (&collapsed, run.as_span()) {
+            // Collapsing changed nothing, so the slice still says it:
+            // the common case, and it stays free.
+            (Some(text), Some((start, len))) if text == run.as_str(input) => {
+                self.verbatim(start, len)
+            }
+            (Some(text), _) => self.doc.push_expanded(text),
+            (None, Some((start, len))) => self.verbatim(start, len),
+            (None, None) => self.doc.push_expanded(run.as_str(input)),
+        }
+    }
+
+    /// Attach resolved attributes, `ID` values and namespace nodes to
+    /// the element node that now exists.
+    fn attach_attributes(
+        &mut self,
+        node: NodeId,
+        resolved: Vec<(NameId, Chars)>,
+        id_values: Vec<String>,
+        declared: Vec<(String, String)>,
+    ) {
         // Attribute nodes are parented to the element but kept out of
         // its `children`, so `child::` cannot see them. They are pushed
         // consecutively, so they are already contiguous in `attr_ids`
@@ -1035,15 +1197,6 @@ impl<'a> Parser<'a> {
                 u32::try_from(ns_len).unwrap_or(u32::MAX),
             );
         }
-
-        if self_closing {
-            self.ns.pop_scope();
-            return Ok(());
-        }
-
-        self.parse_children(node, qname)?;
-        self.ns.pop_scope();
-        Ok(())
     }
 
     /// Attach an element's namespace nodes, returning their
@@ -1085,6 +1238,21 @@ impl<'a> Parser<'a> {
         (start, self.doc.ns_ids.len() - start)
     }
 
+    /// A `<!DOCTYPE` met in the document loop rather than the prolog.
+    ///
+    /// Handled here as well as in `skip_prolog`, because the prolog is
+    /// `Misc* doctypedecl? Misc*` -- a comment or PI may precede the
+    /// declaration. The prolog loop breaks on anything that is not a
+    /// DOCTYPE, so a leading comment left the DOCTYPE to be parsed as
+    /// an element and reported as `expected a name`. A second DOCTYPE,
+    /// or one after the root element, is trailing content.
+    fn late_doctype(&mut self, seen_root: bool) -> Result<()> {
+        if seen_root || self.dtd.is_some() {
+            return Err(Error::new(ErrorKind::TrailingContent, self.pos));
+        }
+        self.skip_doctype()
+    }
+
     fn parse_children(&mut self, node: NodeId, open_qname: &str) -> Result<()> {
         let mark = self.doc.scratch_mark();
         let mut text = Run::default();
@@ -1103,44 +1271,15 @@ impl<'a> Parser<'a> {
             if self.peek_is(b'<') {
                 if self.starts_with("</") {
                     self.flush_text(&mut text, node)?;
-                    let start = self.pos;
-                    self.pos += 2;
-                    let close = self.parse_name()?;
-                    self.skip_whitespace();
-                    if !self.peek_is(b'>') {
-                        return Err(Error::new(
-                            ErrorKind::Unterminated("end tag"),
-                            start,
-                        ));
-                    }
-                    self.pos += 1;
-                    if close != open_qname {
-                        return Err(Error::new(
-                            ErrorKind::MismatchedEndTag {
-                                expected: open_qname.to_owned(),
-                                found: close.to_owned(),
-                            },
-                            start,
-                        ));
-                    }
-                    // The element is closed, so its children are
-                    // complete and can be moved into the flat arena as
-                    // one contiguous block.
-                    self.doc.finish_children(node, mark);
-                    return Ok(());
+                    return self.parse_end_tag(node, open_qname, mark);
                 } else if self.starts_with("<!--") {
                     self.flush_text(&mut text, node)?;
-                    let c = self.parse_comment()?;
-                    let _ = self.doc.push(NodeData::Comment(c), node);
+                    self.push_comment(node)?;
                 } else if self.starts_with("<![CDATA[") {
                     self.parse_cdata(&mut text)?;
                 } else if self.starts_with("<?") {
                     self.flush_text(&mut text, node)?;
-                    let (t, d) = self.parse_pi()?;
-                    let _ = self.doc.push(
-                        NodeData::ProcessingInstruction { target: t, data: d },
-                        node,
-                    );
+                    self.push_pi(node)?;
                 } else {
                     self.flush_text(&mut text, node)?;
                     self.parse_element(node)?;
@@ -1149,6 +1288,59 @@ impl<'a> Parser<'a> {
                 self.parse_text_run(&mut text)?;
             }
         }
+    }
+
+    /// `</name>`: it must match the open tag, and it closes `node`, so
+    /// the children gathered since `mark` move into the flat arena as
+    /// one contiguous block.
+    fn parse_end_tag(
+        &mut self,
+        node: NodeId,
+        open_qname: &str,
+        mark: usize,
+    ) -> Result<()> {
+        let start = self.pos;
+        self.pos += 2;
+        let close = self.parse_name()?;
+        self.skip_whitespace();
+        if !self.peek_is(b'>') {
+            return Err(Error::new(ErrorKind::Unterminated("end tag"), start));
+        }
+        self.pos += 1;
+        if close != open_qname {
+            return Err(Error::new(
+                ErrorKind::MismatchedEndTag {
+                    expected: open_qname.to_owned(),
+                    found: close.to_owned(),
+                },
+                start,
+            ));
+        }
+        self.doc.finish_children(node, mark);
+        self.doc.set_span_end(node, self.pos);
+        Ok(())
+    }
+
+    /// Scan a comment at the cursor and attach it to `parent`, with
+    /// the range it came from.
+    fn push_comment(&mut self, parent: NodeId) -> Result<()> {
+        let at = self.pos;
+        let c = self.parse_comment()?;
+        let id = self.doc.push(NodeData::Comment(c), parent);
+        self.doc.set_span(id, at, self.pos);
+        Ok(())
+    }
+
+    /// Scan a processing instruction at the cursor and attach it to
+    /// `parent`, with the range it came from.
+    fn push_pi(&mut self, parent: NodeId) -> Result<()> {
+        let at = self.pos;
+        let (target, data) = self.parse_pi()?;
+        let id = self
+            .doc
+            .push(NodeData::ProcessingInstruction { target, data }, parent);
+        self.doc.set_span(id, at, self.pos);
+        Ok(())
     }
 
     fn flush_text(&mut self, text: &mut Run, node: NodeId) -> Result<()> {
@@ -1165,7 +1357,8 @@ impl<'a> Parser<'a> {
                 let text = run.as_str(self.input);
                 self.doc.push_expanded(text)
             };
-            let _ = self.doc.push(NodeData::Text(chars), node);
+            let id = self.doc.push(NodeData::Text(chars), node);
+            self.doc.set_span(id, run.start, self.pos);
         }
         Ok(())
     }
@@ -1424,6 +1617,15 @@ impl<'a> Parser<'a> {
         if self.entity_depth >= self.limits.max_entity_depth {
             return Err(Error::new(ErrorKind::EntityLimitExceeded, offset));
         }
+        // The sub-parser *borrows* the DTD, the namespace stack and
+        // the validation cache by moving them out and back, rather
+        // than cloning them: a clone of the DTD per entity reference
+        // made a document with 4,000 2 KB entities take 2.7 s, and a
+        // clone of the cache per validation grew with every entity
+        // seen. Bindings the entity makes are discarded afterwards by
+        // truncating the stack to where it stood, so they still do
+        // not escape.
+        let (bindings_before, marks_before) = self.ns.depths();
         let mut sub = Parser {
             input: text,
             bytes: text.as_bytes(),
@@ -1431,22 +1633,23 @@ impl<'a> Parser<'a> {
             // Thrown away: only whether it parses matters, so the
             // ranges it records point nowhere and are never read.
             doc: Document::with_capacity(0),
-            // Cloned so a prefix bound outside the entity resolves
-            // inside it, and so bindings the entity makes do not
-            // escape.
-            ns: self.ns.clone(),
+            ns: core::mem::take(&mut self.ns),
             depth: self.depth,
             limits: self.limits,
-            dtd: self.dtd.clone(),
+            dtd: self.dtd.take(),
             version: self.version,
             name_index: alloc::collections::BTreeMap::new(),
             external: self.external,
             entity_budget: self.entity_budget,
             entity_depth: self.entity_depth + 1,
             standalone: self.standalone,
-            entity_cache: self.entity_cache.clone(),
+            entity_cache: core::mem::take(&mut self.entity_cache),
         };
         let result = sub.parse_entity_body();
+        self.ns = sub.ns;
+        self.ns.truncate_to(bindings_before, marks_before);
+        self.dtd = sub.dtd;
+        self.entity_cache = sub.entity_cache;
         // The budget is per document, so what the check spent counts.
         self.entity_budget = sub.entity_budget;
         // An offset into the replacement text means nothing to a
@@ -2004,7 +2207,7 @@ impl<'a> Parser<'a> {
                 if in_attribute {
                     Self::check_entity_in_attribute(&replacement, offset)?;
                 } else {
-                    let key = (ent.to_owned(), self.ns.bindings.clone());
+                    let key = (ent.to_owned(), self.ns.scope_id());
                     if !self.entity_cache.contains(&key) {
                         self.check_entity_as_content(&replacement, offset)?;
                         let _ = self.entity_cache.insert(key);
@@ -2593,13 +2796,9 @@ fn validate_xml_declaration(
 /// from outside the internal subset, because the document has promised
 /// there is nothing out there it depends on.
 pub(crate) fn declared_standalone(input: &str) -> bool {
-    let Some(rest) = input.strip_prefix("<?xml") else {
+    let Some(decl) = xml_declaration(input) else {
         return false;
     };
-    let Some(end) = rest.find("?>") else {
-        return false;
-    };
-    let decl = &rest[..end];
     let Some(at) = decl.find("standalone") else {
         return false;
     };
@@ -2619,14 +2818,28 @@ pub(crate) fn declared_standalone(input: &str) -> bool {
         .is_some_and(|close| &body[..close] == "yes")
 }
 
+/// The body of the XML declaration at the start of `input`, if there
+/// is one: the text between `<?xml` and `?>`.
+///
+/// `<?xml` must be followed by XML whitespace. A processing
+/// instruction whose target merely *starts* with `xml` --
+/// `<?xml-stylesheet ...?>` is the common one, and it is legal at
+/// offset 0 when the document has no declaration -- is not a
+/// declaration, and reading it as one let its attribute values act as
+/// `version`, `standalone` and `encoding` pseudo-attributes.
+pub(crate) fn xml_declaration(input: &str) -> Option<&str> {
+    let rest = input.strip_prefix("<?xml")?;
+    if !rest.starts_with([' ', '\t', '\r', '\n']) {
+        return None;
+    }
+    let end = rest.find("?>")?;
+    Some(&rest[..end])
+}
+
 pub(crate) fn declared_version(input: &str) -> Result<Version> {
-    let Some(rest) = input.strip_prefix("<?xml") else {
+    let Some(decl) = xml_declaration(input) else {
         return Ok(Version::V10);
     };
-    let Some(end) = rest.find("?>") else {
-        return Ok(Version::V10);
-    };
-    let decl = &rest[..end];
     let Some(at) = decl.find("version") else {
         return Ok(Version::V10);
     };

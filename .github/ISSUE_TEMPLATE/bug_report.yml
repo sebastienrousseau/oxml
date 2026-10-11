@@ -1,0 +1,38 @@
+name: Bug report
+description: A document parsed, serialised or queried wrongly, or a panic.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: oxml version
+      placeholder: "0.0.10"
+    validations:
+      required: true
+  - type: textarea
+    id: document
+    attributes:
+      label: Smallest document that shows it
+      description: Paste the XML (or XPath expression) inline. Attach a file only if it cannot be shortened.
+      render: xml
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened
+      description: Include the error kind and offset, or the wrong output, verbatim.
+    validations:
+      required: true
+  - type: dropdown
+    id: entry
+    attributes:
+      label: Entry point
+      options: [parse / parse_with, parse_bytes, stream::Reader, stream::AsyncReader, XPath, Document mutation, Serialisation, Other]
+    validations:
+      required: true
+  - type: input
+    id: limits
+    attributes:
+      label: Limits in use
+      placeholder: "default / strict / permissive / custom"

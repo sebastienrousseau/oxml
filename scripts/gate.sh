@@ -88,6 +88,10 @@ step "published figures" python3 scripts/check-figures.py
 
 step "package claims" python3 scripts/check-package.py
 
+# Per-function complexity against the committed baseline: a new
+# offender or a worse one fails; see the script for the ceilings.
+step "complexity ratchet" python3 scripts/check-complexity.py
+
 step "MSRV $MSRV" env RUSTUP_TOOLCHAIN="$MSRV" cargo build --workspace --all-features
 
 echo

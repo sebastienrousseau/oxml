@@ -2,8 +2,31 @@
 
 # Roadmap
 
-Where the 10/10 plan stands. Measured on 2026-08-23, against
-`feat/v0.0.4`.
+Where the 10/10 plan stands. The sections from [Scorecard](#scorecard)
+down were measured on 2026-08-23 against `feat/v0.0.4` and are kept as
+the record of how the figures were reached; the section directly
+below is the current plan.
+
+## Where this stands, 2026-10-06
+
+A full audit of 0.0.10 (parser, tree, streaming, XPath, CI and
+release pipeline) found that three headline claims were not yet true:
+`XPath` expressions were not bounded by `Limits`, `XPath` positional
+semantics diverged from the 1.0 specification, and streaming memory
+was bounded only for well-behaved input. The work is sequenced so the
+claims become measured facts before any new feature ships:
+
+| Milestone | What it makes true | Gate |
+|---|---|---|
+| 1. Safety claims | `Limits` bounds every entry point: `XPath` compile budget, entity-cache key, DTD and stream limits, one declaration sniffer | `strict()` rejects every audit probe; spoof documents parse as 1.0 |
+| 2. `XPath` 1.0 correctness | per-context predicates, reverse-axis positions, filter expressions, variables, existential comparisons | differential harness green; `//a[1]` yields one node per parent |
+| 3. A mutable tree | amortised block relocation, kind gates, name validation, lazy document order, namespace declarations | constant bytes per appended child; mutate fuzzer invariants hold |
+| 4. Sans-I/O streaming core | one `Core` for sync, tokio, `futures-io` and WASM; whole-construct scan fixed; encoding detection | `from_reader` equals `Reader::new` under a chunked fuzzer |
+| 5. Release engineering | trusted publishing, signed-tag check, SBOM and provenance, locked builds, persistent fuzz corpus | Scorecard Signed-Releases 10; no stored registry token |
+| 6. Differentiators | C14N, a function registry, a streaming `XPath` subset, an event writer, source positions for the LSP | each ships with a consumer in the suite |
+
+Milestones 1, 3 and 5 are in 0.0.10. The rest follow one per
+release.
 
 Every "done" here has a number or a check behind it. Anything without
 one is listed as not done, however close it feels.

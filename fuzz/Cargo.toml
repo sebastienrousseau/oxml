@@ -71,3 +71,10 @@ path = "fuzz_targets/stream.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "stream_chunked"
+path = "fuzz_targets/stream_chunked.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,8 @@
+# Every path needs a reviewer who knows it. One maintainer today; the
+# second line of each entry is where a second owner goes when there is
+# one (OpenSSF Gold asks for two-person review).
+*                       @sebastienrousseau
+/crates/oxml/src/       @sebastienrousseau
+/.github/               @sebastienrousseau
+/conformance/           @sebastienrousseau
+/fuzz/                  @sebastienrousseau
