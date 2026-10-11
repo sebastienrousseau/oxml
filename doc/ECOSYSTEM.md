@@ -28,8 +28,9 @@ want.
 ### `oxml` — the library
 
 The parser, the tree, and XPath 1.0. Everything else in this list
-depends on it. `no_std` with `alloc`, no `unsafe`, no runtime
-dependencies beyond an optional `libm`.
+depends on it. `no_std` with `alloc`, no `unsafe`, and no runtime
+dependencies by default (`libm`, `tokio` and `tracing` are optional,
+behind the features of the same name).
 
 Read its [README](../README.md) first; the rest of this document
 assumes it.
@@ -88,9 +89,10 @@ graph TD
     oxml --> lsp["oxml-lsp<br/>editors"]
 ```
 
-Every arrow is a dependency on `oxml` and nothing else. The satellites
-do not depend on each other, so adding one to a project costs the
-library plus that satellite.
+Every arrow is a dependency on `oxml`. `oxml-cli` and `oxml-mcp` also
+depend on `xmlschema` for validation, which is why `xmlschema` is
+published second in a release (see [RELEASING.md](RELEASING.md)); the
+other satellites depend on `oxml` alone.
 
 ## One version across six crates
 

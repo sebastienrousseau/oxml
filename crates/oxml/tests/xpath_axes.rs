@@ -19,20 +19,27 @@ const DOC: &str = "\
 <?render mode=\"list\"?>\
 </library>";
 
+/// Compile `expr`, checking on the way that `Display` round-trips it.
+fn compile(expr: &str) -> XPath {
+    let compiled = XPath::compile(expr)
+        .unwrap_or_else(|e| panic!("`{expr}` failed to compile: {e}"));
+    let rendered = compiled.to_string();
+    let again = XPath::compile(&rendered)
+        .unwrap_or_else(|e| panic!("`{expr}` rendered as `{rendered}`: {e}"));
+    assert_eq!(again, compiled, "`{expr}` rendered as `{rendered}`");
+    compiled
+}
+
 /// Evaluate `expr` and return its string value.
 fn val(expr: &str) -> String {
     let doc = parse(DOC).expect("well-formed");
-    XPath::compile(expr)
-        .unwrap_or_else(|e| panic!("`{expr}` failed to compile: {e}"))
-        .evaluate(&doc)
-        .to_str(&doc)
+    compile(expr).evaluate(&doc).to_str(&doc)
 }
 
 /// Evaluate `expr` and return the number of nodes it selects.
 fn count(expr: &str) -> usize {
     let doc = parse(DOC).expect("well-formed");
-    XPath::compile(expr)
-        .unwrap_or_else(|e| panic!("`{expr}` failed to compile: {e}"))
+    compile(expr)
         .evaluate(&doc)
         .nodes()
         .map_or(0, <[oxml::NodeId]>::len)
@@ -41,7 +48,7 @@ fn count(expr: &str) -> usize {
 /// The text of every node `expr` selects.
 fn texts(expr: &str) -> Vec<String> {
     let doc = parse(DOC).expect("well-formed");
-    let value = XPath::compile(expr).expect("valid").evaluate(&doc);
+    let value = compile(expr).evaluate(&doc);
     value
         .nodes()
         .map(|n| n.iter().map(|id| doc.text(*id)).collect())
@@ -57,16 +64,21 @@ fn the_descendant_axis_excludes_the_context_node() {
     assert_eq!(count("/library/descendant-or-self::library"), 1);
 }
 
+/// `(//title)[1]` rather than `//title[1]`: section 2.4 applies a
+/// step's predicate per context node, so `//title[1]` is every title
+/// that is the first title in its book -- all three. The filter
+/// expression counts over the whole node-set.
 #[test]
 fn the_ancestor_axes_walk_to_the_root() {
     assert_eq!(count("//title/ancestor::book"), 3);
-    assert_eq!(count("//title[1]/ancestor::*"), 2, "book and library");
+    assert_eq!(count("(//title)[1]/ancestor::*"), 2, "book and library");
     assert_eq!(
-        count("//title[1]/ancestor-or-self::*"),
+        count("(//title)[1]/ancestor-or-self::*"),
         3,
         "title, book and library"
     );
-    assert_eq!(count("//title[1]/ancestor::title"), 0);
+    assert_eq!(count("(//title)[1]/ancestor::title"), 0);
+    assert_eq!(count("//title[1]/ancestor::book"), 3, "one per book");
 }
 
 #[test]
@@ -96,9 +108,9 @@ fn the_sibling_axes_of_the_root_are_empty_rather_than_a_panic() {
 
 #[test]
 fn the_parent_and_self_axes_select_one_node_or_none() {
-    assert_eq!(val("//title[1]/parent::book/@id"), "1");
-    assert_eq!(count("//title[1]/self::title"), 1);
-    assert_eq!(count("//title[1]/self::book"), 0);
+    assert_eq!(val("(//title)[1]/parent::book/@id"), "1");
+    assert_eq!(count("(//title)[1]/self::title"), 1);
+    assert_eq!(count("(//title)[1]/self::book"), 0);
     assert_eq!(count("/library/parent::*"), 0, "the root has no parent");
 }
 
@@ -247,7 +259,7 @@ fn abbreviated_syntax_expands_to_the_full_form() {
     // descendant-or-self step. Each is a distinct code path from the
     // spelled-out axis.
     assert_eq!(count("//book[1]/./title"), 1);
-    assert_eq!(count("//title[1]/../.."), 1, ".. twice reaches library");
+    assert_eq!(count("(//title)[1]/../.."), 1, ".. twice reaches library");
     assert_eq!(count("//book[1]/..//title"), 3, "// after ..");
     assert_eq!(count(".//book"), 3, "a relative descendant path");
 }

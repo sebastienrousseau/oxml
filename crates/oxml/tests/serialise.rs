@@ -115,6 +115,67 @@ fn an_empty_element_is_written_self_closing() {
     assert_eq!(oxml::parse("<a></a>").expect("valid").to_xml(), "<a/>");
 }
 
+#[test]
+fn only_c0_controls_need_an_xml_11_declaration() {
+    // `U+0085` and the rest of the C1 range are legal in XML 1.0,
+    // literally and as references. Sharing one predicate between
+    // "needs a reference" and "needs 1.1" declared every 1.0 document
+    // containing one as 1.1 -- a different document, and one that
+    // several 1.0-only consumers reject.
+    let c1 = oxml::parse("<a>caf\u{85}</a>").expect("valid");
+    let out = c1.to_xml();
+    assert!(!out.starts_with("<?xml"), "no declaration: {out}");
+    assert_eq!(out, "<a>caf&#133;</a>", "written as a reference");
+    assert_fixed_point("<a>caf\u{85}</a>");
+    assert_fixed_point("<a k=\"\u{7f}\u{9f}\"/>");
+
+    // A C0 control can only be expressed in 1.1, so that is declared.
+    let c0 = oxml::parse("<?xml version=\"1.1\"?><a>&#1;</a>").expect("valid");
+    assert_eq!(c0.to_xml(), "<?xml version=\"1.1\"?><a>&#1;</a>");
+    assert_fixed_point("<?xml version=\"1.1\"?><a k=\"&#2;\">&#31;</a>");
+}
+
+#[test]
+fn write_xml_to_matches_to_xml_byte_for_byte() {
+    let doc = oxml::parse(
+        "<r xmlns:p=\"urn:p\"><p:a k=\"v &amp; w\">t &lt; u</p:a><!--c--></r>",
+    )
+    .expect("valid");
+    let mut bytes = Vec::new();
+    doc.write_xml_to(&mut bytes, &oxml::SerialiseOptions::default())
+        .expect("a Vec never fails");
+    assert_eq!(bytes, doc.to_xml().into_bytes());
+
+    let pretty = oxml::SerialiseOptions {
+        indent: Some(oxml::Indent::Tab),
+        ..oxml::SerialiseOptions::default()
+    };
+    let mut bytes = Vec::new();
+    doc.write_xml_to(&mut bytes, &pretty)
+        .expect("a Vec never fails");
+    assert_eq!(bytes, doc.to_xml_with(pretty).into_bytes());
+}
+
+#[test]
+fn write_xml_to_reports_the_writers_error() {
+    // `fmt::Error` carries nothing; the I/O error must come back as
+    // the I/O error, not as a generic failure.
+    struct Broken;
+    impl std::io::Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let doc = oxml::parse("<a/>").expect("valid");
+    let err = doc
+        .write_xml_to(Broken, &oxml::SerialiseOptions::default())
+        .expect_err("the writer fails");
+    assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+}
+
 /// Every document in the W3C corpus that parses must survive a round
 /// trip and be a fixed point.
 ///

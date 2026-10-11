@@ -365,3 +365,105 @@ fn reading_from_a_source_does_not_hold_the_document() {
         large.len()
     );
 }
+
+/// Bytes currently held by the measured thread.
+///
+/// Read from inside a measured closure, so that what it reports is
+/// what the closure has built and still holds -- the retained size of
+/// a document, rather than the high-water mark on the way to it.
+fn live_bytes() -> usize {
+    usize::try_from(LIVE.load(Ordering::Relaxed)).unwrap_or(0)
+}
+
+/// Bytes still held once `f` has run.
+///
+/// `measure_peak` answers "how much at once"; this answers "how much is
+/// left", which is the figure a mutation API can get wrong without any
+/// single step looking expensive. `f` keeps what it built alive (with
+/// `std::mem::forget`) so the reading is the document's own size.
+fn measure_retained(f: impl FnOnce() + Send) -> usize {
+    let _guard = MEASURING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    LIVE.store(0, Ordering::SeqCst);
+    PEAK.store(0, Ordering::SeqCst);
+    on_a_measured_thread(|| {
+        f();
+        live_bytes()
+    })
+}
+
+/// Appending children must not retain more than a constant per child.
+///
+/// Children live in one shared arena as `(start, len)` blocks. The
+/// first mutation API copied the whole block to the end of the arena
+/// on every append and left the old one behind, so appending `n`
+/// children retained `n * n / 2` entries: 10,000 appends held 537 MB.
+/// A block that grows with spare capacity is appended into in place,
+/// and the arena grows by a constant amortised per child.
+#[test]
+fn appending_children_retains_a_constant_per_child() {
+    const CHILDREN: usize = 10_000;
+    // Each child is a node (about 40 bytes), a slot generation, one
+    // arena entry (8 bytes) and the amortised slack of its block;
+    // 2 MB is many times that and a tiny fraction of the quadratic
+    // figure.
+    const CEILING: usize = 2 * 1024 * 1024;
+
+    let retained = measure_retained(|| {
+        let mut doc = oxml::Document::empty();
+        let root = doc.root();
+        let top = doc.append_element(root, None, "top").expect("live");
+        for _ in 0..CHILDREN {
+            let _ = doc.append_element(top, None, "child").expect("live");
+        }
+        assert_eq!(doc.children(top).len(), CHILDREN);
+        // Kept alive past the reading, which the harness takes next.
+        std::mem::forget(doc);
+    });
+    println!(
+        "{CHILDREN} appended children retain {retained} bytes \
+         ({:.1} per child)",
+        retained as f64 / CHILDREN as f64
+    );
+    assert!(
+        retained < CEILING,
+        "{CHILDREN} appended children retain {retained} bytes; \
+         the ceiling is {CEILING}, and the quadratic version held 537 MB"
+    );
+}
+
+/// Replacing an attribute's value must not keep every old value.
+///
+/// Values that the input does not contain live in a side table. The
+/// first `set_attribute` pushed a new entry on every call and never
+/// released the old one, so replacing one value a thousand times
+/// retained a thousand strings. Replacement overwrites the entry in
+/// place.
+#[test]
+fn replacing_an_attribute_value_retains_only_the_latest() {
+    const REPLACEMENTS: usize = 1_000;
+    const VALUE_LEN: usize = 10 * 1024;
+    const CEILING: usize = 100 * 1024;
+
+    let value = "v".repeat(VALUE_LEN);
+    let retained = measure_retained(|| {
+        let mut doc = oxml::Document::empty();
+        let root = doc.root();
+        let top = doc.append_element(root, None, "top").expect("live");
+        for _ in 0..REPLACEMENTS {
+            doc.set_attribute(top, None, "k", &value).expect("live");
+        }
+        assert_eq!(doc.attribute(top, "k").map(str::len), Some(VALUE_LEN));
+        std::mem::forget(doc);
+    });
+    println!(
+        "{REPLACEMENTS} replacements of a {VALUE_LEN} byte value retain \
+         {retained} bytes"
+    );
+    assert!(
+        retained < CEILING,
+        "{retained} bytes retained after {REPLACEMENTS} replacements; \
+         the ceiling is {CEILING}"
+    );
+}

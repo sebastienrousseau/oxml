@@ -72,6 +72,16 @@ fn attributes(rows: usize) -> String {
     s
 }
 
+/// One text node, as large as a whole document.
+///
+/// The streaming reader buffers a construct until it is whole, and
+/// searching for its end from the start after every 8 KB pull made
+/// this quadratic: 4, 8 and 16 MB took 65, 205 and 835 ms. Measured
+/// through `from_reader` with an 8 KB buffer so the pulls are real.
+fn single_text_node(bytes: usize) -> String {
+    format!("<a>{}</a>", "y".repeat(bytes))
+}
+
 fn bench(c: &mut Criterion) {
     let cases = [
         ("catalogue", catalogue(5_000)),
@@ -88,6 +98,26 @@ fn bench(c: &mut Criterion) {
             b.iter(|| oxml::parse(black_box(source)).unwrap());
         });
     }
+
+    // Built once: copying 16 MB per iteration would be measured
+    // alongside the read. The `Cursor` borrows it, so nothing is
+    // leaked and nothing is copied.
+    let text = single_text_node(16 * 1024 * 1024);
+    let _ = group.throughput(Throughput::Bytes(text.len() as u64));
+    let _ = group.bench_function("stream_single_text_16mb", |b| {
+        b.iter(|| {
+            let source = std::io::BufReader::with_capacity(
+                8192,
+                std::io::Cursor::new(black_box(text.as_bytes())),
+            );
+            let mut reader = oxml::stream::Reader::from_reader(source).unwrap();
+            let mut events = 0usize;
+            while reader.next_event().unwrap().is_some() {
+                events += 1;
+            }
+            black_box(events)
+        });
+    });
     group.finish();
 }
 

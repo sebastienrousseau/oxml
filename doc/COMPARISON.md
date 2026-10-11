@@ -25,12 +25,12 @@ check before relying on it.
 | XPath 1.0 | Yes | No | No | Yes | Yes |
 | XSLT | No | No | No | No | Yes |
 | XSD validation | Separate crate | No | No | No | Yes |
-| Borrows from input | Not yet | Yes | Yes | No | No |
+| Borrows from input | Streaming events | Yes | Yes | No | No |
 | `no_std` | Yes (`alloc`) | Partial | No | No | No |
 | `unsafe` | Forbidden | Some | Some | Some | C library |
 | C dependency | None | None | None | None | libxml2 |
-| Streaming | Events, in memory | Yes, from a reader | No | No | Yes |
-| Mutation / writing | No | Writing | No | Yes | Yes |
+| Streaming | Yes, from a reader, sync and async | Yes, from a reader | No | No | Yes |
+| Mutation / writing | Both | Writing | No | Yes | Yes |
 
 ### `quick-xml`
 
@@ -94,7 +94,7 @@ Worth knowing what the ceiling looks like.
 | XPath | 1.0 | 1.0 | 1.0 | No | 1.0 |
 | XSLT | No | 1.0 | Via Xalan | No | 1.0 |
 | XSD | Separate crate | Yes | Yes | No | Yes |
-| Streaming | Events, in memory | Yes | Yes | Yes | Yes |
+| Streaming | Yes, from a reader | Yes | Yes | Yes | Yes |
 | Memory safety | Guaranteed | Manual | Manual / GC | GC | Manual (C core) |
 
 **libxml2** is the yardstick for behaviour. When oxml and libxml2
@@ -129,22 +129,18 @@ programs need no more than that.
 Stated plainly, because a comparison that only lists wins is an
 advertisement:
 
-- **Streaming from a reader.** `quick-xml`, libxml2, Xerces and Go
-  all handle documents larger than memory. oxml's
-  [`stream::Reader`](https://docs.rs/oxml/latest/oxml/stream/struct.Reader.html)
-  yields events without building a tree — measured at 89% less held at
-  peak than parsing the same document — but it is handed a `&str` and
-  normalises it into another, so the whole document is still resident.
-  Incremental I/O is the missing half.
+- **An event writer.** oxml serialises a tree; it has no streaming
+  writer, so a stream-to-stream transform has to build a tree or
+  write text by hand. `quick-xml` and `xml-rs` have one.
 - **Raw parse throughput.** `quick-xml` is years ahead and will stay
   there.
-- **Borrowing from the input.** `roxmltree` and `quick-xml` do; oxml
-  allocates owned strings.
+- **Borrowing from the input in the tree.** `roxmltree` and
+  `quick-xml` do; oxml's tree owns its text (streaming events borrow).
 - **XSLT.** libxml2 and lxml have it.
-- **Mutation and serialisation.** oxml reads; it does not write.
 - **XPath 2.0 / 3.1.** Saxon has it. oxml implements 1.0.
-- **The external DTD subset.** Which is what most of oxml's remaining
-  conformance failures need.
+- **Fetching the external DTD subset.** oxml never does I/O; a
+  caller supplies external text through `ExternalSource` or goes
+  without.
 
 ## Choosing
 

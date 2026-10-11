@@ -18,3 +18,4 @@ turned out to be wrong is the useful part.
 | [0005](0005-limits-as-a-value.md) | `Limits` is a value, not a builder | Accepted |
 | [0006](0006-baseline-ratchet.md) | Fail on unreviewed conformance improvement | Accepted |
 | [0007](0007-owned-strings-for-now.md) | Own the strings; borrow later | Accepted |
+| [0008](0008-generational-slots-and-block-relocation.md) | A mutable arena: generational slots and relocating blocks | Accepted; supersedes the "no mutation" consequence of 0001 |

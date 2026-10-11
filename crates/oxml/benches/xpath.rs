@@ -29,6 +29,17 @@ fn document(n: usize) -> String {
     s
 }
 
+/// `n` empty elements under one root.
+fn flat_document(n: usize) -> String {
+    let mut s = String::with_capacity(n * 4 + 8);
+    s.push_str("<r>");
+    for _ in 0..n {
+        s.push_str("<e/>");
+    }
+    s.push_str("</r>");
+    s
+}
+
 fn bench(c: &mut Criterion) {
     let src = document(2000);
     let doc = parse(&src).expect("valid fixture");
@@ -53,6 +64,20 @@ fn bench(c: &mut Criterion) {
     let numeric = XPath::compile("//book[@year>1950]").unwrap();
     let _ = group.bench_function("eval_numeric_predicate", |b| {
         b.iter(|| black_box(numeric.evaluate(&doc)));
+    });
+
+    // `following::` and `preceding::` from every element: 6,001
+    // context nodes on a document of 6,001 elements. A scan of the
+    // arena per context node is quadratic in the document; a walk
+    // of the tree is linear in what it yields.
+    let flat = parse(&flat_document(6_000)).expect("valid fixture");
+    let following = XPath::compile("count(//*/following::*)").unwrap();
+    let _ = group.bench_function("eval_following_from_every_element", |b| {
+        b.iter(|| black_box(following.evaluate(&flat)));
+    });
+    let preceding = XPath::compile("count(//*/preceding::*)").unwrap();
+    let _ = group.bench_function("eval_preceding_from_every_element", |b| {
+        b.iter(|| black_box(preceding.evaluate(&flat)));
     });
     group.finish();
 }

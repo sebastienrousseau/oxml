@@ -47,7 +47,7 @@ in either direction fails the build.
 
 - `#![forbid(unsafe_code)]`, checked by a CI job that greps for the attribute rather than trusting it is still there.
 - 2,557 of 2,557 decided W3C XML Conformance tests pass, with zero panics, gated in CI against a ratcheted baseline that fails on regression *and* on unreviewed improvement.
-- Six `cargo-fuzz` targets run on every pull request: parse, parse_limits, stream, tree_walk, xpath_compile, xpath_eval.
+- Seven `cargo-fuzz` targets run on every pull request with a corpus that persists between runs: parse, parse_limits, stream, tree_walk, mutate, xpath_compile, xpath_eval.
 - Miri runs on every pull request, checking for undefined behaviour the type system cannot rule out.
 - 96.8% line coverage, gated at a 95% floor.
 - Entity expansion is bounded per *document*, not per reference: a per-reference budget still admits quadratic blow-up.

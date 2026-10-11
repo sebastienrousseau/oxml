@@ -139,6 +139,10 @@ fn the_published_conformance_figures_are_current() {
             include_str!("../../doc/CONFORMANCE.md"),
         ),
         ("doc/TESTING.md", include_str!("../../doc/TESTING.md")),
+        // The harness's own README published 93.6% and a 163-failure
+        // table for three releases after the figure reached 100%,
+        // because only the two files above were checked.
+        ("conformance/README.md", include_str!("../README.md")),
     ] {
         assert!(
             text.contains(&headline),

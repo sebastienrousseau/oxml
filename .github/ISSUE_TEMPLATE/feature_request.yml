@@ -1,0 +1,22 @@
+name: Feature request
+description: Something the toolkit should do and does not.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The task, not the API you imagine for it.
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today instead
+  - type: dropdown
+    id: crate
+    attributes:
+      label: Which crate
+      options: [oxml, oxml-cli, oxml-wasm, oxml-mcp, oxml-lsp, xmlschema, not sure]
+    validations:
+      required: true

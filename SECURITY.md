@@ -3,7 +3,8 @@
 ## Supported versions
 
 oxml is pre-1.0. Only the most recent `0.0.x` release receives security
-fixes.
+fixes. The whole suite (oxml, oxml-cli, oxml-wasm, oxml-mcp, oxml-lsp,
+xmlschema) ships at one version, so a fix lands in all of them at once.
 
 ## Reporting a vulnerability
 
@@ -12,31 +13,46 @@ Please report privately, not as a public issue:
 - GitHub's [private vulnerability reporting](https://github.com/sebastienrousseau/oxml/security/advisories/new)
 - or email <sebastian.rousseau@gmail.com>
 
-You should get an acknowledgement within 72 hours.
+You should get an acknowledgement within 72 hours and a fix or a
+written assessment within 90 days. If the report is valid, you will be
+credited in the advisory unless you ask not to be.
 
 ## Threat model
 
-XML parsers have a well-known attack surface, and oxml's design
-forecloses most of it rather than mitigating it:
+The full model, with what is refused, what is bounded and what is
+not protected against, is [doc/SECURITY-MODEL.md](doc/SECURITY-MODEL.md).
+The short version:
 
-**Entity expansion (XXE, billion laughs).** oxml resolves only the five
-predefined entities and numeric character references. External and
-custom entities are *not* resolved — a document declaring
-`<!ENTITY xxe SYSTEM "file:///etc/passwd">` is rejected rather than
-expanded. There is no option to enable it, so there is no way to
-configure the vulnerability back in.
+**Assumed:** the document is hostile. **Not assumed:** the caller is.
 
-**Unbounded recursion.** Deeply nested documents are parsed with
-recursion. Extremely deep input can exhaust the stack; if you parse
-untrusted documents of unbounded depth, run the parse on a thread with
-a known stack size.
+**XXE.** The crate contains no code that opens a file or a socket. An
+external entity is parsed, because the declaration is part of the
+grammar, and expands to nothing unless the caller supplies its text
+through `ExternalSource`. The parser never fetches anything itself.
 
-**Memory safety.** `#![forbid(unsafe_code)]` is enforced at compile
-time, so the class of memory-corruption bugs that has historically
-affected C XML parsers cannot occur here.
+**Entity expansion.** Internal entities are expanded, as XML requires,
+under a per-document byte budget and a nesting ceiling
+(`Limits::max_entity_expansion`, `Limits::max_entity_depth`). A
+billion-laughs document is rejected in microseconds.
+
+**Stack exhaustion.** Nesting depth is bounded by `Limits::max_depth`
+(default 256), chosen against the stack a debug test thread actually
+has. `XPath` expressions are bounded by `Limits::max_xpath_depth` and
+`Limits::max_xpath_operators`.
+
+**Memory and CPU.** Attribute count and size, name length, node count,
+text size, DTD size and parameter-entity expansion are each bounded by
+a field of `Limits`. The defaults accept any document a person would
+write; `Limits::strict()` is for input from the network.
+
+**Memory safety.** `#![forbid(unsafe_code)]`, checked by CI, so the
+memory-corruption bugs of C parsers cannot occur here. Safe Rust does
+not mean bounded Rust, which is why the limits above exist.
 
 ## What is not a vulnerability
 
 - Rejecting a document other parsers accept, when the document is not
-  well-formed. Please still report it — it is a bug, just not a
+  well-formed. Please still report it; it is a bug, just not a
   security one.
+- Running out of memory or time under `Limits::permissive()`. That
+  profile exists for documents you produced yourself.

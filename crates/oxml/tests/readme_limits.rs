@@ -53,6 +53,9 @@ fn actual(limits: &Limits, field: &str) -> String {
         "max_entity_expansion" => limits.max_entity_expansion.to_string(),
         "max_xpath_depth" => limits.max_xpath_depth.to_string(),
         "max_xpath_operators" => limits.max_xpath_operators.to_string(),
+        "max_dtd_bytes" => unbounded(limits.max_dtd_bytes),
+        "max_pe_expansion" => limits.max_pe_expansion.to_string(),
+        "max_construct_bytes" => unbounded(limits.max_construct_bytes),
         other => panic!(
             "the README documents `{other}`, which this test does not know about -- add it here"
         ),

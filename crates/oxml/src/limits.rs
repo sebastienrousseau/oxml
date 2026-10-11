@@ -114,9 +114,13 @@ pub struct Limits {
     /// Default: `524_288`, matching Woodstox's `maxAttributeSize`.
     pub max_attribute_size: usize,
 
-    /// Maximum length in bytes of an element, attribute or PI name.
+    /// Maximum length in bytes of an element, attribute, PI or
+    /// DTD-declared name.
     ///
-    /// Default: 1000, matching the JDK's `maxXMLNameLimit`.
+    /// Default: `8192`. The JDK's `maxXMLNameLimit` is 1000, which
+    /// the W3C suite shows to be too low: `ibm85v01` is a valid
+    /// document whose processing-instruction target enumerates every
+    /// legal `BaseChar` in a single 4,250-byte name.
     pub max_name_length: usize,
 
     /// Maximum number of nodes in the resulting document, if any.
@@ -138,6 +142,11 @@ pub struct Limits {
     /// crate: the CLI takes one from a shell, the MCP server from a
     /// model, the WASM bindings from JavaScript. Compilation is
     /// recursive descent, so `((((…))))` exhausts the stack.
+    ///
+    /// Counts nested parentheses, predicates and function arguments;
+    /// an expression nested more levels than this is a compile error.
+    /// Applied by `XPath::compile_with_limits`; `XPath::compile` uses
+    /// the default.
     ///
     /// Default: `256`.
     pub max_xpath_depth: usize,
@@ -166,8 +175,70 @@ pub struct Limits {
     /// enforces an analogous `xpathTotalOpLimit`; no Rust `XPath`
     /// implementation does.
     ///
+    /// Counts every binary operator, unary minus, location step,
+    /// predicate and function call; one more than this is a compile
+    /// error. Applied by `XPath::compile_with_limits`;
+    /// `XPath::compile` uses the default.
+    ///
     /// Default: `10_000`.
     pub max_xpath_operators: usize,
+
+    /// Maximum total bytes of document type declaration text the DTD
+    /// parser will read, if any.
+    ///
+    /// The internal subset, an external subset the caller supplied,
+    /// and every external parameter entity fetched through
+    /// [`ExternalSource`] all count towards one budget. Declarations
+    /// parse in linear time, so this is a ceiling on memory rather
+    /// than on time: an external source can hand back a subset of any
+    /// size, and nothing else bounds how much of it is held.
+    ///
+    /// `None` means unbounded. Default: `Some(16 MiB)`, which no DTD
+    /// in the W3C conformance suite approaches. Woodstox and the JDK
+    /// have no direct equivalent; the JDK's `totalEntitySizeLimit`
+    /// (50,000,000) is the nearest.
+    ///
+    /// [`ExternalSource`]: crate::external::ExternalSource
+    pub max_dtd_bytes: Option<usize>,
+
+    /// Maximum total bytes of replacement text produced by expanding
+    /// parameter entities in one document.
+    ///
+    /// The parameter-entity form of the billion-laughs bound, charged
+    /// the way [`Limits::max_entity_expansion`] is. Depth alone does
+    /// not catch the width variant: three entities of a hundred
+    /// references each produce ten thousand copies of the innermost
+    /// one from under a kilobyte of declarations, three levels deep.
+    ///
+    /// Default: `10_000_000`, the same as `max_entity_expansion`.
+    pub max_pe_expansion: usize,
+
+    /// Maximum bytes of a single construct the streaming reader will
+    /// buffer while waiting for its end, if any.
+    ///
+    /// [`Reader::from_reader`] and `AsyncReader` keep only the
+    /// construct being read: a start tag up to its `>`, a comment up
+    /// to its `-->`, a run of character data up to the next `<`. The
+    /// scanner is never handed a construct that is not whole, so
+    /// neither [`Limits::max_text_length`] nor
+    /// [`Limits::max_attribute_size`] can fire until the construct is
+    /// complete -- and a source that never closes one would grow the
+    /// buffer without bound. This is the cap on that buffer; a
+    /// construct that exceeds it is refused with
+    /// [`ErrorKind::ConstructTooLarge`].
+    ///
+    /// Only the incremental readers apply it. [`Reader::new`] and
+    /// [`crate::parse`] are handed the whole document, so there is
+    /// nothing left to bound.
+    ///
+    /// `None` means unbounded. Default: `Some(64 MiB)`. Woodstox has
+    /// no equivalent because it reports a text node in pieces; this
+    /// reader reports a run whole so the events match the tree.
+    ///
+    /// [`Reader::from_reader`]: crate::stream::Reader::from_reader
+    /// [`Reader::new`]: crate::stream::Reader::new
+    /// [`ErrorKind::ConstructTooLarge`]: crate::ErrorKind::ConstructTooLarge
+    pub max_construct_bytes: Option<usize>,
 }
 
 impl Default for Limits {
@@ -177,13 +248,16 @@ impl Default for Limits {
             max_depth: 256,
             max_attributes_per_element: 1_000,
             max_attribute_size: 524_288,
-            max_name_length: 1_000,
+            max_name_length: 8_192,
             max_nodes: None,
             max_text_length: None,
             max_entity_depth: 10,
             max_entity_expansion: 10_000_000,
             max_xpath_depth: 256,
             max_xpath_operators: 10_000,
+            max_dtd_bytes: Some(16 * 1024 * 1024),
+            max_pe_expansion: 10_000_000,
+            max_construct_bytes: Some(64 * 1024 * 1024),
         }
     }
 }
@@ -214,6 +288,9 @@ impl Limits {
             max_entity_expansion: 1_000_000_000,
             max_xpath_depth: 1_000,
             max_xpath_operators: 1_000_000,
+            max_dtd_bytes: None,
+            max_pe_expansion: 1_000_000_000,
+            max_construct_bytes: None,
         }
     }
 
@@ -236,6 +313,9 @@ impl Limits {
             max_entity_expansion: 100_000,
             max_xpath_depth: 32,
             max_xpath_operators: 1_000,
+            max_dtd_bytes: Some(64 * 1024),
+            max_pe_expansion: 100_000,
+            max_construct_bytes: Some(1024 * 1024),
         }
     }
 }

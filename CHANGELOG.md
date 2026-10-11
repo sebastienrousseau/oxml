@@ -12,12 +12,146 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ## [0.0.10] - 2026-10-05
 
-### Changed
+### Security
 
+- **`XPath` expressions are bounded.** `Limits::max_xpath_depth` and
+  `Limits::max_xpath_operators` were documented, rendered into the README
+  table, and never read: a 100 KB expression of unary minuses aborted the
+  process inside `XPath::compile`, and a 600 KB `1+1+…` chain aborted during
+  evaluation. `XPath::compile_with_limits` and
+  `compile_with_namespaces_and_limits` apply both; `compile` uses the
+  defaults. Unary minus goes through the depth guard, and left-associative
+  chains are stored flat (`Expr::Chain`) and folded iteratively, so no
+  expression within budget recurses proportionally to its length in parse,
+  evaluate, drop, clone, `Debug` or `PartialEq`. Six tests on a 2 MiB thread.
+- **The entity-validation cache no longer clones the namespace stack per
+  reference.** The key was `(name, Vec<(prefix, uri)>)`, so 20,000 references
+  under 800 in-scope bindings took 711 ms and nothing in `Limits` bounded
+  it. The key is now `(name, scope id)`, where the scope id identifies the
+  binding stack in O(1): 7.7 ms. The DTD, namespace stack and cache are
+  moved into the validating sub-parser and back instead of cloned: 4,000
+  × 2 KB entities went from 2.7 s to 37 ms.
+- **The DTD parser has limits.** `max_name_length` applies to declared
+  names, `max_attribute_size` to `ATTLIST` defaults, the new
+  `max_pe_expansion` to parameter-entity replacement text (a width bomb of
+  100 × 100 × 1 KB is refused in 20 ms) and the new `max_dtd_bytes` to the
+  size of the subsets read. Two new error kinds, `DtdTooLarge` and
+  `ConstructTooLarge`.
+- **The streaming reader bounds what it buffers.** A construct is pulled
+  into memory until it is whole before any scan could apply a limit, so
+  `<a>` followed by an endless stream of text, or `<!--` never closed, grew
+  until memory ran out. The new `max_construct_bytes` (64 MiB by default,
+  1 MiB under `strict()`) fails the read instead, and the reader resumes
+  the delimiter search from a watermark rather than rescanning from the
+  construct start on every 8 KB pull: a 16 MB text node went from 2.7 s
+  to 0.11 s. `max_nodes` is now enforced by the reader at the same offset
+  as the tree parser.
+- **The duplicate-attribute check is no longer quadratic.** Past sixteen
+  attributes the expanded names go into a set, so an element with 1,000
+  attributes parses at 27 MB/s instead of 5 MB/s, the shape of
+  RUSTSEC-2026-0194.
+- **A processing instruction cannot impersonate the XML declaration.** The
+  version, standalone and encoding sniffers accepted anything starting
+  with `<?xml`, so `<?xml-stylesheet href="version='1.1'"?>` switched a
+  document to 1.1 rules and `encoding='iso-8859-1'` inside it transcoded
+  the whole document. One `xml_declaration` finder requires whitespace
+  after `<?xml`.
+- **Arena pre-sizing is capped** by `max_nodes` and a fixed ceiling, so
+  4 MB of `<` bytes no longer reserves 450 MB before the first limit is
+  consulted.
+
+### Added
+
+- **A mutable tree you can trust.** `Document::declare_namespace`,
+  `insert_at`, `set_text`, `append_comment`, `append_pi`, `detach`,
+  `text_content`, `attribute_ns`, `descendants_of`, `nodes`,
+  `document_order`, `order_key`, `is_order_dirty`, `compact`, and
+  `Builder::child_ns`. `write_xml_to` serialises to any `std::io::Write`.
+  `NodeError` gains `NotAContainer`, `NotAChild`, `NotRemovable`,
+  `InvalidName` and `InvalidText`. ADR 0008 records the design.
+- **`Document::range`**: the byte range a parsed element, text node,
+  comment or processing instruction came from, for editors and linters
+  (oxml-lsp). `None` for nodes the mutation API created.
+- **`XPath` 1.0 as specified.** Filter expressions (`(//a)[1]`,
+  `id('x')/b`), variable references (`$x`) through `EvalContext` and
+  `XPath::evaluate_with`, `Display` for `Expr` and `XPath` rendering
+  canonical unabbreviated `XPath`, and a function enum resolved at compile
+  time.
+- **Release engineering.** crates.io Trusted Publishing replaces the
+  stored registry token; the release workflow verifies the tag's signature
+  against `.github/allowed_signers`, requires `doc/release-notes/<ver>.md`,
+  attaches the `.crate`, a CycloneDX SBOM and SHA-256 sums with SLSA
+  provenance, and composes the release page in the family format.
+  `Cargo.lock` is committed and every CI build is `--locked`; the fuzz
+  corpus persists between runs; `cargo-audit`, `cargo-fuzz` and
+  `rust-code-analysis-cli` are installed at pinned versions; a
+  `cargo-semver-checks` report runs on every pull request; `CITATION.cff`,
+  `CODEOWNERS`, issue and pull-request templates and `.compliance.yml`
+  declaring L3.
+- **Complexity ratchet.** `scripts/check-complexity.py` measures every
+  function in `crates/oxml/src` with `rust-code-analysis-cli` against
+  per-function ceilings (cyclomatic 10, cognitive 15, Halstead difficulty
+  30, 60 lines) and compares the offenders with the committed
+  `complexity-baseline.tsv`. CI and `scripts/gate.sh` fail on a new
+  offender or a worse one; `--update` can only record improvements. The
+  backlog went from 65 functions to under 60 in this release.
 - **Ecosystem release cycle v0.0.10.** Begin next iteration cycle across the
   entire lockstep suite.
+
+### Changed
+
+- **`XPath` predicates apply per context node.** `//a[1]` returns the
+  first `a` child of every parent, as XPath 1.0 §2.4 requires; it used to
+  return one node. Reverse axes count proximity position from the context
+  node. `<`, `<=`, `>`, `>=` and `!=` on node-sets are existential.
+  `number()` follows the XPath grammar (`1e5`, `+1`, `Infinity` are NaN),
+  `sum()` is NaN when any node is not a number, numeric equality is IEEE
+  equality, `round()` handles 0.49999999999999994 and negative zero,
+  `normalize-space()` splits only on XML whitespace. `following::` and
+  `preceding::` are tree walks instead of arena scans. Node-sets follow
+  document order after a document is mutated.
+- **`Expr` has new variants** (`Chain`, `Filter`, `PathFrom`, `Variable`).
+  Code matching on `Expr` exhaustively needs new arms.
+- **The mutation API validates its input.** A child appended to a text
+  node, a second element under the document root, an invalid name, text
+  with a character XML forbids, and removing the document root are errors.
+  Namespaced names created through the API are declared on serialisation.
+  Appending children is amortised O(1) in retained memory (10,000 children
+  retained 538 MB, now 1.1 MB); replacing an attribute value no longer
+  retains every previous value. `Document::len` counts live nodes.
+- **The serialiser declares XML 1.1 only when it must.** A 1.0 document
+  containing U+0080..U+009F literally was re-emitted as `version="1.1"`,
+  which 1.0-only consumers reject; those characters are now written as
+  references under 1.0, and only C0 controls trigger 1.1.
+- **`Limits::max_name_length` default is 8,192** (was 1,000): the W3C
+  suite's `ibm85v01` and `ibm87v01` carry a processing-instruction target
+  that enumerates every legal character, and the limit now applies inside
+  the DTD too.
+- **Duplicate namespace declarations are rejected.** `<a xmlns:p="u1"
+  xmlns:p="u2"/>` and `<a xmlns="u1" xmlns="u2"/>` violate `WFC: Unique
+  Att Spec` and were accepted with the last declaration winning.
 - **Documentation migration.** Migrated website and rendered manual to
   `oxmllib.com` (`oxmllib.github.io`) using the Lucid SSG theme.
+- **Documentation corrected.** The docs.rs crate doc said custom entities
+  are never expanded; `SECURITY.md` said XXE declarations are rejected and
+  recommended a bigger stack instead of `max_depth`; the README said
+  serialisation and mutation did not exist and listed the five shipped
+  satellites as planned; `conformance/README.md` published 93.6% and a
+  163-failure table three releases after the figure reached 100%, and is
+  now covered by the drift test. All rewritten from the code.
+
+### Fixed
+
+- `remove(attribute)` followed by `remove(element)` freed the attribute's
+  slot twice; the next allocation returned a `NodeId` that did not resolve
+  and the node vanished from `to_xml()`. Slots are freed once and only by
+  the path that unlinks them.
+- Namespace nodes of a removed element were never freed.
+- `set_attribute` and `remove_attribute` compared attribute ids, so two
+  prefixes bound to one namespace produced a duplicate the parser then
+  rejected. Attributes are compared by expanded name.
+- `document_order` and XPath node-set order were arena order, which is
+  wrong after `reparent` or a recycled slot.
 
 ## [0.0.9] - 2026-10-04
 
@@ -30,7 +164,7 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 - **Asynchronous streaming reader.** `oxml::stream::AsyncReader<R>`
   delivers non-blocking event-based streaming from any
   `tokio::io::AsyncBufRead` under optional feature `async`.
-- **Diagnostic telemetry tracing.** OpenTelemetry/Tokio `tracing` spans
+- **Diagnostic telemetry tracing.** `tracing` spans
   instrument parsing, XPath evaluation, serialization, and streaming
   under optional feature `tracing`.
 - **Benchmarks and examples.** Added benchmark suites for arena
@@ -41,8 +175,8 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 - **Chunked safe delimiter scanning (SWAR).** 8-byte chunk scanning
   accelerates character data and attribute value scanning without unsafe
-  code, more than doubling streaming event throughput (+149% vs
-  `quick-xml` benchmark).
+  code, more than doubling streaming event throughput in the crate's
+  own `throughput` benchmark on the recording machine.
 - **Scope-aware entity memoization.** Caches validated entity
   replacement markup by entity name and active namespace scope to
   eliminate repeated throwaway tree parsing across thousands of

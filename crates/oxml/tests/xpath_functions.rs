@@ -18,16 +18,27 @@ const DOC: &str = "\
 <empty/>\
 </r>";
 
+/// Compile `expr` with `m` bound, checking on the way that `Display`
+/// round-trips it under the same binding.
+///
+/// `m` is bound for every expression here, because a prefix in an
+/// expression resolves against the expression's own bindings and
+/// not the document's declarations -- an unbound one is a compile
+/// error rather than a match on the local part alone.
+fn compile(expr: &str) -> XPath {
+    let ns = &[("m", "urn:m")];
+    let compiled = XPath::compile_with_namespaces(expr, ns)
+        .unwrap_or_else(|e| panic!("`{expr}` failed to compile: {e}"));
+    let rendered = compiled.to_string();
+    let again = XPath::compile_with_namespaces(&rendered, ns)
+        .unwrap_or_else(|e| panic!("`{expr}` rendered as `{rendered}`: {e}"));
+    assert_eq!(again, compiled, "`{expr}` rendered as `{rendered}`");
+    compiled
+}
+
 fn val(expr: &str) -> String {
-    // `m` is bound for every expression here, because a prefix in an
-    // expression resolves against the expression's own bindings and
-    // not the document's declarations -- an unbound one is a compile
-    // error rather than a match on the local part alone.
     let doc = parse(DOC).expect("well-formed");
-    XPath::compile_with_namespaces(expr, &[("m", "urn:m")])
-        .unwrap_or_else(|e| panic!("`{expr}` failed to compile: {e}"))
-        .evaluate(&doc)
-        .to_str(&doc)
+    compile(expr).evaluate(&doc).to_str(&doc)
 }
 
 #[test]
@@ -342,10 +353,7 @@ const DTD_DOC: &str = "\
 
 fn dtd_val(expr: &str) -> String {
     let doc = parse(DTD_DOC).expect("well-formed");
-    XPath::compile_with_namespaces(expr, &[("m", "urn:m")])
-        .unwrap_or_else(|e| panic!("`{expr}` failed to compile: {e}"))
-        .evaluate(&doc)
-        .to_str(&doc)
+    compile(expr).evaluate(&doc).to_str(&doc)
 }
 
 /// Every function `XPath` 1.0 defines, exercised once.

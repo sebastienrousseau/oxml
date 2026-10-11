@@ -29,7 +29,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut items = 0usize;
     while let Some(event) = reader.next_event()? {
         match event {
-            Event::StartElement { name, attributes } => {
+            Event::StartElement {
+                name, attributes, ..
+            } => {
                 let attrs: Vec<String> = attributes
                     .iter()
                     .map(|(n, v)| format!(" {}={v:?}", n.local))

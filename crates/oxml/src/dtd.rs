@@ -141,6 +141,21 @@ pub(crate) struct Dtd {
     ///
     /// Keyed by the names as *written*, like `id_attributes`.
     pub(crate) tokenized_attributes: BTreeMap<String, Vec<String>>,
+    /// Bytes of parameter-entity replacement text produced so far,
+    /// charged against [`Limits::max_pe_expansion`].
+    ///
+    /// Lives here rather than on the parser because every nested
+    /// parser -- one per referenced entity, one per included section
+    /// -- shares the one `Dtd`, and a budget each would hand a bomb a
+    /// fresh budget per level.
+    ///
+    /// [`Limits::max_pe_expansion`]: crate::Limits::max_pe_expansion
+    pub(crate) pe_spent: usize,
+    /// Bytes of declaration text read so far, charged against
+    /// [`Limits::max_dtd_bytes`].
+    ///
+    /// [`Limits::max_dtd_bytes`]: crate::Limits::max_dtd_bytes
+    pub(crate) bytes_seen: usize,
 }
 
 impl Dtd {
@@ -189,10 +204,13 @@ pub(crate) struct DtdParser<'a> {
     pub(crate) input: &'a str,
     pub(crate) bytes: &'a [u8],
     pub(crate) pos: usize,
-    /// Name rules differ between XML 1.0 editions, and names appear in
-    /// the DTD too — element and attribute declarations, notation
-    /// names, and processing-instruction targets.
-    pub(crate) edition: crate::Edition,
+    /// The bounds in force. The edition is read from here: name rules
+    /// differ between XML 1.0 editions, and names appear in the DTD
+    /// too — element and attribute declarations, notation names, and
+    /// processing-instruction targets. The rest bound what a
+    /// declaration may cost, because the DTD is untrusted input like
+    /// everything else.
+    pub(crate) limits: crate::Limits,
     /// What the caller made available. This parser opens nothing.
     pub(crate) external: &'a dyn crate::external::ExternalSource,
     /// The document's version, for judging an entity's text
@@ -203,22 +221,127 @@ pub(crate) struct DtdParser<'a> {
 /// What went wrong, as an offset and a static reason.
 pub(crate) type DtdError = (usize, &'static str);
 
+/// Reasons for the bounds this parser applies.
+///
+/// A `DtdError` carries a static string, and these are the strings a
+/// limit produces, so that [`error_kind`] can hand the caller the
+/// specific [`ErrorKind`] for the bound rather than a generic
+/// `MalformedDtd` -- a limit the caller cannot tell from malformed
+/// input is a limit they cannot act on.
+///
+/// [`ErrorKind`]: crate::ErrorKind
+pub(crate) const LIMIT_NAME: &str = "a name exceeds the length limit";
+/// See [`LIMIT_NAME`].
+pub(crate) const LIMIT_ATTRIBUTE: &str =
+    "an attribute default exceeds the size limit";
+/// See [`LIMIT_NAME`].
+pub(crate) const LIMIT_PE: &str =
+    "parameter entity expansion exceeds the limit";
+/// See [`LIMIT_NAME`].
+pub(crate) const LIMIT_DTD: &str = "the doctype exceeds the size limit";
+
+/// The [`ErrorKind`] a `DtdError` reason stands for.
+///
+/// Applied by [`Error::new`] to every `MalformedDtd`, so the one place
+/// that turns a `DtdError` into an [`Error`] need not know which
+/// reasons are limits.
+///
+/// [`Error`]: crate::Error
+/// [`Error::new`]: crate::Error::new
+/// [`ErrorKind`]: crate::ErrorKind
+pub(crate) fn error_kind(reason: &'static str) -> crate::ErrorKind {
+    use crate::ErrorKind;
+    match reason {
+        LIMIT_NAME => ErrorKind::NameTooLong,
+        LIMIT_ATTRIBUTE => ErrorKind::AttributeTooLarge,
+        LIMIT_PE => ErrorKind::EntityLimitExceeded,
+        LIMIT_DTD => ErrorKind::DtdTooLarge,
+        other => ErrorKind::MalformedDtd(other),
+    }
+}
+
+/// Add `bytes` to a running total and refuse once it passes `max`.
+fn charge(
+    spent: &mut usize,
+    max: usize,
+    bytes: usize,
+    at: usize,
+    reason: &'static str,
+) -> Result<(), DtdError> {
+    *spent = spent.saturating_add(bytes);
+    if *spent > max {
+        return Err((at, reason));
+    }
+    Ok(())
+}
+
 impl<'a> DtdParser<'a> {
-    pub(crate) const fn new(
+    /// A parser under the caller's bounds.
+    ///
+    /// The edition comes from the bounds too: the two travel together
+    /// in [`Limits`], and a parser applying one document's edition and
+    /// another's budgets would be a mistake.
+    ///
+    /// [`Limits`]: crate::Limits
+    pub(crate) const fn with_limits(
         input: &'a str,
         pos: usize,
-        edition: crate::Edition,
+        limits: &crate::Limits,
     ) -> Self {
         Self {
             input,
             bytes: input.as_bytes(),
             pos,
-            edition,
+            limits: *limits,
             // No source and 1.0 unless told otherwise, so a caller that
             // supplies neither behaves exactly as before.
             external: &crate::external::NoExternal,
             version: crate::parser::Version::V10,
         }
+    }
+
+    /// A parser over `text`, inheriting this one's bounds, source and
+    /// version.
+    ///
+    /// Every nested parse -- a referenced parameter entity, an
+    /// included conditional section, an expanded declaration -- goes
+    /// through here so that none of them silently falls back to the
+    /// defaults.
+    fn nested<'b>(&self, text: &'b str) -> DtdParser<'b>
+    where
+        'a: 'b,
+    {
+        DtdParser {
+            input: text,
+            bytes: text.as_bytes(),
+            pos: 0,
+            limits: self.limits,
+            external: self.external,
+            version: self.version,
+        }
+    }
+
+    /// Charge `bytes` of declaration text against the doctype budget.
+    fn charge_dtd_bytes(
+        &self,
+        dtd: &mut Dtd,
+        bytes: usize,
+        at: usize,
+    ) -> Result<(), DtdError> {
+        let max = self.limits.max_dtd_bytes.unwrap_or(usize::MAX);
+        charge(&mut dtd.bytes_seen, max, bytes, at, LIMIT_DTD)
+    }
+
+    /// Charge `bytes` of replacement text against the parameter-entity
+    /// budget.
+    fn charge_pe(
+        &self,
+        dtd: &mut Dtd,
+        bytes: usize,
+        at: usize,
+    ) -> Result<(), DtdError> {
+        let max = self.limits.max_pe_expansion;
+        charge(&mut dtd.pe_spent, max, bytes, at, LIMIT_PE)
     }
 
     /// The same parser, able to see what the caller supplied.
@@ -233,14 +356,14 @@ impl<'a> DtdParser<'a> {
     }
 
     fn is_name_start(&self, c: char) -> bool {
-        match self.edition {
+        match self.limits.edition {
             crate::Edition::Fourth => crate::names4e::is_name_start_4e(c),
             _ => crate::parser::is_name_start(c),
         }
     }
 
     fn is_name_char(&self, c: char) -> bool {
-        match self.edition {
+        match self.limits.edition {
             crate::Edition::Fourth => crate::names4e::is_name_char_4e(c),
             _ => crate::parser::is_name_char(c),
         }
@@ -280,21 +403,32 @@ impl<'a> DtdParser<'a> {
     /// An XML Name, by the same rules the element parser uses.
     fn name(&mut self) -> Result<&'a str, DtdError> {
         let start = self.pos;
-        let rest = &self.input[self.pos..];
-        let mut chars = rest.char_indices();
-        match chars.next() {
-            Some((_, c)) if self.is_name_start(c) => {}
-            _ => return Err((start, "expected a name")),
-        }
-        let mut end = rest.len();
-        for (i, c) in rest.char_indices() {
-            if !self.is_name_char(c) {
-                end = i;
-                break;
-            }
+        let rest = &self.input[start..];
+        let Some(end) = self.name_end(rest) else {
+            return Err((start, "expected a name"));
+        };
+        // The same bound the element parser applies to the names it
+        // reads, so a name the body may not use cannot be declared.
+        if end > self.limits.max_name_length {
+            return Err((start, LIMIT_NAME));
         }
         self.pos = start + end;
         Ok(&rest[..end])
+    }
+
+    /// Where the name beginning `rest` ends, or `None` if no name
+    /// begins there.
+    fn name_end(&self, rest: &str) -> Option<usize> {
+        let mut chars = rest.char_indices();
+        let (_, first) = chars.next()?;
+        if !self.is_name_start(first) {
+            return None;
+        }
+        Some(
+            chars
+                .find(|&(_, c)| !self.is_name_char(c))
+                .map_or(rest.len(), |(i, _)| i),
+        )
     }
 
     /// A quoted string, returning its contents.
@@ -455,35 +589,11 @@ impl<'a> DtdParser<'a> {
         dtd: &mut Dtd,
         depth: usize,
     ) -> Result<(), DtdError> {
-        self.skip_ws();
-        // The keyword may arrive through a parameter entity:
-        // `<![%MAYBE;[ … ]]>` is how the suite tests both branches from
-        // one document.
-        // Whether the entity supplied the `[` as well as the keyword.
-        let (keyword, bracket_from_entity) = if self.peek() == Some(b'%') {
-            self.pos += 1;
-            let name = self.name()?.to_owned();
-            self.expect(b';', "unterminated parameter entity reference")?;
-            // Unknown: the section's fate is undecidable, so treat it
-            // as ignored and record that we did not read it.
-            let Some(text) = Self::parameter_text(dtd, &name, self.pos)? else {
-                dtd.incomplete = true;
-                return self.skip_conditional_section();
-            };
-            let text = text.trim();
-            // A parameter entity is replacement *text*, not a token, so
-            // it may carry the opening bracket with it:
-            // `<!ENTITY % e "INCLUDE[">` used as `<![ %e; … ]]>` is in
-            // the suite and is legal. Requiring a `[` after the
-            // reference rejected it.
-            match text.strip_suffix('[') {
-                Some(keyword) => (keyword.trim().to_owned(), true),
-                None => (text.to_owned(), false),
-            }
-        } else {
-            (self.name()?.to_owned(), false)
+        let Some((keyword, bracket_from_entity)) =
+            self.conditional_keyword(dtd)?
+        else {
+            return Ok(());
         };
-
         if !bracket_from_entity {
             self.skip_ws();
             self.expect(b'[', "expected `[` in a conditional section")?;
@@ -496,15 +606,50 @@ impl<'a> DtdParser<'a> {
         match keyword.as_str() {
             "IGNORE" => Ok(()),
             "INCLUDE" => {
-                let mut sub = DtdParser::new(body, 0, self.edition)
-                    .with_external(self.external, self.version);
-                sub.parse_subset_decls(dtd, None, depth + 1)
+                self.nested(body).parse_subset_decls(dtd, None, depth + 1)
             }
             _ => Err((
                 body_start,
                 "a conditional section must say INCLUDE or IGNORE",
             )),
         }
+    }
+
+    /// The keyword of a conditional section, and whether the `[` after
+    /// it came along with it.
+    ///
+    /// The keyword may arrive through a parameter entity:
+    /// `<![%MAYBE;[ … ]]>` is how the suite tests both branches from
+    /// one document. A parameter entity is replacement *text*, not a
+    /// token, so it may carry the opening bracket with it:
+    /// `<!ENTITY % e "INCLUDE[">` used as `<![ %e; … ]]>` is in the
+    /// suite and is legal. Requiring a `[` after the reference
+    /// rejected it.
+    ///
+    /// `None` when the entity is unknown: the section's fate is
+    /// undecidable, so it has been skipped as ignored and recorded as
+    /// unread.
+    fn conditional_keyword(
+        &mut self,
+        dtd: &mut Dtd,
+    ) -> Result<Option<(String, bool)>, DtdError> {
+        self.skip_ws();
+        if self.peek() != Some(b'%') {
+            return Ok(Some((self.name()?.to_owned(), false)));
+        }
+        self.pos += 1;
+        let name = self.name()?.to_owned();
+        self.expect(b';', "unterminated parameter entity reference")?;
+        let Some(text) = self.parameter_text(dtd, &name, self.pos)? else {
+            dtd.incomplete = true;
+            self.skip_conditional_section()?;
+            return Ok(None);
+        };
+        let text = text.trim();
+        Ok(Some(match text.strip_suffix('[') {
+            Some(keyword) => (keyword.trim().to_owned(), true),
+            None => (text.to_owned(), false),
+        }))
     }
 
     /// Skip a conditional section, counting nested `<![` and `]]>`.
@@ -550,93 +695,115 @@ impl<'a> DtdParser<'a> {
     ) -> Result<(), DtdError> {
         loop {
             self.skip_ws();
+            let start = self.pos;
             match self.peek() {
                 None if terminator.is_none() => return Ok(()),
                 None => return Err((self.pos, "unterminated internal subset")),
                 Some(b) if Some(b) == terminator => return Ok(()),
-                // A parameter-entity reference can expand to anything,
-                // including further declarations, so once one appears
-                // the subset is no longer fully known to us.
-                Some(b'%') => {
-                    self.pos += 1;
-                    let name = self.name()?.to_owned();
-                    self.expect(
-                        b';',
-                        "unterminated parameter entity reference",
-                    )?;
-                    dtd.external_seen = true;
-                    // The replacement text of a known parameter entity
-                    // is `extSubsetDecl` in its own right, so it is
-                    // parsed as one. Only an entity we do not have
-                    // leaves the subset incomplete.
-                    match Self::parameter_text(dtd, &name, self.pos)? {
-                        Some(text) if depth < MAX_PE_DEPTH => {
-                            let mut sub =
-                                DtdParser::new(&text, 0, self.edition)
-                                    .with_external(self.external, self.version);
-                            sub.parse_subset_decls(dtd, None, depth + 1)?;
-                        }
-                        Some(_) => {
-                            return Err((
-                                self.pos,
-                                "parameter entities nested too deeply",
-                            ));
-                        }
-                        None => dtd.incomplete = true,
-                    }
-                }
-                Some(b'<') => {
-                    // A declaration whose text contains a parameter
-                    // entity reference cannot be parsed without
-                    // expanding it, and expansion is not implemented.
-                    // In the external subset that is legal and common
-                    // -- `<!ELEMENT x (a,%choice;,c)>` -- so the
-                    // declaration is skipped as *unknown* rather than
-                    // reported as malformed. Failing here rejected
-                    // valid documents outright.
-                    // A conditional section is not a markup
-                    // declaration, and its keyword arriving through a
-                    // parameter entity is the normal way to write one:
-                    // `<![%MAYBE;[ … ]]>`. Letting it fall into the
-                    // branch below sent it down a path that reports an
-                    // unparseable declaration as merely *incomplete*,
-                    // so a section saying `CDATA` where only INCLUDE or
-                    // IGNORE is legal was accepted in silence.
-                    // `parse_conditional_section` resolves the keyword
-                    // itself and rejects the ones that are not
-                    // keywords.
-                    if terminator.is_none() && self.starts_with("<![") {
-                        self.pos += 3;
-                        self.parse_conditional_section(dtd, depth)?;
-                    } else if terminator.is_none() && self.decl_uses_pe() {
-                        let start = self.pos;
-                        self.skip_decl();
-                        let raw = &self.input[start..self.pos];
-                        // Expand what we know and parse the result. A
-                        // reference we cannot resolve leaves the
-                        // declaration unparsed, as before -- better an
-                        // unchecked constraint than a rejected document.
-                        match expand_pes(raw, dtd, depth) {
-                            Some(expanded) => {
-                                let mut sub =
-                                    DtdParser::new(&expanded, 0, self.edition)
-                                        .with_external(
-                                            self.external,
-                                            self.version,
-                                        );
-                                if sub.parse_markup_decl(dtd, depth).is_err() {
-                                    dtd.incomplete = true;
-                                }
-                            }
-                            None => dtd.incomplete = true,
-                        }
-                    } else {
-                        self.parse_markup_decl(dtd, depth)?;
-                    }
-                }
+                Some(b'%') => self.subset_pe_reference(dtd, depth)?,
+                Some(b'<') => self.subset_markup(dtd, terminator, depth)?,
                 _ => return Err((self.pos, "expected a markup declaration")),
             }
+            // Only the outermost loop reads declaration text from the
+            // document or an external subset; a nested one reads
+            // replacement text, which the parameter-entity budget has
+            // already paid for.
+            if depth == 0 {
+                self.charge_dtd_bytes(dtd, self.pos - start, start)?;
+            }
         }
+    }
+
+    /// A parameter-entity reference between declarations.
+    ///
+    /// A parameter-entity reference can expand to anything, including
+    /// further declarations, so once one appears the subset is no
+    /// longer fully known to us.
+    fn subset_pe_reference(
+        &mut self,
+        dtd: &mut Dtd,
+        depth: usize,
+    ) -> Result<(), DtdError> {
+        self.pos += 1;
+        let name = self.name()?.to_owned();
+        self.expect(b';', "unterminated parameter entity reference")?;
+        dtd.external_seen = true;
+        // The replacement text of a known parameter entity is
+        // `extSubsetDecl` in its own right, so it is parsed as one.
+        // Only an entity we do not have leaves the subset incomplete.
+        match self.parameter_text(dtd, &name, self.pos)? {
+            Some(text) if depth < MAX_PE_DEPTH => {
+                self.nested(&text).parse_subset_decls(dtd, None, depth + 1)
+            }
+            Some(_) => Err((self.pos, "parameter entities nested too deeply")),
+            None => {
+                dtd.incomplete = true;
+                Ok(())
+            }
+        }
+    }
+
+    /// Something beginning `<` between declarations: a conditional
+    /// section, a declaration that references a parameter entity, or
+    /// a plain markup declaration.
+    ///
+    /// A conditional section is not a markup declaration, and its
+    /// keyword arriving through a parameter entity is the normal way
+    /// to write one: `<![%MAYBE;[ … ]]>`. Letting it fall into the
+    /// branch below sent it down a path that reports an unparseable
+    /// declaration as merely *incomplete*, so a section saying `CDATA`
+    /// where only INCLUDE or IGNORE is legal was accepted in silence.
+    /// `parse_conditional_section` resolves the keyword itself and
+    /// rejects the ones that are not keywords.
+    fn subset_markup(
+        &mut self,
+        dtd: &mut Dtd,
+        terminator: Option<u8>,
+        depth: usize,
+    ) -> Result<(), DtdError> {
+        if terminator.is_none() && self.starts_with("<![") {
+            self.pos += 3;
+            return self.parse_conditional_section(dtd, depth);
+        }
+        if terminator.is_some() || !self.decl_uses_pe() {
+            return self.parse_markup_decl(dtd, depth);
+        }
+        self.expanded_markup_decl(dtd, depth)
+    }
+
+    /// A declaration whose text references a parameter entity.
+    ///
+    /// It cannot be parsed without expanding it. In the external
+    /// subset that is legal and common -- `<!ELEMENT x (a,%choice;,c)>`
+    /// -- so what we know is expanded and the result parsed. A
+    /// reference we cannot resolve leaves the declaration unparsed
+    /// rather than reported as malformed: better an unchecked
+    /// constraint than a rejected document.
+    fn expanded_markup_decl(
+        &mut self,
+        dtd: &mut Dtd,
+        depth: usize,
+    ) -> Result<(), DtdError> {
+        let start = self.pos;
+        self.skip_decl();
+        let raw = &self.input[start..self.pos];
+        let mut budget = PeBudget {
+            spent: dtd.pe_spent,
+            max: self.limits.max_pe_expansion,
+            at: start,
+        };
+        let expanded = expand_pes(raw, dtd, depth, &mut budget);
+        dtd.pe_spent = budget.spent;
+        let parsed = match expanded? {
+            Some(text) => {
+                self.nested(&text).parse_markup_decl(dtd, depth).is_ok()
+            }
+            None => false,
+        };
+        if !parsed {
+            dtd.incomplete = true;
+        }
+        Ok(())
     }
 
     fn parse_markup_decl(
@@ -976,7 +1143,7 @@ impl<'a> DtdParser<'a> {
                     self.require_ws()?;
                     let start = self.pos;
                     let text = self.quoted()?;
-                    validate_attribute_default(text, start, dtd)?;
+                    self.validate_attribute_default(text, start, dtd)?;
                     Ok(DefaultDecl::Fixed)
                 }
                 _ => Err((self.pos, "expected #REQUIRED, #IMPLIED or #FIXED")),
@@ -984,8 +1151,30 @@ impl<'a> DtdParser<'a> {
         }
         let start = self.pos;
         let text = self.quoted()?;
-        validate_attribute_default(text, start, dtd)?;
+        self.validate_attribute_default(text, start, dtd)?;
         Ok(DefaultDecl::Value)
+    }
+
+    /// Check an `<!ATTLIST>` default value.
+    ///
+    /// A default is an `AttValue`, and the well-formedness constraints
+    /// that apply to an attribute value in a document apply to it
+    /// here -- at the point of *declaration*, whether or not any
+    /// element ever uses the default. None of them were checked,
+    /// because the value was parsed with `quoted()` and thrown away.
+    /// So does the size bound: a default is an attribute value the
+    /// body never has to spell out.
+    fn validate_attribute_default(
+        &self,
+        text: &str,
+        offset: usize,
+        dtd: &Dtd,
+    ) -> Result<(), DtdError> {
+        if text.len() > self.limits.max_attribute_size {
+            return Err((offset, LIMIT_ATTRIBUTE));
+        }
+        let mut visiting = Vec::new();
+        check_att_value(text, offset, dtd, &mut visiting)
     }
 
     fn parse_entity_decl(&mut self, dtd: &mut Dtd) -> Result<(), DtdError> {
@@ -1084,18 +1273,7 @@ impl<'a> DtdParser<'a> {
             // still applies to every declaration after this one.
             dtd.incomplete = true;
             if let EntityValue::External { system, public } = &value {
-                // Fetched now, judged later. Only the caller can supply
-                // it -- this parser opens nothing -- and a name it does
-                // not know simply stays unresolved.
-                if let Some(content) =
-                    self.external.fetch(system, public.as_deref())
-                {
-                    let resolved = self.text_declaration(content);
-                    let _ = dtd
-                        .parameters_external
-                        .entry(name.to_owned())
-                        .or_insert(resolved);
-                }
+                self.fetch_external_pe(dtd, name, system, public.as_deref())?;
             }
             if let EntityValue::Internal(text) = &value {
                 // Character references in an entity value are expanded
@@ -1116,6 +1294,33 @@ impl<'a> DtdParser<'a> {
         Ok(())
     }
 
+    /// Fetch an external parameter entity's content, if the caller can
+    /// supply it.
+    ///
+    /// Fetched now, judged later. Only the caller can supply it -- this
+    /// parser opens nothing -- and a name it does not know simply
+    /// stays unresolved. What arrives counts against the doctype
+    /// budget before it is held: nothing else bounds what a source
+    /// hands back.
+    fn fetch_external_pe(
+        &self,
+        dtd: &mut Dtd,
+        name: &str,
+        system: &str,
+        public: Option<&str>,
+    ) -> Result<(), DtdError> {
+        let Some(content) = self.external.fetch(system, public) else {
+            return Ok(());
+        };
+        self.charge_dtd_bytes(dtd, content.len(), self.pos)?;
+        let resolved = self.text_declaration(content);
+        let _ = dtd
+            .parameters_external
+            .entry(name.to_owned())
+            .or_insert(resolved);
+        Ok(())
+    }
+
     /// The replacement text of a parameter entity, wherever it lives.
     ///
     /// Internal entities are held as text; external ones were fetched
@@ -1123,19 +1328,28 @@ impl<'a> DtdParser<'a> {
     /// reference, because an entity nothing references need not be
     /// read at all. `None` means the name is unknown or was never
     /// supplied, which leaves the subset incomplete rather than wrong.
+    ///
+    /// Each reference is charged the length of the text it produces,
+    /// as a general entity reference is: a parameter entity referring
+    /// to another a hundred times, three levels deep, is ten thousand
+    /// copies of the innermost from a few hundred bytes, and depth
+    /// alone never notices.
     fn parameter_text(
-        dtd: &Dtd,
+        &self,
+        dtd: &mut Dtd,
         name: &str,
         at: usize,
     ) -> Result<Option<String>, DtdError> {
-        if let Some(text) = dtd.parameters.get(name) {
-            return Ok(Some(text.clone()));
-        }
-        match dtd.parameters_external.get(name) {
-            Some(Ok(body)) => Ok(Some(body.clone())),
-            Some(Err(reason)) => Err((at, reason)),
-            None => Ok(None),
-        }
+        let text = match dtd.parameters.get(name) {
+            Some(text) => text.clone(),
+            None => match dtd.parameters_external.get(name) {
+                Some(Ok(body)) => body.clone(),
+                Some(Err(reason)) => return Err((at, reason)),
+                None => return Ok(None),
+            },
+        };
+        self.charge_pe(dtd, text.len(), at)?;
+        Ok(Some(text))
     }
 
     /// An external parameter entity's content, minus its text
@@ -1258,17 +1472,39 @@ fn next_is_name_start(rest: &[u8]) -> bool {
 /// else.
 const MAX_PE_DEPTH: usize = 40;
 
+/// The parameter-entity budget while one declaration is expanded.
+///
+/// Carried apart from the [`Dtd`] it belongs to because expansion
+/// reads the entity table while it charges, and the two cannot be
+/// borrowed from one struct at once.
+struct PeBudget {
+    /// Bytes produced so far, across the whole document.
+    spent: usize,
+    /// [`Limits::max_pe_expansion`].
+    ///
+    /// [`Limits::max_pe_expansion`]: crate::Limits::max_pe_expansion
+    max: usize,
+    /// Where the declaration being expanded begins, for the error.
+    at: usize,
+}
+
 /// Replace every `%name;` in `text` with its replacement text.
 ///
-/// `None` when a reference names an entity we do not have, or when
+/// `Ok(None)` when a reference names an entity we do not have, or when
 /// expansion nests too deeply -- the caller then leaves the declaration
-/// unparsed rather than guessing at it.
-fn expand_pes(text: &str, dtd: &Dtd, depth: usize) -> Option<String> {
+/// unparsed rather than guessing at it. `Err` only when the budget is
+/// spent: that is not an unknown to shrug at but an attack to refuse.
+fn expand_pes(
+    text: &str,
+    dtd: &Dtd,
+    depth: usize,
+    budget: &mut PeBudget,
+) -> Result<Option<String>, DtdError> {
     if depth >= MAX_PE_DEPTH {
-        return None;
+        return Ok(None);
     }
     if !text.contains('%') {
-        return Some(text.to_owned());
+        return Ok(Some(text.to_owned()));
     }
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -1276,60 +1512,61 @@ fn expand_pes(text: &str, dtd: &Dtd, depth: usize) -> Option<String> {
     while let Some(i) = rest.find(['%', '"', '\'']) {
         let (before, tail) = rest.split_at(i);
         out.push_str(before);
-        let c = tail.chars().next()?;
-        match (quote, c) {
-            // A `%` inside a literal is data, not a reference.
-            (Some(q), _) if c == q => {
-                quote = None;
-                out.push(c);
-                rest = &tail[c.len_utf8()..];
-            }
-            (Some(_), _) => {
-                out.push(c);
-                rest = &tail[c.len_utf8()..];
-            }
-            (None, '"' | '\'') => {
-                quote = Some(c);
-                out.push(c);
-                rest = &tail[c.len_utf8()..];
-            }
-            (None, _) => {
-                let after = &tail[1..];
-                let semi = after.find(';')?;
-                let name = &after[..semi];
-                let value = dtd.parameters.get(name)?;
-                out.push_str(&expand_pes(value, dtd, depth + 1)?);
-                rest = &after[semi + 1..];
-            }
+        let c = tail.chars().next().unwrap_or('%');
+        if quote.is_some() || c != '%' {
+            // A quote opens or closes a literal, and a `%` inside one
+            // is data, not a reference.
+            quote = toggle_quote(quote, c);
+            out.push(c);
+            rest = &tail[c.len_utf8()..];
+            continue;
         }
+        let Some((value, after)) = pe_reference(&tail[1..], dtd) else {
+            return Ok(None);
+        };
+        charge(
+            &mut budget.spent,
+            budget.max,
+            value.len(),
+            budget.at,
+            LIMIT_PE,
+        )?;
+        let Some(expanded) = expand_pes(value, dtd, depth + 1, budget)? else {
+            return Ok(None);
+        };
+        out.push_str(&expanded);
+        rest = after;
     }
     out.push_str(rest);
-    Some(out)
+    Ok(Some(out))
+}
+
+/// The quote state after seeing `c`: a matching quote closes the
+/// literal, any quote opens one, anything else changes nothing.
+fn toggle_quote(quote: Option<char>, c: char) -> Option<char> {
+    match quote {
+        Some(q) if q == c => None,
+        Some(q) => Some(q),
+        None if matches!(c, '"' | '\'') => Some(c),
+        None => None,
+    }
+}
+
+/// Resolve the `name;` of a reference: its replacement text and what
+/// follows the `;`, or `None` for a reference we cannot resolve.
+fn pe_reference<'d>(
+    after: &'d str,
+    dtd: &'d Dtd,
+) -> Option<(&'d str, &'d str)> {
+    let semi = after.find(';')?;
+    let value = dtd.parameters.get(&after[..semi])?;
+    Some((value.as_str(), &after[semi + 1..]))
 }
 
 /// `PubidChar`, XML 1.0 production 13.
 fn is_pubid_char(c: char) -> bool {
     matches!(c, '\u{20}' | '\u{D}' | '\u{A}' | 'a'..='z' | 'A'..='Z' | '0'..='9')
         || "-'()+,./:=?;!*#@$_%".contains(c)
-}
-
-/// Check an `<!ATTLIST>` default value.
-///
-/// A default is an `AttValue`, and the well-formedness constraints that
-/// apply to an attribute value in a document apply to it here -- at the
-/// point of *declaration*, whether or not any element ever uses the
-/// default. None of them were checked, because the value was parsed
-/// with `quoted()` and thrown away.
-///
-/// `visiting` carries the entity names currently being expanded, so a
-/// cycle is reported rather than followed.
-fn validate_attribute_default(
-    text: &str,
-    offset: usize,
-    dtd: &Dtd,
-) -> Result<(), DtdError> {
-    let mut visiting = Vec::new();
-    check_att_value(text, offset, dtd, &mut visiting)
 }
 
 fn check_att_value<'n>(
@@ -1497,4 +1734,177 @@ fn validate_entity_value(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ErrorKind, Limits};
+    use alloc::format;
+
+    /// Parse `doc` as a doctype under `limits`, keeping the reason.
+    fn doctype(doc: &str, limits: &Limits) -> Result<Dtd, DtdError> {
+        DtdParser::with_limits(doc, 0, limits).parse_doctype()
+    }
+
+    #[test]
+    fn each_limit_reason_maps_to_the_kind_that_names_the_bound() {
+        assert_eq!(error_kind(LIMIT_NAME), ErrorKind::NameTooLong);
+        assert_eq!(error_kind(LIMIT_ATTRIBUTE), ErrorKind::AttributeTooLarge);
+        assert_eq!(error_kind(LIMIT_PE), ErrorKind::EntityLimitExceeded);
+        assert_eq!(error_kind(LIMIT_DTD), ErrorKind::DtdTooLarge);
+        assert_eq!(
+            error_kind("expected a name"),
+            ErrorKind::MalformedDtd("expected a name")
+        );
+    }
+
+    #[test]
+    fn with_limits_threads_the_name_bound_into_declarations() {
+        let doc = format!("<!DOCTYPE d [<!ELEMENT {} ANY>]>", "n".repeat(300));
+        assert!(doctype(&doc, &Limits::default()).is_ok());
+        let err = doctype(&doc, &Limits::strict()).expect_err("256 cap");
+        assert_eq!(
+            err,
+            (23, LIMIT_NAME),
+            "strict() bounds names at 256 and reports the name's start"
+        );
+    }
+
+    #[test]
+    fn new_applies_the_defaults_with_the_given_edition() {
+        let limits = crate::Limits {
+            edition: crate::Edition::Fourth,
+            ..crate::Limits::default()
+        };
+        let p = DtdParser::with_limits("", 0, &limits);
+        assert_eq!(p.limits.edition, crate::Edition::Fourth);
+        assert_eq!(p.limits.max_name_length, Limits::default().max_name_length);
+    }
+
+    #[test]
+    fn an_attribute_default_is_bounded_by_the_attribute_size() {
+        let doc = format!(
+            "<!DOCTYPE d [<!ATTLIST d a CDATA \"{}\">]>",
+            "v".repeat(9_000)
+        );
+        assert!(doctype(&doc, &Limits::default()).is_ok());
+        let err = doctype(&doc, &Limits::strict()).expect_err("8 KiB cap");
+        assert_eq!(err.1, LIMIT_ATTRIBUTE);
+    }
+
+    #[test]
+    fn a_parameter_entity_referenced_between_declarations_is_charged() {
+        let doc = "<!DOCTYPE d SYSTEM \"s\" [\
+                   <!ENTITY % a \"<!-- forty bytes of comment text here -->\">\
+                   %a;%a;%a;]>";
+        let mut limits = Limits {
+            max_pe_expansion: 100,
+            ..Limits::default()
+        };
+        let err = doctype(doc, &limits).expect_err("three references");
+        assert_eq!(err.1, LIMIT_PE);
+        limits.max_pe_expansion = 200;
+        assert!(doctype(doc, &limits).is_ok());
+    }
+
+    #[test]
+    fn a_parameter_entity_inside_a_declaration_is_charged() {
+        // Legal only in the external subset, which is where expansion
+        // inside a declaration happens.
+        let subset = "<!ENTITY % m \"(#PCDATA)\">\
+                      <!ELEMENT a %m;><!ELEMENT b %m;><!ELEMENT c %m;>";
+        let limits = Limits {
+            max_pe_expansion: 20,
+            ..Limits::default()
+        };
+        let mut dtd = Dtd::default();
+        let err = DtdParser::with_limits(subset, 0, &limits)
+            .parse_external_subset(&mut dtd)
+            .expect_err("three references of nine bytes");
+        assert_eq!(err.1, LIMIT_PE);
+        assert_eq!(dtd.pe_spent, 27, "charged before refusing");
+    }
+
+    #[test]
+    fn the_doctype_budget_counts_declaration_text_once() {
+        let subset = "<!ELEMENT a ANY>".repeat(10);
+        let mut limits = Limits {
+            max_dtd_bytes: Some(subset.len()),
+            ..Limits::default()
+        };
+        let mut dtd = Dtd::default();
+        DtdParser::with_limits(&subset, 0, &limits)
+            .parse_external_subset(&mut dtd)
+            .expect("exactly the budget");
+        assert_eq!(dtd.bytes_seen, subset.len());
+
+        limits.max_dtd_bytes = Some(subset.len() - 1);
+        let err = DtdParser::with_limits(&subset, 0, &limits)
+            .parse_external_subset(&mut Dtd::default())
+            .expect_err("one byte over");
+        assert_eq!(err.1, LIMIT_DTD);
+    }
+
+    #[test]
+    fn an_external_parameter_entity_counts_against_the_doctype_budget() {
+        struct Big;
+        impl crate::external::ExternalSource for Big {
+            fn fetch(&self, _: &str, _: Option<&str>) -> Option<&str> {
+                Some("<!-- an external parameter entity's content -->")
+            }
+        }
+        let doc = "<!DOCTYPE d [<!ENTITY % e SYSTEM \"e\">]>";
+        let limits = Limits {
+            max_dtd_bytes: Some(32),
+            ..Limits::default()
+        };
+        let err = DtdParser::with_limits(doc, 0, &limits)
+            .with_external(&Big, crate::parser::Version::V10)
+            .parse_doctype()
+            .expect_err("fetched content is charged before it is held");
+        assert_eq!(err.1, LIMIT_DTD);
+    }
+
+    #[test]
+    fn expand_pes_charges_every_reference_it_resolves() {
+        let mut dtd = Dtd::default();
+        let _ = dtd.parameters.insert("a".into(), "xxxxxxxxxx".into());
+        let _ = dtd.parameters.insert("b".into(), "%a;%a;%a;".into());
+        let mut budget = PeBudget {
+            spent: 0,
+            max: usize::MAX,
+            at: 0,
+        };
+        let out = expand_pes("<!ELEMENT e (%b;)>", &dtd, 0, &mut budget)
+            .expect("within budget")
+            .expect("all known");
+        assert_eq!(out, format!("<!ELEMENT e ({})>", "x".repeat(30)));
+        // `%b;` is nine bytes, then three `%a;` of ten each.
+        assert_eq!(budget.spent, 9 + 30);
+
+        let mut budget = PeBudget {
+            spent: 0,
+            max: 20,
+            at: 7,
+        };
+        assert_eq!(
+            expand_pes("<!ELEMENT e (%b;)>", &dtd, 0, &mut budget),
+            Err((7, LIMIT_PE))
+        );
+    }
+
+    #[test]
+    fn a_percent_inside_a_literal_is_data() {
+        let dtd = Dtd::default();
+        let mut budget = PeBudget {
+            spent: 0,
+            max: 0,
+            at: 0,
+        };
+        assert_eq!(
+            expand_pes("<!ENTITY x \"50%\">", &dtd, 0, &mut budget),
+            Ok(Some("<!ENTITY x \"50%\">".to_owned()))
+        );
+    }
 }

@@ -103,4 +103,22 @@ fn main() {
         )
         .expect("writing to a String cannot fail");
     assert!(spaced.contains("<host />"), "{spaced}");
+
+    // `write_xml_to` writes bytes into any `std::io::Write` -- a file,
+    // a socket, a `Vec<u8>` -- and is byte-identical to `to_xml_with`
+    // with the same options. The first I/O error is returned as is.
+    let mut bytes = Vec::new();
+    nested
+        .write_xml_to(&mut bytes, &SerialiseOptions::default())
+        .expect("writing to a Vec cannot fail");
+    assert_eq!(bytes, nested.to_xml().into_bytes());
+
+    // The declaration is written only when the content needs XML 1.1:
+    // a C0 control character, which 1.0 cannot express at all. The C1
+    // range is legal in 1.0 and goes out as a reference without one.
+    let plain = oxml::parse("<a>caf\u{85}</a>").expect("well-formed");
+    assert_eq!(plain.to_xml(), "<a>caf&#133;</a>");
+    let control = oxml::parse("<?xml version=\"1.1\"?><a>&#1;</a>")
+        .expect("well-formed in 1.1");
+    assert_eq!(control.to_xml(), "<?xml version=\"1.1\"?><a>&#1;</a>");
 }
