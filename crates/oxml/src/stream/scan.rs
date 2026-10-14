@@ -11,6 +11,7 @@
 //! expansion budget.
 
 use alloc::borrow::{Cow, ToOwned};
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -23,7 +24,11 @@ use crate::{Document, Limits};
 /// Parser state that outlives a single event.
 #[derive(Debug)]
 pub(super) struct Carried {
-    document: Document,
+    /// Boxed, so lending it to a parser for each event moves a
+    /// pointer rather than the whole arena header; `None` only while
+    /// it is lent. Moving it by value, twice per event, cost the
+    /// reader about a fifth of its throughput.
+    document: Option<Box<Document>>,
     namespaces: crate::parser::Namespaces,
     names: alloc::collections::BTreeMap<String, Vec<u32>>,
     version: Version,
@@ -49,7 +54,7 @@ pub(super) struct Carried {
 impl Carried {
     pub(super) fn new(limits: Limits) -> Self {
         Self {
-            document: Document::placeholder(),
+            document: Some(Box::new(Document::placeholder())),
             namespaces: crate::parser::Namespaces::default(),
             names: alloc::collections::BTreeMap::new(),
             version: Version::V10,
@@ -80,10 +85,10 @@ impl Carried {
             input: text,
             bytes: text.as_bytes(),
             pos,
-            doc: core::mem::replace(
-                &mut self.document,
-                Document::placeholder(),
-            ),
+            doc: self
+                .document
+                .take()
+                .unwrap_or_else(|| Box::new(Document::placeholder())),
             name_index: core::mem::take(&mut self.names),
             external,
             ns: core::mem::take(&mut self.namespaces),
@@ -99,15 +104,14 @@ impl Carried {
     }
 
     /// Take the state back from a parser [`Self::lend`] made.
-    fn reclaim(&mut self, mut parser: Parser<'_>) {
+    fn reclaim(&mut self, parser: Parser<'_>) {
         self.depth = parser.depth;
-        self.document =
-            core::mem::replace(&mut parser.doc, Document::placeholder());
-        self.names = core::mem::take(&mut parser.name_index);
-        self.namespaces = core::mem::take(&mut parser.ns);
-        self.dtd = parser.dtd.take();
+        self.document = Some(parser.doc);
+        self.names = parser.name_index;
+        self.namespaces = parser.ns;
+        self.dtd = parser.dtd;
         self.entity_budget = parser.entity_budget;
-        self.entity_cache = core::mem::take(&mut parser.entity_cache);
+        self.entity_cache = parser.entity_cache;
     }
 }
 
@@ -266,6 +270,13 @@ pub(super) fn skip_eventless<'a>(
     cursor: &mut Cursor,
     external: &'a dyn crate::external::ExternalSource,
 ) -> Result<bool> {
+    // Inside the root element nothing is eventless, and this is asked
+    // before every event. Answering before a parser is lent saves a
+    // lend and reclaim per event, which cost the reader about half its
+    // throughput. The same answer `eventless_step` gives.
+    if cursor.started && !cursor.open.is_empty() {
+        return Ok(false);
+    }
     with_parser(text, carried, cursor, external, eventless_step)
 }
 

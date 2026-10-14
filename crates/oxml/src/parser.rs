@@ -9,6 +9,7 @@
 //! tree is built directly as the scan proceeds.
 
 use alloc::borrow::{Cow, ToOwned};
+use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -225,7 +226,9 @@ pub(crate) struct Parser<'a> {
     pub(crate) input: &'a str,
     pub(crate) bytes: &'a [u8],
     pub(crate) pos: usize,
-    pub(crate) doc: Document,
+    /// Boxed so the streaming reader can lend it to a parser per event
+    /// by moving a pointer.
+    pub(crate) doc: Box<Document>,
     pub(crate) ns: Namespaces,
     /// How many elements are currently open. Bounded by
     /// [`Limits::max_depth`] so the recursion cannot exhaust the stack.
@@ -702,7 +705,7 @@ fn parse_normalized(
         // processing instruction begins with `<`, and text nodes are
         // bounded by them. Counting runs at memory speed; the
         // reallocate-and-copy it avoids does not.
-        doc: Document::with_capacity(arena_capacity(input, &limits)),
+        doc: Box::new(Document::with_capacity(arena_capacity(input, &limits))),
         name_index: alloc::collections::BTreeMap::new(),
         external,
         ns: Namespaces::default(),
@@ -716,7 +719,7 @@ fn parse_normalized(
         entity_cache: BTreeSet::new(),
     };
     p.parse_document()?;
-    Ok(p.doc)
+    Ok(*p.doc)
 }
 
 type ResolvedAttributes = (Vec<(NameId, Chars)>, Vec<String>);
@@ -1627,7 +1630,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             // Thrown away: only whether it parses matters, so the
             // ranges it records point nowhere and are never read.
-            doc: Document::with_capacity(0),
+            doc: Box::new(Document::with_capacity(0)),
             ns: core::mem::take(&mut self.ns),
             depth: self.depth,
             limits: self.limits,
