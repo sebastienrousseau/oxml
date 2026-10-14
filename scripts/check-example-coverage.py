@@ -17,18 +17,31 @@ a function in a comment does not count.
 
 import json
 import pathlib
-import re
 import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "crates" / "oxml" / "src"
-MANIFEST = ROOT / "crates" / "oxml" / "Cargo.toml"
 
 
-def examples() -> list[str]:
-    text = MANIFEST.read_text()
-    return re.findall(r'^\[\[example\]\]\nname = "([^"]+)"', text, re.M)
+def examples() -> list[tuple[str, list[str]]]:
+    """Every declared example with the features it requires.
+
+    The features come from `required-features`, read through
+    `cargo metadata` so they cannot drift from Cargo.toml: without them
+    cargo refuses to build an example such as `stream_async`, which
+    needs `async`, and the whole check fails before measuring anything.
+    """
+    meta = json.loads(
+        run("cargo", "metadata", "--no-deps", "--format-version", "1")
+    )
+    return [
+        (t["name"], t.get("required-features", []))
+        for p in meta["packages"]
+        if p["name"] == "oxml"
+        for t in p["targets"]
+        if t["kind"] == ["example"]
+    ]
 
 
 
@@ -77,10 +90,11 @@ def main() -> int:
     print(f"running {len(names)} examples under instrumentation")
 
     run("cargo", "llvm-cov", "clean", "--workspace")
-    for name in names:
+    for name, features in names:
         run(
             "cargo", "llvm-cov", "--no-report", "run",
             "-q", "-p", "oxml", "--example", name,
+            "--features", ",".join(features),
         )
     report = run("cargo", "llvm-cov", "report", "--json")
 

@@ -219,12 +219,21 @@ jobs:
         with:
           toolchain: 1.98.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # Each example runs with the features its `required-features`
+      # names, read from Cargo metadata so the list cannot drift from
+      # Cargo.toml. A bare `cargo run --example` refuses any example
+      # that needs a non-default feature, such as `async` or `tracing`.
       - name: Every example must run
         run: |
+          meta="$(cargo metadata --no-deps --format-version 1 --locked)"
           for f in crates/oxml/examples/*.rs; do
             name=$(basename "$f" .rs)
-            echo "--- $name ---"
-            cargo run --example "$name"
+            feats="$(jq -r --arg n "$name" '.packages[]
+              | select(.name == "oxml") | .targets[]
+              | select(.kind == ["example"] and .name == $n)
+              | (."required-features" // []) | join(",")' <<< "$meta")"
+            echo "--- $name (features: ${feats:-default}) ---"
+            cargo run --locked -p oxml --example "$name" --features "$feats"
           done
 
   coverage:
