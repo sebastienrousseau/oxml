@@ -143,15 +143,30 @@ impl Document {
     /// The corpus found the unbinding case after the first was fixed,
     /// which is the argument for running a property over 1,910 real
     /// documents rather than over the cases one thinks of.
+    ///
+    /// A namespace URI is written as an attribute value too, whether
+    /// declared or given only in a name, so a control character in one
+    /// needs 1.1 as much as one in a value does.
     fn needs_xml_11(&self) -> bool {
         self.nodes().any(|id| match self.kind(id) {
             Some(NodeKind::Text(t)) => t.chars().any(is_c0_control),
-            Some(NodeKind::Attr(a)) => a.value.chars().any(is_c0_control),
+            Some(NodeKind::Attr(a)) => {
+                a.value.chars().any(is_c0_control) || self.c0_in_uri(a.name)
+            }
+            Some(NodeKind::Element { name, .. }) => self.c0_in_uri(name),
             Some(NodeKind::Namespace { prefix, uri }) => {
-                !prefix.is_empty() && uri.is_empty()
+                (!prefix.is_empty() && uri.is_empty())
+                    || uri.chars().any(is_c0_control)
             }
             _ => false,
         })
+    }
+
+    /// Whether the namespace URI of `name` holds a C0 control.
+    fn c0_in_uri(&self, name: crate::tree::NameId) -> bool {
+        self.name(name)
+            .and_then(|n| n.namespace.as_deref())
+            .is_some_and(|uri| uri.chars().any(is_c0_control))
     }
 
     /// The document as XML, formatted according to `options`.

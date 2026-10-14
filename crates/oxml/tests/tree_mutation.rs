@@ -245,6 +245,31 @@ fn text_must_be_xml_characters() {
     assert!(doc.to_xml().starts_with("<?xml version=\"1.1\"?>"));
 }
 
+#[test]
+fn a_control_character_in_a_namespace_uri_is_written_as_xml_11() {
+    // Found by the mutate fuzz target: `declare_namespace` accepted the
+    // URI, and the serialiser wrote `xmlns:r="&#1;"` with no 1.1
+    // declaration, which no 1.0 parser reads.
+    let (mut doc, top) = built();
+    let _ = doc
+        .declare_namespace(top, Some("r"), "\u{1}")
+        .expect("expressible");
+    assert!(doc.to_xml().starts_with("<?xml version=\"1.1\"?>"));
+    let again = round_trip(&doc);
+    assert_eq!(again.to_xml(), doc.to_xml());
+
+    // The same URI reached through an element's name rather than a
+    // declaration.
+    let mut doc = oxml::tree::Document::empty();
+    let root = doc.root();
+    let _ = doc
+        .append_element(root, Some("urn:\u{1}"), "e")
+        .expect("expressible");
+    assert!(doc.to_xml().starts_with("<?xml version=\"1.1\"?>"));
+    let again = round_trip(&doc);
+    assert_eq!(again.to_xml(), doc.to_xml());
+}
+
 // --- namespaces ---------------------------------------------------------
 
 #[test]
