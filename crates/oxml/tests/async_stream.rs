@@ -84,14 +84,11 @@ async fn async_reader_handles_incremental_chunks() {
         if let Event::StartElement {
             name, attributes, ..
         } = event
+            && name.local == "item"
+            && let Some((_, val)) =
+                attributes.iter().find(|(attr, _)| attr.local == "id")
         {
-            if name.local == "item" {
-                if let Some((_, val)) =
-                    attributes.iter().find(|(attr, _)| attr.local == "id")
-                {
-                    item_ids.push(val.clone());
-                }
-            }
+            item_ids.push(val.clone());
         }
     }
 

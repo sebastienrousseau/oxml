@@ -465,10 +465,10 @@ fn a_document_larger_than_the_buffer_is_read() {
         Reader::from_reader(trickle(doc.as_bytes(), 64)).expect("valid");
     let mut items = 0usize;
     while let Some(event) = reader.next_event().expect("valid") {
-        if let Event::StartElement { name, .. } = event {
-            if name.local == "item" {
-                items += 1;
-            }
+        if let Event::StartElement { name, .. } = event
+            && name.local == "item"
+        {
+            items += 1;
         }
     }
     assert_eq!(

@@ -95,7 +95,7 @@ cd oxml
 cargo test
 ```
 
-**Minimum supported Rust version:** 1.86.0. Raising it is a breaking
+**Minimum supported Rust version:** 1.89.0. Raising it is a breaking
 change and appears in the changelog.
 
 ## Quick Start

@@ -21,7 +21,7 @@ exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.86.0"
+rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
 authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
 repository = "https://github.com/sebastienrousseau/oxml"

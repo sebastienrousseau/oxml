@@ -194,7 +194,7 @@ fn median(values: &[f64]) -> f64 {
     let mut v = values.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).expect("no NaN in a duration"));
     let mid = v.len() / 2;
-    if v.len() % 2 == 0 {
+    if v.len().is_multiple_of(2) {
         f64::midpoint(v[mid - 1], v[mid])
     } else {
         v[mid]

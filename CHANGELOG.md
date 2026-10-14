@@ -10,6 +10,22 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [0.0.11] - Unreleased
+
+### Changed
+
+- **Breaking: the MSRV is now Rust 1.89.0** (was 1.86.0), one floor
+  shared with the maintainer's other Rust crates.
+- **The MSRV job checks its toolchain first.** It already set
+  `RUSTUP_TOOLCHAIN`; it now also asserts `rustc --version` before
+  building.
+- **`as_chunks` replaces two suppressed lints.** The UTF-16 decoder and
+  the conformance SHA-256 used `chunks_exact` under
+  `#[allow(clippy::chunks_exact_to_as_chunks)]` because `as_chunks`
+  (1.88) was above the floor; both now use it.
+- **Lints the new floor enables**: let-chains for nested `if let`s and
+  `is_multiple_of`, applied as clippy suggests. Behaviour is unchanged.
+
 ## [0.0.10] - 2026-10-05
 
 ### Security

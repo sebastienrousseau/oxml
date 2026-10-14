@@ -177,7 +177,7 @@ fn head_text(body: &[u8], encoding: Option<Encoding>) -> Cow<'_, str> {
 }
 
 fn utf16_head(body: &[u8], big_endian: bool) -> String {
-    let units = body.chunks_exact(2).map(|pair| {
+    let units = body.as_chunks::<2>().0.iter().map(|pair| {
         let pair = [pair[0], pair[1]];
         if big_endian {
             u16::from_be_bytes(pair)

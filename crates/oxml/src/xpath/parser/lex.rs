@@ -35,11 +35,11 @@ impl P<'_> {
     pub(super) fn eat_word(&mut self, w: &str) -> bool {
         self.ws();
         let rest = &self.s[self.i..];
-        if let Some(after) = rest.strip_prefix(w) {
-            if after.chars().next().is_none_or(|c| !is_name_char(c)) {
-                self.i += w.len();
-                return true;
-            }
+        if let Some(after) = rest.strip_prefix(w)
+            && after.chars().next().is_none_or(|c| !is_name_char(c))
+        {
+            self.i += w.len();
+            return true;
         }
         false
     }

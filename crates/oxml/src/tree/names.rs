@@ -133,11 +133,11 @@ impl Document {
         if text.is_empty() {
             return Chars::EMPTY;
         }
-        if let Some(i) = self.free_expanded.pop() {
-            if let Some(slot) = self.expanded.get_mut(i as usize) {
-                slot.push_str(text);
-                return Chars::Expanded(i);
-            }
+        if let Some(i) = self.free_expanded.pop()
+            && let Some(slot) = self.expanded.get_mut(i as usize)
+        {
+            slot.push_str(text);
+            return Chars::Expanded(i);
         }
         let id = u32::try_from(self.expanded.len())
             .expect("document exceeds u32::MAX texts");
@@ -151,25 +151,25 @@ impl Document {
     /// Pushing a new entry per replacement retained every old value:
     /// a thousand replacements of a 10 KB value held 10 MB.
     pub(super) fn replace_text(&mut self, old: Chars, text: &str) -> Chars {
-        if let Chars::Expanded(i) = old {
-            if let Some(slot) = self.expanded.get_mut(i as usize) {
-                slot.clear();
-                slot.push_str(text);
-                return old;
-            }
+        if let Chars::Expanded(i) = old
+            && let Some(slot) = self.expanded.get_mut(i as usize)
+        {
+            slot.clear();
+            slot.push_str(text);
+            return old;
         }
         self.store_text(text)
     }
 
     /// Give an expanded-text entry back for reuse.
     pub(super) fn release_chars(&mut self, chars: Chars) {
-        if let Chars::Expanded(i) = chars {
-            if let Some(slot) = self.expanded.get_mut(i as usize) {
-                // A fresh `String` rather than `clear`, which keeps the
-                // capacity: the point is to stop holding the bytes.
-                *slot = String::new();
-                self.free_expanded.push(i);
-            }
+        if let Chars::Expanded(i) = chars
+            && let Some(slot) = self.expanded.get_mut(i as usize)
+        {
+            // A fresh `String` rather than `clear`, which keeps the
+            // capacity: the point is to stop holding the bytes.
+            *slot = String::new();
+            self.free_expanded.push(i);
         }
     }
 

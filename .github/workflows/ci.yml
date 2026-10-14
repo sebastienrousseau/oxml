@@ -155,6 +155,11 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: The MSRV toolchain is the one in use
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+          WANT: ${{ steps.msrv.outputs.version }}
+        run: rustc --version | grep -F "rustc ${WANT} "
       - name: Build at the declared MSRV
         # `rust-toolchain.toml` pins 1.98.0 and would override the MSRV
         # toolchain this job just installed, quietly turning the check

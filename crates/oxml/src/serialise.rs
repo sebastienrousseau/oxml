@@ -427,10 +427,10 @@ impl Document {
         out: &mut W,
     ) -> core::fmt::Result {
         for &ns in self.namespace_nodes(id) {
-            if let Some(NodeKind::Namespace { prefix, uri }) = self.kind(ns) {
-                if prefix != "xml" {
-                    write_declaration(out, prefix, uri)?;
-                }
+            if let Some(NodeKind::Namespace { prefix, uri }) = self.kind(ns)
+                && prefix != "xml"
+            {
+                write_declaration(out, prefix, uri)?;
             }
         }
         Ok(())

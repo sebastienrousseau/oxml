@@ -116,10 +116,10 @@ pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
         return Ok(Cow::Owned(text));
     }
     // A UTF-8 BOM is permitted and is not part of the document.
-    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        if let Ok(text) = core::str::from_utf8(rest) {
-            check_bom_agrees(text, Encoding::Utf8)?;
-        }
+    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF])
+        && let Ok(text) = core::str::from_utf8(rest)
+    {
+        check_bom_agrees(text, Encoding::Utf8)?;
     }
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
 
@@ -234,13 +234,10 @@ fn trim_start(mut b: &[u8]) -> &[u8] {
 /// whole number of code units. Offsets point at the first byte of the
 /// offending unit.
 fn utf16(bytes: &[u8], big_endian: bool) -> Result<String> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(Error::new(ErrorKind::MalformedEncoding, bytes.len() - 1));
     }
-    #[allow(clippy::chunks_exact_to_as_chunks)]
-    // `as_chunks` is unstable on MSRV
-    let units = bytes.chunks_exact(2).map(|pair| {
-        let pair = [pair[0], pair[1]];
+    let units = bytes.as_chunks::<2>().0.iter().map(|&pair| {
         if big_endian {
             u16::from_be_bytes(pair)
         } else {

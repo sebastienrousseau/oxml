@@ -64,11 +64,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // prefix is looked up in the scopes open at that point.
     let mut reader = Reader::new(DOC)?;
     while let Some(event) = reader.next_event()? {
-        if let Event::StartElement { name, .. } = event {
-            if let Some(uri) = name.namespace {
-                println!("{} is in {uri:?}", name.local);
-                break;
-            }
+        if let Event::StartElement { name, .. } = event
+            && let Some(uri) = name.namespace
+        {
+            println!("{} is in {uri:?}", name.local);
+            break;
         }
     }
 

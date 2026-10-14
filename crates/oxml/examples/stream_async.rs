@@ -48,10 +48,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         current_item_sku = Some(sku.clone());
                     }
-                } else if name.local == "title" {
-                    if let Some(sku) = &current_item_sku {
-                        print!("Item [{sku}]: ");
-                    }
+                } else if name.local == "title"
+                    && let Some(sku) = &current_item_sku
+                {
+                    print!("Item [{sku}]: ");
                 }
             }
             Event::Text(text) => {

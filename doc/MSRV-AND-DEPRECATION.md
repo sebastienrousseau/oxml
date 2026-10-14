@@ -13,16 +13,19 @@
 
 ## Minimum supported Rust version
 
-**1.86.0.**
+**1.89.0.**
 
 This is a real floor, not an aspiration: CI builds the whole workspace
-on exactly 1.86.0 on every push, and the build fails if anything in the
+on exactly 1.89.0 on every push, and the build fails if anything in the
 crate needs something newer.
 
-It has held up a change more than once. `slice::as_chunks` is stable
-from a later release, and clippy on the CI toolchain suggests it over
-`chunks_exact`; taking that advice breaks the MSRV build, so the lint
-is suppressed with an explanation rather than obeyed.
+It held up a change more than once. `slice::as_chunks` is stable from
+1.88, and clippy on the CI toolchain suggests it over `chunks_exact`;
+at the 1.86.0 floor taking that advice broke the MSRV build, so the
+lint was suppressed with an explanation rather than obeyed. The raise
+to 1.89.0 in 0.0.11 removed both suppressions: the UTF-16 decoder and
+the conformance SHA-256 now use `as_chunks`. The same raise puts oxml
+on one floor with the maintainer's other Rust crates.
 
 ## How the MSRV is verified
 
@@ -30,7 +33,7 @@ The MSRV job pins the toolchain at the job level:
 
 ```yaml
 env:
-  RUSTUP_TOOLCHAIN: 1.86.0
+  RUSTUP_TOOLCHAIN: 1.89.0
 ```
 
 That is deliberate, and it is there because of a bug. The job installed

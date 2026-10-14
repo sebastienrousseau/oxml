@@ -245,10 +245,10 @@ fn reading_a_large_document_does_not_hold_it() {
     let mut reader = Reader::new(&source).expect("valid");
     let mut items = 0usize;
     while let Some(event) = reader.next_event().expect("valid") {
-        if let Event::StartElement { name, .. } = event {
-            if name.local == "item" {
-                items += 1;
-            }
+        if let Event::StartElement { name, .. } = event
+            && name.local == "item"
+        {
+            items += 1;
         }
     }
     assert_eq!(items, 20_000);
