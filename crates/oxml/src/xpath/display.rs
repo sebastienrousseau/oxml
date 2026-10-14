@@ -79,7 +79,7 @@ impl Render<'_> {
         match e {
             Expr::Binary { op, lhs, rhs } => {
                 f.write_char('(')?;
-                self.expr(lhs, f)?;
+                self.operand(*op, lhs, f)?;
                 self.operator(*op, rhs, f)?;
                 f.write_char(')')
             }
@@ -100,7 +100,10 @@ impl Render<'_> {
         f: &mut Formatter<'_>,
     ) -> fmt::Result {
         f.write_char('(')?;
-        self.expr(first, f)?;
+        match rest.first() {
+            Some((op, _)) => self.operand(*op, first, f)?,
+            None => self.expr(first, f)?,
+        }
         for (op, e) in rest {
             self.operator(*op, e, f)?;
         }
@@ -115,7 +118,25 @@ impl Render<'_> {
         f: &mut Formatter<'_>,
     ) -> fmt::Result {
         write!(f, " {} ", op.symbol())?;
-        self.expr(rhs, f)
+        self.operand(op, rhs, f)
+    }
+
+    /// One operand of `op`. A union's operands are path expressions in
+    /// the grammar and `-` binds more loosely than `|`, so a negation
+    /// there is parenthesised: `-1 | 2` would read back as `-(1 | 2)`.
+    fn operand(
+        &self,
+        op: BinaryOp,
+        e: &Expr,
+        f: &mut Formatter<'_>,
+    ) -> fmt::Result {
+        if matches!(op, BinaryOp::Union) && matches!(e, Expr::Negate(_)) {
+            f.write_char('(')?;
+            self.expr(e, f)?;
+            f.write_char(')')
+        } else {
+            self.expr(e, f)
+        }
     }
 
     fn call(

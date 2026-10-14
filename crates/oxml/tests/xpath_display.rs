@@ -75,6 +75,11 @@ fn operators_are_parenthesised_by_level() {
     assert_eq!(round_trips("--(-3.5)"), "--(-3.5)");
     assert_eq!(round_trips("--(--'3')"), "--(--'3')");
     assert_eq!(round_trips("-(-1)"), "--1");
+    // `-` binds more loosely than `|`, so a negated union operand keeps
+    // its parentheses: `-1.5 | 2` reads back as `-(1.5 | 2)`.
+    assert_eq!(round_trips("(-1.5) | 2"), "((-1.5) | 2)");
+    assert_eq!(round_trips("2 | (-1) | 3"), "(2 | (-1) | 3)");
+    assert_eq!(round_trips("-(1 | 2)"), "-(1 | 2)");
     assert_eq!(round_trips("1 div 2 mod 3"), "(1 div 2 mod 3)");
     assert_eq!(round_trips("1 < 2 <= 3 > 0 >= 0"), "(1 < 2 <= 3 > 0 >= 0)");
     assert_eq!(round_trips("1 = 1 != 0"), "(1 = 1 != 0)");
