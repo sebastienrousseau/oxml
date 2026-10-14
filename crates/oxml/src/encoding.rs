@@ -116,12 +116,13 @@ pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
         return Ok(Cow::Owned(text));
     }
     // A UTF-8 BOM is permitted and is not part of the document.
-    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF])
-        && let Ok(text) = core::str::from_utf8(rest)
-    {
-        check_bom_agrees(text, Encoding::Utf8)?;
-    }
-    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    let bytes = match bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        Some(rest) => {
+            check_utf8_bom(rest)?;
+            rest
+        }
+        None => bytes,
+    };
 
     // UTF-16 without a BOM is still detectable: an XML document must
     // begin with `<`, which in UTF-16 is a NUL-adjacent pair.
@@ -143,6 +144,16 @@ pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
                 Error::new(ErrorKind::MalformedEncoding, e.valid_up_to())
             })
         }
+    }
+}
+
+/// After a UTF-8 BOM, reject a declaration that contradicts it. Bytes
+/// that are not UTF-8 are left for the declared-encoding path to
+/// report.
+fn check_utf8_bom(rest: &[u8]) -> Result<()> {
+    match core::str::from_utf8(rest) {
+        Ok(text) => check_bom_agrees(text, Encoding::Utf8),
+        Err(_) => Ok(()),
     }
 }
 

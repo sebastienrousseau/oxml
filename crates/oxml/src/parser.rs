@@ -831,65 +831,7 @@ impl<'a> Parser<'a> {
                     && let Some(content) =
                         self.external.fetch(&system, public.as_deref())
                 {
-                    let version = entity_version(content, self.version);
-                    let normalized = normalize_line_endings(content, version);
-                    check_text_decl_position(&normalized, self.pos)?;
-                    check_text_decl(&normalized, self.version, self.pos)?;
-                    let body = strip_text_decl(&normalized);
-                    // Judged by **both** versions, and it has to
-                    // be both.
-                    //
-                    // The subset's own version rules it: a DTD
-                    // declaring 1.0 may not contain characters only
-                    // 1.1 allows, which is what carrying a version
-                    // per entity is for. But the including
-                    // document's version rules it too. XML 1.1
-                    // section 4.3.4: a 1.0 external DTD may hold
-                    // `#x7F`, legal in 1.0, and pulling it into a
-                    // document declaring 1.1 puts a character there
-                    // that 1.1 requires to be escaped. Checking
-                    // only the entity's version accepted seven
-                    // documents the suite calls not well-formed.
-                    if let Some((_, c)) = body.char_indices().find(|(_, c)| {
-                        !is_literal_char_for(*c, version)
-                            || !is_literal_char_for(*c, self.version)
-                    }) {
-                        return Err(Error::new(
-                            ErrorKind::IllegalCharacter(c),
-                            self.pos,
-                        ));
-                    }
-                    let mut sub = crate::dtd::DtdParser::with_limits(
-                        body,
-                        0,
-                        &self.limits,
-                    )
-                    .with_external(self.external, version);
-                    // Which names arrive from out here, so that
-                    // `standalone="yes"` can refuse them. Taken as
-                    // a before-and-after rather than threaded
-                    // through the DTD parser: the boundary is
-                    // exactly this call.
-                    let before: alloc::collections::BTreeSet<String> =
-                        dtd.general.keys().cloned().collect();
-                    if let Err((offset, reason)) =
-                        sub.parse_external_subset(&mut dtd)
-                    {
-                        let _ = offset;
-                        return Err(Error::new(
-                            ErrorKind::MalformedDtd(reason),
-                            self.pos,
-                        ));
-                    }
-                    dtd.declared_externally = dtd
-                        .general
-                        .keys()
-                        .filter(|k| !before.contains(*k))
-                        .cloned()
-                        .collect();
-                    // The declarations are now known, so an entity
-                    // that is still missing really is undeclared.
-                    dtd.incomplete = false;
+                    self.read_external_subset(&mut dtd, content)?;
                 }
                 // An external entity is checked when it is
                 // *referenced*, not when it is declared. A processor
@@ -904,6 +846,63 @@ impl<'a> Parser<'a> {
                 Err(Error::new(ErrorKind::MalformedDtd(reason), offset))
             }
         }
+    }
+
+    /// Read the external DTD subset `content` into `dtd`, after the
+    /// internal subset, so the internal declarations keep precedence.
+    fn read_external_subset(
+        &self,
+        dtd: &mut crate::dtd::Dtd,
+        content: &str,
+    ) -> Result<()> {
+        let version = entity_version(content, self.version);
+        let normalized = normalize_line_endings(content, version);
+        check_text_decl_position(&normalized, self.pos)?;
+        check_text_decl(&normalized, self.version, self.pos)?;
+        let body = strip_text_decl(&normalized);
+        // Judged by **both** versions, and it has to
+        // be both.
+        //
+        // The subset's own version rules it: a DTD
+        // declaring 1.0 may not contain characters only
+        // 1.1 allows, which is what carrying a version
+        // per entity is for. But the including
+        // document's version rules it too. XML 1.1
+        // section 4.3.4: a 1.0 external DTD may hold
+        // `#x7F`, legal in 1.0, and pulling it into a
+        // document declaring 1.1 puts a character there
+        // that 1.1 requires to be escaped. Checking
+        // only the entity's version accepted seven
+        // documents the suite calls not well-formed.
+        if let Some((_, c)) = body.char_indices().find(|(_, c)| {
+            !is_literal_char_for(*c, version)
+                || !is_literal_char_for(*c, self.version)
+        }) {
+            return Err(Error::new(ErrorKind::IllegalCharacter(c), self.pos));
+        }
+        let mut sub = crate::dtd::DtdParser::with_limits(body, 0, &self.limits)
+            .with_external(self.external, version);
+        // Which names arrive from out here, so that
+        // `standalone="yes"` can refuse them. Taken as
+        // a before-and-after rather than threaded
+        // through the DTD parser: the boundary is
+        // exactly this call.
+        let before: alloc::collections::BTreeSet<String> =
+            dtd.general.keys().cloned().collect();
+        if let Err((offset, reason)) = sub.parse_external_subset(dtd) {
+            let _ = offset;
+            return Err(Error::new(ErrorKind::MalformedDtd(reason), self.pos));
+        }
+        dtd.declared_externally = dtd
+            .general
+            .keys()
+            .filter(|k| !before.contains(*k))
+            .cloned()
+            .collect();
+        // The declarations are now known, so an entity
+        // that is still missing really is undeclared.
+        dtd.incomplete = false;
+        Ok(())
     }
 
     fn parse_element(&mut self, parent: NodeId) -> Result<()> {
