@@ -68,6 +68,13 @@ fn operators_are_parenthesised_by_level() {
     assert_eq!(round_trips("-1"), "-1");
     assert_eq!(round_trips("--'3'"), "--'3'");
     assert_eq!(round_trips("---1"), "-1");
+    // A parenthesised negation under a pair keeps its parentheses: the
+    // parser folds a run of `-` to one or two negations, so `---3.5`
+    // would read back as a single one. Found by the xpath_compile
+    // fuzz target.
+    assert_eq!(round_trips("--(-3.5)"), "--(-3.5)");
+    assert_eq!(round_trips("--(--'3')"), "--(--'3')");
+    assert_eq!(round_trips("-(-1)"), "--1");
     assert_eq!(round_trips("1 div 2 mod 3"), "(1 div 2 mod 3)");
     assert_eq!(round_trips("1 < 2 <= 3 > 0 >= 0"), "(1 < 2 <= 3 > 0 >= 0)");
     assert_eq!(round_trips("1 = 1 != 0"), "(1 = 1 != 0)");

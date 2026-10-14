@@ -46,16 +46,31 @@ impl Render<'_> {
         match e {
             Expr::Literal(s) => literal(s, f),
             Expr::Number(n) => number(*n, f),
-            Expr::Negate(inner) => {
-                f.write_char('-')?;
-                self.expr(inner, f)
-            }
+            Expr::Negate(inner) => self.negate(inner, f),
             Expr::Variable(name) => {
                 f.write_char('$')?;
                 self.name(name.namespace.as_deref(), &name.local, f)
             }
             Expr::Path { absolute, steps } => self.path(*absolute, steps, f),
             compound => self.compound(compound, f),
+        }
+    }
+
+    /// `-e` or `--e`. The parser reads any run of `-` as one negation
+    /// or a pair of them, so a third one directly beneath a pair is
+    /// parenthesised: `--(-1)`, not `---1`, which reads back as `-1`.
+    fn negate(&self, inner: &Expr, f: &mut Formatter<'_>) -> fmt::Result {
+        let Expr::Negate(operand) = inner else {
+            f.write_char('-')?;
+            return self.expr(inner, f);
+        };
+        f.write_str("--")?;
+        if matches!(**operand, Expr::Negate(_)) {
+            f.write_char('(')?;
+            self.expr(operand, f)?;
+            f.write_char(')')
+        } else {
+            self.expr(operand, f)
         }
     }
 
