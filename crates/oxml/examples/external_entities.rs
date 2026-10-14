@@ -20,6 +20,7 @@
 //! ```
 
 use oxml::external::ExternalSource;
+use oxml::stream::{BorrowedEvent, Core, Event, Reader};
 use oxml::{Limits, parse, parse_with_external};
 
 /// The classic XXE payload. Nothing here can read the file, because
@@ -97,5 +98,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  (an unavailable identifier is not an error — supply the");
     println!("   parts you have and leave the rest)");
 
+    // The streaming reader takes the same source, and resolves the
+    // subset as the tree parser does.
+    println!("\n== streamed, with the same source ==");
+    let mut reader = Reader::new(SPLIT)?.with_external(&source);
+    while let Some(event) = reader.next_event()? {
+        if let Event::Text(text) = event {
+            println!(
+                "  text {text:?}, next construct at byte {}",
+                reader.offset()
+            );
+        }
+    }
+
+    // `Core` is the reader without a byte source: feed it bytes as
+    // they arrive, from whatever transport you have, and ask for the
+    // events they complete.
+    println!("\n== fed by hand to a Core ==");
+    let mut core = Core::new().with_external(&source);
+    let (first, second) = SPLIT.as_bytes().split_at(SPLIT.len() / 2);
+    for chunk in [first, second] {
+        core.feed(chunk)?;
+        print_text(&mut core)?;
+    }
+    core.feed_eof()?;
+    print_text(&mut core)?;
+    println!("  finished at byte {}", core.offset());
+
+    Ok(())
+}
+
+/// Print the text of every event the bytes fed so far complete.
+fn print_text(core: &mut Core<'_>) -> oxml::Result<()> {
+    while let Some(event) = core.next_event()? {
+        if let BorrowedEvent::Text(text) = event {
+            println!("  text {text:?}");
+        }
+    }
     Ok(())
 }

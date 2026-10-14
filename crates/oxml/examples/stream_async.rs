@@ -73,6 +73,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\nSuccessfully streamed {item_count} items with AsyncReader.");
+    println!("Stopped at byte {}.", reader.offset());
+
+    // External entities come from a source you supply, exactly as for
+    // `parse_with_external`; nothing is fetched otherwise.
+    let parts: &[(&str, &str)] = &[("greeting.ent", "hello")];
+    let doc = r#"<!DOCTYPE d [<!ENTITY g SYSTEM "greeting.ent">]><d>&g;</d>"#;
+    let mut reader =
+        AsyncReader::from_reader(std::io::Cursor::new(doc.as_bytes()))
+            .await?
+            .with_external(&parts);
+    while let Some(event) = reader.next_event().await? {
+        if let Event::Text(text) = event {
+            println!("External entity expanded to {text:?}.");
+        }
+    }
     Ok(())
 }
 
