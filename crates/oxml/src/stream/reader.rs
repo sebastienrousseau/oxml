@@ -10,6 +10,8 @@ use crate::error::Result;
 #[cfg(feature = "std")]
 use crate::error::{Error, ErrorKind};
 use crate::external::ExternalSource;
+#[cfg(feature = "std")]
+use std::io;
 
 /// How much a source is asked for at a time.
 ///
@@ -49,10 +51,10 @@ impl Source for Complete {
 }
 
 #[cfg(feature = "std")]
-impl<R: std::io::BufRead> sealed::Sealed for R {}
+impl<R: io::BufRead> sealed::Sealed for R {}
 
 #[cfg(feature = "std")]
-impl<R: std::io::BufRead> Source for R {
+impl<R: io::BufRead> Source for R {
     fn fill(&mut self, core: &mut Core<'_>) -> Result<()> {
         loop {
             let outcome = match self.fill_buf() {
@@ -64,7 +66,7 @@ impl<R: std::io::BufRead> Source for R {
                     fed
                 }
                 // The read was interrupted by a signal, not refused.
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
                     continue;
                 }
                 Err(e) => {
@@ -143,7 +145,7 @@ impl Reader<'_, Complete> {
 }
 
 #[cfg(feature = "std")]
-impl<R: std::io::BufRead> Reader<'_, R> {
+impl<R: io::BufRead> Reader<'_, R> {
     /// Read a document from a byte source, a buffer at a time.
     ///
     /// Where [`Reader::new`] is handed the whole document, this holds

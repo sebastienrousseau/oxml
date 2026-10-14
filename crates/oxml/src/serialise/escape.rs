@@ -4,6 +4,8 @@
 //! Escaping, character references, and the I/O adapter.
 
 use core::fmt::Write;
+#[cfg(feature = "std")]
+use std::io;
 
 /// Captures the first I/O error behind a `fmt::Write` face.
 ///
@@ -12,11 +14,11 @@ use core::fmt::Write;
 #[cfg(feature = "std")]
 pub(super) struct IoSink<W> {
     pub(super) inner: W,
-    pub(super) error: Option<std::io::Error>,
+    pub(super) error: Option<io::Error>,
 }
 
 #[cfg(feature = "std")]
-impl<W: std::io::Write> Write for IoSink<W> {
+impl<W: io::Write> Write for IoSink<W> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         self.inner.write_all(s.as_bytes()).map_err(|e| {
             self.error = Some(e);

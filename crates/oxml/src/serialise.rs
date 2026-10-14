@@ -17,6 +17,8 @@
 use alloc::borrow::Cow;
 use alloc::string::String;
 use core::fmt::Write;
+#[cfg(feature = "std")]
+use std::io;
 
 use crate::tree::{Document, NameId, NodeId, NodeKind};
 
@@ -106,11 +108,11 @@ impl Document {
     /// The first error the writer returned.
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    pub fn write_xml_to<W: std::io::Write>(
+    pub fn write_xml_to<W: io::Write>(
         &self,
         w: W,
         options: &SerialiseOptions,
-    ) -> std::io::Result<()> {
+    ) -> io::Result<()> {
         let mut sink = IoSink {
             inner: w,
             error: None,
@@ -119,7 +121,7 @@ impl Document {
         match (outcome, sink.error) {
             (_, Some(e)) => Err(e),
             (Err(core::fmt::Error), None) => {
-                Err(std::io::Error::other("formatting failed"))
+                Err(io::Error::other("formatting failed"))
             }
             (Ok(()), None) => sink.inner.flush(),
         }

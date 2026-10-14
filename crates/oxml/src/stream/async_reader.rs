@@ -11,6 +11,8 @@ use super::machine::Core;
 use crate::Limits;
 use crate::error::{Error, ErrorKind, Result};
 use crate::external::ExternalSource;
+#[cfg(feature = "std")]
+use std::io;
 
 /// How much a source is asked for at a time; see the blocking reader.
 const CHUNK: usize = 8192;
@@ -147,7 +149,7 @@ impl<'e, R: tokio::io::AsyncBufRead + Unpin> AsyncReader<'e, R> {
                     self.inner.consume(take);
                     fed
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {
                     continue;
                 }
                 Err(e) => {
