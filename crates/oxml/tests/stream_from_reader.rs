@@ -187,6 +187,11 @@ fn documents() -> Vec<String> {
     let pad = "x".repeat(1100);
     let mut docs: Vec<String> = [
         "<a/>",
+        // Whitespace before the root and no declaration: the reader
+        // used to skip the whitespace, then measure the absent
+        // declaration from offset 0 and slice behind its own cursor.
+        " <a/>",
+        "\n\t <a>x</a>",
         "<a><b>text</b></a>",
         "<a><b/><c/></a>",
         r#"<r xmlns:m="urn:u"><m:a k="1">x</m:a></r>"#,
@@ -264,6 +269,9 @@ fn malformed() -> Vec<&'static str> {
         "   ",
         "<",
         "<!-- no root -->",
+        // Found by the stream_chunked fuzz target: it panicked.
+        " </aa>  </a>",
+        " </a>",
     ]
 }
 

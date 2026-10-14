@@ -331,9 +331,14 @@ fn one_event<'a>(
 /// goes on to consume any `DOCTYPE` that follows -- which may not have
 /// wholly arrived. It is given the declaration alone to work on, so it
 /// cannot run on past it.
+///
+/// The end is measured from the cursor, not from offset 0: the reader
+/// may already have stepped over whitespace while waiting for the
+/// first construct to arrive, and a cut behind the cursor leaves the
+/// parser positioned past the end of its input.
 fn declaration(parser: &mut Parser<'_>) -> Result<()> {
     let (input, bytes) = (parser.input, parser.bytes);
-    let end = declaration_end(input);
+    let end = parser.pos + declaration_end(&input[parser.pos..]);
     parser.input = &input[..end];
     parser.bytes = &bytes[..end];
     let outcome = parser.skip_prolog();
