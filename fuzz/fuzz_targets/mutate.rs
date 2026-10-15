@@ -34,6 +34,13 @@ fuzz_target!(|data: &[u8]| {
     let mut live: Vec<NodeId> = vec![top];
 
     for chunk in data.chunks(4).take(MAX_OPS) {
+        // The root element can still go: moved under a detached
+        // element that is then removed, which takes it along. Nothing
+        // is left to pick from, and a document without its root
+        // element is the caller's business, as for removal below.
+        if live.is_empty() {
+            break;
+        }
         let op = chunk[0] % 13;
         let pick = |i: usize| chunk.get(i).copied().unwrap_or(0) as usize;
         let target = live[pick(1) % live.len()];
