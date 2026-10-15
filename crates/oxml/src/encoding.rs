@@ -100,19 +100,7 @@ pub fn is_legal_encoding_name(name: &str) -> bool {
 /// `EncName`, if it names an encoding this crate cannot decode, or if
 /// the bytes are not valid in the encoding they claim.
 pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
-    // A BOM and a declaration that disagree make the document
-    // malformed. Letting the BOM win silently produced a tree from a
-    // document no conforming parser accepts -- and the disagreement is
-    // usually a sign that something upstream re-encoded the bytes
-    // without rewriting the declaration, which is worth surfacing.
-    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        let text = utf16(rest, true)?;
-        check_bom_agrees(&text, Encoding::Utf16Be)?;
-        return Ok(Cow::Owned(text));
-    }
-    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        let text = utf16(rest, false)?;
-        check_bom_agrees(&text, Encoding::Utf16Le)?;
+    if let Some(text) = decode_utf16_marked(bytes)? {
         return Ok(Cow::Owned(text));
     }
     // A UTF-8 BOM is permitted and is not part of the document.
@@ -123,16 +111,45 @@ pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
         }
         None => bytes,
     };
-
-    // UTF-16 without a BOM is still detectable: an XML document must
-    // begin with `<`, which in UTF-16 is a NUL-adjacent pair.
-    if bytes.starts_with(&[0x00, 0x3C]) {
-        return Ok(Cow::Owned(utf16(bytes, true)?));
+    if let Some(big_endian) = utf16_shape(bytes) {
+        return Ok(Cow::Owned(utf16(bytes, big_endian)?));
     }
-    if bytes.starts_with(&[0x3C, 0x00]) {
-        return Ok(Cow::Owned(utf16(bytes, false)?));
-    }
+    decode_declared(bytes)
+}
 
+/// A document behind a UTF-16 byte-order mark, decoded and held to its
+/// declaration; `None` when there is no such mark.
+///
+/// A BOM and a declaration that disagree make the document
+/// malformed. Letting the BOM win silently produced a tree from a
+/// document no conforming parser accepts -- and the disagreement is
+/// usually a sign that something upstream re-encoded the bytes
+/// without rewriting the declaration, which is worth surfacing.
+fn decode_utf16_marked(bytes: &[u8]) -> Result<Option<String>> {
+    let (rest, encoding) = match bytes {
+        [0xFE, 0xFF, rest @ ..] => (rest, Encoding::Utf16Be),
+        [0xFF, 0xFE, rest @ ..] => (rest, Encoding::Utf16Le),
+        _ => return Ok(None),
+    };
+    let text = utf16(rest, encoding == Encoding::Utf16Be)?;
+    check_bom_agrees(&text, encoding)?;
+    Ok(Some(text))
+}
+
+/// UTF-16 without a BOM is still detectable: an XML document must
+/// begin with `<`, which in UTF-16 is a NUL-adjacent pair. `Some(true)`
+/// for big-endian.
+fn utf16_shape(bytes: &[u8]) -> Option<bool> {
+    match bytes {
+        [0x00, 0x3C, ..] => Some(true),
+        [0x3C, 0x00, ..] => Some(false),
+        _ => None,
+    }
+}
+
+/// Bytes with no mark and no UTF-16 shape, decoded as their
+/// declaration says, or as UTF-8 when it says nothing.
+fn decode_declared(bytes: &[u8]) -> Result<Cow<'_, str>> {
     match declared_encoding(bytes)? {
         Some(Encoding::Latin1) => Ok(Cow::Owned(latin1(bytes))),
         Some(Encoding::Utf16Be) => Ok(Cow::Owned(utf16(bytes, true)?)),

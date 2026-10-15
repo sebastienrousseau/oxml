@@ -12,7 +12,6 @@ crates/oxml/src/dtd.rs	DtdParser<'a>::parse_subset_decls	14	2	28	26
 crates/oxml/src/dtd.rs	check_att_value	12	13	32	72
 crates/oxml/src/dtd.rs	expand_pes	8	5	37	43
 crates/oxml/src/dtd.rs	validate_entity_value	14	23	35	65
-crates/oxml/src/encoding.rs	decode	22	6	29	46
 crates/oxml/src/error.rs	ErrorKind::fmt	26	1	15	75
 crates/oxml/src/parser.rs	Parser<'a>::expand_entity	27	24	46	162
 crates/oxml/src/parser.rs	Parser<'a>::expand_text	19	8	43	84
