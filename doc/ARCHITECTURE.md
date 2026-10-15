@@ -232,7 +232,13 @@ uses the stored prefix when it is bound here, else a prefix in scope
 for that URI, else declares one on the element. The output is a fixed
 point over the W3C corpus and parses back to the same expanded names
 for a built document. The XML version is declared only when a C0
-control character or a prefix undeclaration requires 1.1.
+control character or a prefix undeclaration requires 1.1, and only
+the nodes the writer visits count: a detached subtree is not written,
+so it does not decide. A comment or PI body has no reference syntax,
+so a built document that needs 1.1 and has a comment holding a character
+1.1 rewrites (U+0085, U+2028) or refuses (the rest of U+007F..U+009F)
+has no faithful output; `try_to_xml` reports it as
+`SerialiseError::VersionConflict`.
 
 ## What is deliberately absent
 

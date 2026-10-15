@@ -17,7 +17,7 @@
 
 use std::fmt::Write as _;
 
-use oxml::{EmptyElement, Indent, SerialiseOptions};
+use oxml::{Document, EmptyElement, Indent, SerialiseError, SerialiseOptions};
 
 fn main() {
     let source = "<?xml version=\"1.0\"?>
@@ -121,4 +121,24 @@ fn main() {
     let control = oxml::parse("<?xml version=\"1.1\"?><a>&#1;</a>")
         .expect("well-formed in 1.1");
     assert_eq!(control.to_xml(), "<?xml version=\"1.1\"?><a>&#1;</a>");
+
+    // A built document can hold what no version writes: a control
+    // character needs 1.1, and 1.1 reads U+0085 in a comment as a
+    // line ending, with no reference syntax there to protect it.
+    // `try_to_xml` refuses that document; for any other it returns
+    // exactly what `to_xml` does.
+    let mut built = Document::empty();
+    let top = built
+        .append_element(built.root(), None, "a")
+        .expect("one root element");
+    let note = built.append_comment(top, "caf\u{85}").expect("legal");
+    assert_eq!(built.try_to_xml(), Ok(built.to_xml()));
+    let _ = built.append_text(top, "\u{1}").expect("expressible");
+    match built.try_to_xml() {
+        Err(SerialiseError::VersionConflict { node, character }) => {
+            assert_eq!((node, character), (note, '\u{85}'));
+            println!("refused: {}", built.try_to_xml().unwrap_err());
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
 }

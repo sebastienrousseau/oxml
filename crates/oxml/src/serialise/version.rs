@@ -1,10 +1,52 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Copyright (c) 2026 oxml. All rights reserved.
 
-//! Which XML version the output declares.
+//! Which XML version the output declares, and the content no
+//! version can hold.
 
-use super::escape::is_c0_control;
+use super::escape::{changes_in_11, is_c0_control};
 use crate::tree::{Document, NameId, NodeId, NodeKind};
+
+/// Why a document cannot be written as XML that reads back as itself.
+///
+/// Returned by [`Document::try_to_xml`]. A parsed document never
+/// produces one: only the mutation API can put content side by side
+/// that no single XML version expresses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SerialiseError {
+    /// The document needs XML 1.1, and a comment or processing
+    /// instruction holds a character 1.1 does not keep literally.
+    ///
+    /// A C0 control character, or a prefix unbound with `xmlns:p=""`,
+    /// can only be written in 1.1. A comment or PI body is written
+    /// verbatim, with no reference syntax, and 1.1 reads `U+0085` and
+    /// `U+2028` as line endings and refuses the rest of
+    /// `U+007F..U+009F`. XML 1.0 holds the body but not the rest, so
+    /// no output reads back as this document.
+    VersionConflict {
+        /// The comment or processing instruction.
+        node: NodeId,
+        /// The first character in it that 1.1 would not keep.
+        character: char,
+    },
+}
+
+impl core::fmt::Display for SerialiseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::VersionConflict { character, .. } => write!(
+                f,
+                "the document needs XML 1.1, which cannot hold U+{:04X} \
+                 in a comment or processing instruction",
+                u32::from(*character)
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for SerialiseError {}
 
 impl Document {
     /// Whether any content can only be expressed in XML 1.1.
@@ -46,6 +88,23 @@ impl Document {
                     || uri.chars().any(is_c0_control)
             }
             _ => false,
+        })
+    }
+
+    /// The first comment or processing instruction written that XML
+    /// 1.1 would not keep, when the document needs 1.1.
+    pub(super) fn version_conflict(&self) -> Option<SerialiseError> {
+        if !self.needs_xml_11() {
+            return None;
+        }
+        self.written().find_map(|node| {
+            let body = match self.kind(node) {
+                Some(NodeKind::Comment(c)) => c,
+                Some(NodeKind::ProcessingInstruction { data, .. }) => data,
+                _ => return None,
+            };
+            let character = body.chars().find(|&c| changes_in_11(c))?;
+            Some(SerialiseError::VersionConflict { node, character })
         })
     }
 

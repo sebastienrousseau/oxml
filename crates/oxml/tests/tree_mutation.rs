@@ -11,7 +11,7 @@
 //! the serialiser cannot spell.
 
 use oxml::tree::{Document, NodeError, NodeKind};
-use oxml::{NodeId, parse};
+use oxml::{NodeId, SerialiseError, parse};
 
 /// The element with the given local name, wherever it is.
 fn find(d: &Document, local: &str) -> NodeId {
@@ -337,6 +337,52 @@ fn a_carriage_return_is_refused_in_a_comment_or_pi() {
         .append_text(top, "a\rb")
         .expect("text takes a reference");
     let _ = round_trip(&doc);
+}
+
+#[test]
+fn content_no_version_can_hold_is_refused() {
+    // Found by the mutate fuzz target: text holding U+0001 needs XML
+    // 1.1, which reads U+0085 as a line ending, and a comment has no
+    // reference syntax. A comment holding U+0085 beside that text came
+    // back holding `\n`, so to_xml was not a fixed point. No version
+    // holds both, and try_to_xml says so instead.
+    let (mut doc, top) = built();
+    let comment = doc.append_comment(top, "caf\u{85}").expect("legal");
+    assert_eq!(doc.try_to_xml(), Ok(doc.to_xml()), "1.0 holds it alone");
+
+    let _ = doc.append_text(top, "\u{1}").expect("expressible");
+    assert_eq!(
+        doc.try_to_xml(),
+        Err(SerialiseError::VersionConflict {
+            node: comment,
+            character: '\u{85}',
+        })
+    );
+    let once = doc.to_xml();
+    let again = parse(&once).expect("the output parses").to_xml();
+    assert_ne!(again, once, "the refusal is not over-cautious");
+
+    // A restricted C1 character in a PI is refused too: 1.1 rejects it
+    // outright rather than rewriting it.
+    let (mut doc, top) = built();
+    let pi = doc.append_pi(top, "t", "\u{90}").expect("legal in 1.0");
+    let _ = doc
+        .declare_namespace(top, Some("p"), "")
+        .expect("an unbinding needs 1.1");
+    assert_eq!(
+        doc.try_to_xml(),
+        Err(SerialiseError::VersionConflict {
+            node: pi,
+            character: '\u{90}',
+        })
+    );
+    assert!(parse(&doc.to_xml()).is_err(), "the refusal is real");
+
+    // A parsed 1.1 document cannot hold either: the parser has already
+    // normalised U+2028 in a comment.
+    let parsed = parse("<?xml version=\"1.1\"?><r>&#1;<!--a\u{2028}b--></r>")
+        .expect("well-formed 1.1");
+    assert_eq!(parsed.try_to_xml(), Ok(parsed.to_xml()));
 }
 
 // --- namespaces ---------------------------------------------------------

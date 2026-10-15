@@ -158,7 +158,9 @@ pub use error::{Error, ErrorKind, Result};
 pub use parser::{
     parse, parse_bytes, parse_bytes_with, parse_with, parse_with_external,
 };
-pub use serialise::{EmptyElement, Indent, Newline, SerialiseOptions};
+pub use serialise::{
+    EmptyElement, Indent, Newline, SerialiseError, SerialiseOptions,
+};
 pub use tree::{Attribute, Document, ExpandedName, NodeId, NodeKind};
 
 #[cfg(feature = "xpath")]

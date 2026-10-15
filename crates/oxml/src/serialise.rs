@@ -28,6 +28,7 @@ mod scope;
 mod version;
 
 pub use options::{EmptyElement, Indent, Newline, SerialiseOptions};
+pub use version::SerialiseError;
 
 #[cfg(feature = "std")]
 use escape::IoSink;
@@ -79,6 +80,14 @@ impl Document {
     ///
     /// Each is a lexical difference over identical content, which is
     /// what makes the guarantee above achievable instead.
+    ///
+    /// # What no version can hold
+    ///
+    /// The mutation API can put a control character, which only XML
+    /// 1.1 can write, beside a comment holding `U+0085`, which only
+    /// XML 1.0 keeps literally. This writes such a document as 1.1,
+    /// and the comment does not read back the same.
+    /// [`Document::try_to_xml`] refuses it instead.
     #[must_use]
     pub fn to_xml(&self) -> String {
         let mut out = String::new();
@@ -86,6 +95,48 @@ impl Document {
         // the generic writer below.
         let _ = self.write_xml(&mut out);
         out
+    }
+
+    /// Write this document as XML, refusing one that no XML version
+    /// can write so that it reads back as itself.
+    ///
+    /// On success the output is exactly [`Document::to_xml`]'s. A
+    /// parsed document always succeeds; see
+    /// [`SerialiseError::VersionConflict`] for what a built one can
+    /// hold that no version expresses.
+    ///
+    /// # Errors
+    ///
+    /// [`SerialiseError::VersionConflict`] when the document needs XML
+    /// 1.1 and a comment or processing instruction holds a character
+    /// 1.1 does not keep literally.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oxml::{Document, SerialiseError};
+    ///
+    /// let mut doc = Document::empty();
+    /// let top = doc.append_element(doc.root(), None, "r").unwrap();
+    /// let note = doc.append_comment(top, "caf\u{85}").unwrap();
+    /// assert!(doc.try_to_xml().is_ok());
+    ///
+    /// // A control character can only be written in XML 1.1, which
+    /// // reads U+0085 in the comment as a line ending.
+    /// let _ = doc.append_text(top, "\u{1}").unwrap();
+    /// assert_eq!(
+    ///     doc.try_to_xml(),
+    ///     Err(SerialiseError::VersionConflict {
+    ///         node: note,
+    ///         character: '\u{85}',
+    ///     })
+    /// );
+    /// ```
+    pub fn try_to_xml(&self) -> Result<String, SerialiseError> {
+        match self.version_conflict() {
+            Some(conflict) => Err(conflict),
+            None => Ok(self.to_xml()),
+        }
     }
 
     /// Write this document as XML into any [`core::fmt::Write`].

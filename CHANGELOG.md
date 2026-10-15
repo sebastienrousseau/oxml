@@ -26,6 +26,21 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 - **Lints the new floor enables**: let-chains for nested `if let`s and
   `is_multiple_of`, applied as clippy suggests. Behaviour is unchanged.
 
+### Added
+
+- **`Document::try_to_xml` and `SerialiseError`.** A built document can
+  need XML 1.1 (a control character, or a prefix unbound with
+  `xmlns:p=""`) and also hold a comment or PI with a character 1.1
+  does not keep literally: `U+0085` and `U+2028` are line endings
+  there and the rest of `U+007F..U+009F` is refused. A body has no
+  reference syntax, so no version writes that document faithfully;
+  `to_xml` wrote it as 1.1 and the comment came back changed.
+  `try_to_xml` returns `SerialiseError::VersionConflict` naming the
+  node and the character, and otherwise exactly what `to_xml` returns.
+  A parsed document always succeeds. Found by the `mutate` fuzz
+  target, which now uses `try_to_xml` and accepts a refusal only when
+  `to_xml` of the same document is not a fixed point.
+
 ### Fixed
 
 - **A detached subtree no longer decides the XML version.** The

@@ -284,6 +284,9 @@ Two architectural choices motivate the design:
   way back in
 - `<?xml version="1.1"?>` is emitted only when the document needs it --
   a control character, or a prefix unbound with `xmlns:p=""`
+- `Document::try_to_xml()` refuses, with `SerialiseError`, the one
+  thing a built document can hold that no version writes: content
+  only 1.1 can express beside a comment or PI only 1.0 keeps
 - Every document in the conformance corpus is a fixed point: parse,
   serialise, parse again, and the trees agree
 
@@ -331,7 +334,7 @@ Two architectural choices motivate the design:
 
 - **All 2,557** decided W3C conformance tests pass, with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 642 tests and 34 doctests; 96.8% line coverage, gated in CI
+- 643 tests and 35 doctests; 96.8% line coverage, gated in CI
 - Seven fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not here:** XSD validation (that is [`xmlschema`](https://github.com/sebastienrousseau/xmlschema)),
@@ -711,7 +714,7 @@ cargo run --example parse_and_query
 | [`stream_events`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/stream_events.rs) | Reading a document as events with no tree built, and the identical errors both entry points give |
 | [`stream_async`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/stream_async.rs) | The same events from a `tokio` reader (feature `async`) |
 | [`build_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/build_a_document.rs) | Building and editing a tree: elements, attributes, namespaces, moves, and what the API refuses |
-| [`serialise_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/serialise_a_document.rs) | `to_xml`, `write_xml_to`, indentation options, and when the output declares XML 1.1 |
+| [`serialise_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/serialise_a_document.rs) | `to_xml`, `try_to_xml`, `write_xml_to`, indentation options, and when the output declares XML 1.1 |
 | [`telemetry_tracing`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/telemetry_tracing.rs) | The spans the `tracing` feature emits (feature `tracing`) |
 
 ## Configuration
@@ -1111,7 +1114,9 @@ Yes, since 0.0.8. `Document::empty()` and the `Builder` create one;
 `insert_at`, `reparent`, `detach` and `remove` edit one; `to_xml` and
 `write_xml_to` serialise it, and parsing the output gives the same tree
 back. Names and text are validated on the way in, so the API cannot
-produce a document the parser would reject. See the
+produce a document the parser would reject. The one combination no
+XML version can write, a control character beside a comment holding
+U+0085, is refused by `try_to_xml`. See the
 [`build_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/build_a_document.rs)
 example.
 
@@ -1198,7 +1203,7 @@ vulnerability.
 ## Development
 
 ```bash
-cargo test --workspace --all-features   # 642 tests, plus 34 doctests
+cargo test --workspace --all-features   # 643 tests, plus 35 doctests
 cargo test --no-default-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check
