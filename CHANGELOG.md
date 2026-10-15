@@ -67,6 +67,16 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   parser treat such a declaration as absent, decode as UTF-8 and
   report the unterminated declaration, and the streaming reader now
   does the same. Found by the `stream_chunked` fuzz target.
+- **The streaming reader decides the encoding as `encoding::decode`
+  does, with the same functions.** It read the declaration from text
+  in which every byte that was not UTF-8 had become two, so an error
+  in the `encoding` pseudo-attribute was reported one byte later per
+  such byte; and under a UTF-16 mark it refused a name `decode`
+  leaves alone. `decode` in turn checked a UTF-8 mark against the
+  declaration only when every later byte was UTF-8, so a contradicting
+  declaration let the document through as Latin-1 when one was not:
+  it is now refused with `MalformedEncoding` at 0, as it already was
+  otherwise. Found by the `stream_chunked` fuzz target.
 
 ## [0.0.10] - 2026-10-05
 

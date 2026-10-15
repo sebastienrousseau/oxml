@@ -386,6 +386,21 @@ fn encoded() -> Vec<Vec<u8>> {
         // a NUL at input byte 12 (text offset 16) and an odd byte at
         // input byte 16. The harness compared the two 16s.
         b"\0<< `&a<\0\0m".to_vec(),
+        // Found by the stream_chunked fuzz target: the encoding is
+        // read from the declaration's bytes, as `decode` reads it. A
+        // byte that is not UTF-8 before `encoding` moved the offset
+        // the streaming reader reported; a name `decode` ignores
+        // under a UTF-16 mark refused the document; and a UTF-8 mark
+        // that contradicts the declaration was let through by
+        // `decode` when a later byte was not UTF-8.
+        b"<?xml \x8f encoding='UTF~8'?><a/>".to_vec(),
+        utf16(
+            "<?xml version='1.0' encoding='EBCDIC-CP-US'?><a>x</a>",
+            false,
+            true,
+        ),
+        b"\xEF\xBB\xBF<?xml version='1.0' encoding='iso-8859-1'?><a>\xE9</a>"
+            .to_vec(),
     ]
 }
 

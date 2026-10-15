@@ -106,7 +106,7 @@ pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
     // A UTF-8 BOM is permitted and is not part of the document.
     let bytes = match bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         Some(rest) => {
-            check_utf8_bom(rest)?;
+            check_bom_agrees(rest, Encoding::Utf8)?;
             rest
         }
         None => bytes,
@@ -132,7 +132,7 @@ fn decode_utf16_marked(bytes: &[u8]) -> Result<Option<String>> {
         _ => return Ok(None),
     };
     let text = utf16(rest, encoding == Encoding::Utf16Be)?;
-    check_bom_agrees(&text, encoding)?;
+    check_bom_agrees(text.as_bytes(), encoding)?;
     Ok(Some(text))
 }
 
@@ -164,24 +164,20 @@ fn decode_declared(bytes: &[u8]) -> Result<Cow<'_, str>> {
     }
 }
 
-/// After a UTF-8 BOM, reject a declaration that contradicts it. Bytes
-/// that are not UTF-8 are left for the declared-encoding path to
-/// report.
-fn check_utf8_bom(rest: &[u8]) -> Result<()> {
-    match core::str::from_utf8(rest) {
-        Ok(text) => check_bom_agrees(text, Encoding::Utf8),
-        Err(_) => Ok(()),
-    }
-}
-
 /// Reject a declaration that contradicts the byte-order mark.
 ///
 /// A UTF-16 BOM with `encoding="utf-8"`, or a UTF-8 BOM with
 /// `encoding="iso-8859-1"`, cannot both be true. The family has to
 /// match: `UTF-16` and `UTF-16LE` agree with a little-endian mark,
-/// because the mark settles a byte order the name leaves open.
-fn check_bom_agrees(text: &str, from_bom: Encoding) -> Result<()> {
-    let Ok(Some(declared)) = declared_encoding(text.as_bytes()) else {
+/// because the mark settles a byte order the name leaves open. A name
+/// this crate does not know is not a contradiction it can prove.
+///
+/// `head` is the document after the mark, decoded for UTF-16. Only
+/// the declaration is read, so the streaming reader makes the same
+/// check before the rest has arrived. Whether bytes after it are
+/// UTF-8 used to decide whether a UTF-8 mark was checked at all.
+pub(crate) fn check_bom_agrees(head: &[u8], from_bom: Encoding) -> Result<()> {
+    let Ok(Some(declared)) = declared_encoding(head) else {
         return Ok(());
     };
     let compatible = match (from_bom, declared) {
@@ -198,8 +194,9 @@ fn check_bom_agrees(text: &str, from_bom: Encoding) -> Result<()> {
     }
 }
 
-/// The `encoding` pseudo-attribute of the XML declaration, if any.
-fn declared_encoding(bytes: &[u8]) -> Result<Option<Encoding>> {
+/// The `encoding` pseudo-attribute of the XML declaration, if any,
+/// read from bytes and reported at a byte offset.
+pub(crate) fn declared_encoding(bytes: &[u8]) -> Result<Option<Encoding>> {
     // `<?xml` followed by whitespace, as `parser::xml_declaration`
     // requires: a processing instruction whose target starts with
     // `xml` (`<?xml-stylesheet ...?>` at offset 0 is legal and common)
@@ -478,6 +475,21 @@ mod tests {
                 .kind,
             ErrorKind::MalformedEncoding
         );
+    }
+
+    #[test]
+    fn a_utf8_bom_is_checked_whatever_follows_the_declaration() {
+        // Found by the stream_chunked fuzz target. The check read the
+        // declaration only when the whole rest was UTF-8, so a byte
+        // that was not let the contradiction through and the document
+        // was decoded as Latin-1. The streaming reader, which cannot
+        // see that byte when it decides, refused it.
+        let mut bytes = alloc::vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(
+            b"<?xml version='1.0' encoding='iso-8859-1'?><a>\xE9</a>",
+        );
+        let e = decode(&bytes).expect_err("UTF-8 mark, Latin-1 declared");
+        assert_eq!((e.kind, e.offset), (ErrorKind::MalformedEncoding, 0));
     }
 
     #[test]
