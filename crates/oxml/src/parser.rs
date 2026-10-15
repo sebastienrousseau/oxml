@@ -1399,12 +1399,29 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    /// The length of the reference name that starts at `self.pos`,
+    /// just after its `&`: up to the `;` that ends it, which must come
+    /// before the next `<` and before `stop`, the quote that closes an
+    /// attribute value. `None` when it does not.
+    ///
+    /// Searching the rest of the input found a `;` past the markup or
+    /// the quote that ends the text or the value, so the reader that
+    /// holds the whole document reported an unknown entity whose name
+    /// spanned tags, where the streaming reader, which holds one
+    /// construct, reported the reference unterminated.
+    fn reference_len(&self, stop: u8) -> Option<usize> {
+        let rest = &self.bytes[self.pos..];
+        rest.iter()
+            .position(|&b| matches!(b, b';' | b'<') || b == stop)
+            .filter(|&i| rest[i] == b';')
+    }
+
     /// A reference in character data, at `&`, expanded into `out`.
     fn text_reference(&mut self, out: &mut Run) -> Result<()> {
         let s = self.pos;
         self.pos += 1;
-        let end = self.input[self.pos..]
-            .find(';')
+        let end = self
+            .reference_len(b'<')
             .ok_or_else(|| Error::new(ErrorKind::Unterminated("entity"), s))?;
         let ent = &self.input[self.pos..self.pos + end];
         // Element content, not an attribute value: section 3.3.3 does
@@ -1869,7 +1886,7 @@ impl<'a> Parser<'a> {
                         self.pos,
                     ));
                 }
-                Some(b'&') => self.value_reference(&mut out)?,
+                Some(b'&') => self.value_reference(quote, &mut out)?,
                 Some(_) => self.value_chars(quote, &mut out),
             }
         }
@@ -1890,11 +1907,11 @@ impl<'a> Parser<'a> {
     }
 
     /// A reference in an attribute value, at `&`, expanded into `out`.
-    fn value_reference(&mut self, out: &mut Run) -> Result<()> {
+    fn value_reference(&mut self, quote: u8, out: &mut Run) -> Result<()> {
         let s = self.pos;
         self.pos += 1;
-        let end = self.input[self.pos..]
-            .find(';')
+        let end = self
+            .reference_len(quote)
             .ok_or_else(|| Error::new(ErrorKind::Unterminated("entity"), s))?;
         let ent = &self.input[self.pos..self.pos + end];
         // Normalisation happens inside the expansion, so that a

@@ -77,6 +77,13 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   declaration let the document through as Latin-1 when one was not:
   it is now refused with `MalformedEncoding` at 0, as it already was
   otherwise. Found by the `stream_chunked` fuzz target.
+- **A reference ends before the next `<`, or before the quote that
+  closes its value.** For `<g>am&></>>p;` the parser searched the rest
+  of the document for the `;` and reported `UnknownEntity("></>>p")`,
+  a name spanning tags; the streaming reader, holding only the text
+  run, reported `Unterminated("entity")`. Attribute values did the
+  same past their closing quote. Both readers and `parse` now report
+  the reference unterminated, at the same offset.
 
 ## [0.0.10] - 2026-10-05
 

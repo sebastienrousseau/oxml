@@ -337,6 +337,14 @@ fn malformed() -> Vec<&'static str> {
         // for the name while the in-memory one read them as UTF-8.
         "<?xml version='1.0' encoding='EBCDIC-CP-US'<a/>",
         "<?xml version='1.0' encoding='UTF~8'<a/>",
+        // Found by the stream_chunked fuzz target: a reference with no
+        // `;` before the next markup, or before the quote that closes
+        // its value. The in-memory reader found one further on and
+        // reported the span as an unknown entity's name; the
+        // streaming reader sees only to the construct's end.
+        "<g>am&></>>p;/></>>",
+        "<g>6&<!ENT>b/+&amp;/><",
+        "<g a=\"0&0\"[1]/><g>V<b/><b/ib4t&lt;",
     ]
 }
 
