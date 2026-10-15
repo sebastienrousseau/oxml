@@ -345,6 +345,10 @@ fn malformed() -> Vec<&'static str> {
         "<g>am&></>>p;/></>>",
         "<g>6&<!ENT>b/+&amp;/><",
         "<g a=\"0&0\"[1]/><g>V<b/><b/ib4t&lt;",
+        // Whitespace before a declaration is XML whitespace only: a
+        // form feed is an illegal character, not a misplaced
+        // declaration.
+        " \u{c}\u{c}<?xml version=\"1.0\"?>\u{c}\u{c}",
     ]
 }
 

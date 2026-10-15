@@ -84,6 +84,11 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   run, reported `Unterminated("entity")`. Attribute values did the
   same past their closing quote. Both readers and `parse` now report
   the reference unterminated, at the same offset.
+- **Only XML whitespace before a declaration makes it misplaced.** The
+  prolog check trimmed Rust's whitespace, which includes a form feed,
+  so ` \x0c<?xml version="1.0"?>` was `MalformedDeclaration` in memory
+  and `IllegalCharacter('\x0c')` when streamed. It trims XML's `S` now,
+  and both report the form feed.
 
 ## [0.0.10] - 2026-10-05
 

@@ -190,9 +190,20 @@ fn the_reader_and_the_tree_parser_find_the_same_content() {
 
 #[test]
 fn an_error_reports_the_same_offset_the_tree_parser_reports() {
-    for input in ["<a></b>", "<a x='1' x='2'/>", "<a>&undefined;</a>"] {
+    // The last two were found by the stream fuzz target: a form feed
+    // or a vertical tab before a declaration is an illegal character
+    // to both readers, not whitespace before a misplaced declaration
+    // to one of them.
+    for input in [
+        "<a></b>",
+        "<a x='1' x='2'/>",
+        "<a>&undefined;</a>",
+        " \u{c}<?xml version='1.0'?><a/>",
+        "\n\u{b}\n<?xml version=\"1.1\"?>\n<a/>",
+    ] {
         let tree = parse(input).expect_err("invalid");
         let stream = events(input).expect_err("invalid");
+        assert_eq!(tree.kind, stream.kind, "{input:?}: kinds differ");
         assert_eq!(
             tree.offset, stream.offset,
             "{input:?}: offsets differ ({} vs {})",

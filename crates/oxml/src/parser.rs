@@ -512,8 +512,14 @@ pub(crate) fn check_characters(
 
 /// Whitespace before an XML declaration is a malformed document, not
 /// `Misc` appearing early.
+///
+/// Whitespace is XML's `S`, not Rust's: `trim_start` also took a form
+/// feed, so ` \x0c<?xml ...?>` was a misplaced declaration in memory
+/// and an illegal character to the streaming reader, whose prelude
+/// decides there is no declaration once the bytes after the leading
+/// `S` stop matching `<?xml`.
 pub(crate) fn check_prolog_shape(input: &str) -> Result<()> {
-    let trimmed = input.trim_start();
+    let trimmed = input.trim_start_matches([' ', '\t', '\r', '\n']);
     if trimmed.len() != input.len() && trimmed.starts_with("<?xml") {
         let after = &trimmed["<?xml".len()..];
         // `<?xmlfoo?>` is a processing instruction with a reserved
@@ -674,16 +680,10 @@ fn parse_normalized(
     // `prolog ::= XMLDecl? Misc*` -- the declaration comes first or not
     // at all. Whitespace before it is not `Misc` appearing early, it is
     // a malformed document, and skipping leading whitespace before
-    // looking for `<?xml` accepted it.
-    let trimmed = input.trim_start();
-    if trimmed.len() != input.len() && trimmed.starts_with("<?xml") {
-        let after = &trimmed["<?xml".len()..];
-        // `<?xmlfoo?>` is a processing instruction with a reserved
-        // target, reported elsewhere; only a real declaration counts.
-        if after.starts_with([' ', '\t', '\r', '\n']) {
-            return Err(Error::new(ErrorKind::MalformedDeclaration, 0));
-        }
-    }
+    // looking for `<?xml` accepted it. The check is the one `prepare`
+    // makes for the streaming reader: this copy kept trimming Rust's
+    // whitespace after that one moved to XML's.
+    check_prolog_shape(input)?;
     // Checked once over the whole input rather than at each construct.
     // The `Char` production applies everywhere — content, attribute
     // values, comments, even the DTD — so a per-construct check would
