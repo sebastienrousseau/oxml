@@ -353,6 +353,12 @@ fn malformed() -> Vec<&'static str> {
         // form feed is an illegal character, not a misplaced
         // declaration.
         " \u{c}\u{c}<?xml version=\"1.0\"?>\u{c}\u{c}",
+        // Found by the stream_chunked fuzz target: the end of a
+        // self-closed root is an event of its own, owed before
+        // anything after it is judged. The in-memory reader judged a
+        // trailing DOCTYPE first and never yielded it.
+        "<!DOCTYPE g><b/><!DOCTYPE g>",
+        "<b/><!DOCTYPE g>",
     ]
 }
 

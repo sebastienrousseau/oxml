@@ -98,6 +98,11 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   `<?xml version='2.0\xC4'?>` as `UnsupportedVersion`; `decode` refuses
   it with `MalformedEncoding` at the byte, and so does the streaming
   reader now.
+- **The end of a self-closed root comes before a trailing-content
+  error.** For `<!DOCTYPE g><b/><!DOCTYPE g>` `Reader::new` yielded the
+  start of `b` and then reported the second `DOCTYPE`, never yielding
+  the end; the streaming reader yielded both. The end is now always
+  yielded first.
 
 ## [0.0.10] - 2026-10-05
 

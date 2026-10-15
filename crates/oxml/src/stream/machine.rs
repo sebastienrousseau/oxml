@@ -290,7 +290,12 @@ impl<'e> Core<'e> {
     /// and the reader stays failed.
     pub fn prepare(&mut self) -> Result<()> {
         self.guarded(|core| {
-            while core.ready() {
+            // The end of a self-closed element is owed before anything
+            // after it is looked at. Skipping a whole `DOCTYPE` here
+            // first reported it as trailing content and dropped the
+            // end, but only when the `DOCTYPE` had arrived: the
+            // streaming reader, still waiting for it, yielded the end.
+            while core.pending_end.is_none() && core.ready() {
                 core.compact();
                 let external: &dyn ExternalSource = core.external;
                 let skipped = scan::skip_eventless(
