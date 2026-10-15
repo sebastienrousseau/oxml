@@ -71,10 +71,20 @@ step "doc tests generated" bash -c '
 step "examples cover the API" python3 scripts/check-example-coverage.py
 
 # Examples are run by CI one at a time; a failure in any is a failure.
+# Each with the features its `required-features` names, read from
+# Cargo metadata as the CI job reads them: a bare `cargo run
+# --example` refuses `stream_async`, which needs `async`, and this
+# step failed on every run once that example existed.
 step "examples run" bash -c '
+  meta="$(cargo metadata --no-deps --format-version 1 --locked)"
   for f in crates/oxml/examples/*.rs; do
+    name=$(basename "$f" .rs)
     cargo test --quiet --no-run >/dev/null 2>&1
-    cargo run --quiet --example "$(basename "$f" .rs)" >/dev/null || exit 1
+    feats="$(jq -r --arg n "$name" ".packages[]
+      | select(.name == \"oxml\") | .targets[]
+      | select(.kind == [\"example\"] and .name == \$n)
+      | (.\"required-features\" // []) | join(\",\")" <<< "$meta")"
+    cargo run --quiet --locked -p oxml --example "$name" --features "$feats" >/dev/null || exit 1
   done'
 
 # What `cargo publish` would upload, and whether the assurance case in
