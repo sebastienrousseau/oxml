@@ -92,8 +92,12 @@ pub(super) const fn is_c0_control(c: char) -> bool {
 /// written as a reference too -- which both versions accept. This is
 /// deliberately wider than [`is_c0_control`], which decides the
 /// version declaration.
+///
+/// `U+2028` is the other 1.1 line ending. Written literally into a
+/// document that needs 1.1, it read back as a newline in character
+/// data and as a space in an attribute value.
 pub(super) const fn needs_reference(c: char) -> bool {
-    is_c0_control(c) || matches!(c, '\u{7f}'..='\u{9f}')
+    is_c0_control(c) || matches!(c, '\u{7f}'..='\u{9f}' | '\u{2028}')
 }
 
 /// Write one character as a numeric reference.

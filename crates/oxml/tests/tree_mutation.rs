@@ -295,6 +295,29 @@ fn a_detached_node_does_not_decide_the_version() {
     let _ = round_trip(&doc);
 }
 
+#[test]
+fn a_line_separator_survives_a_version_11_round_trip() {
+    // XML 1.1 reads U+2028 as a line ending and normalises it to a
+    // newline, in character data and attribute values alike. Written
+    // literally into a document that needs 1.1, it came back as `\n`
+    // in text and as a space in an attribute value or a URI.
+    let (mut doc, top) = built();
+    let _ = doc.append_text(top, "a\u{2028}b").expect("live");
+    doc.set_attribute(top, None, "k", "a\u{2028}b")
+        .expect("live");
+    let _ = doc
+        .declare_namespace(top, Some("p"), "urn:\u{2028}")
+        .expect("live");
+    let plain = round_trip(&doc);
+    assert!(!plain.to_xml().starts_with("<?xml"), "1.0 is enough");
+
+    let _ = doc.append_text(top, "\u{1}").expect("expressible");
+    let again = round_trip(&doc);
+    assert!(again.to_xml().starts_with("<?xml version=\"1.1\"?>"));
+    let top = again.root_element().expect("a root element");
+    assert_eq!(again.attribute(top, "k"), Some("a\u{2028}b"));
+}
+
 // --- namespaces ---------------------------------------------------------
 
 #[test]

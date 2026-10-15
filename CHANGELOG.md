@@ -35,6 +35,11 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   declaration and serialising it again dropped it: not a fixed point.
   Only the nodes the writer visits are considered now. Found by the
   `mutate` fuzz target.
+- **U+2028 is written as `&#8232;`.** XML 1.1 reads LINE SEPARATOR as
+  a line ending, so written literally into a document that needs 1.1
+  it came back as a newline in text and as a space in an attribute
+  value or namespace URI. The reference reads back as the character in
+  both versions, as `&#133;` already did for U+0085.
 
 ## [0.0.10] - 2026-10-05
 
