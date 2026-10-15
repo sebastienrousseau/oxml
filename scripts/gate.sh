@@ -18,7 +18,10 @@ set -uo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 TOOLCHAIN="${OXML_TOOLCHAIN:-1.98.0}"
-MSRV="${OXML_MSRV:-1.86.0}"
+# Read from Cargo.toml, as the CI MSRV job does. A literal here went
+# stale when the floor moved to 1.89.0, and the gate went on proving
+# a toolchain the crate no longer promises.
+MSRV="${OXML_MSRV:-$(grep -m1 '^rust-version' Cargo.toml | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')}"
 # CI sets this for every job. This script did not, so it was weaker
 # than the thing it exists to predict: a `no_std` build that only
 # warned passed here and turned all three bare-metal jobs red on the
