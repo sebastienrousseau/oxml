@@ -26,6 +26,16 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 - **Lints the new floor enables**: let-chains for nested `if let`s and
   `is_multiple_of`, applied as clippy suggests. Behaviour is unchanged.
 
+### Fixed
+
+- **A detached subtree no longer decides the XML version.** The
+  serialiser declared 1.1 for a control character anywhere in the
+  arena, including a subtree `detach` had taken out of the document.
+  That subtree is not written, so the output reparsed without the
+  declaration and serialising it again dropped it: not a fixed point.
+  Only the nodes the writer visits are considered now. Found by the
+  `mutate` fuzz target.
+
 ## [0.0.10] - 2026-10-05
 
 ### Security

@@ -270,6 +270,31 @@ fn a_control_character_in_a_namespace_uri_is_written_as_xml_11() {
     assert_eq!(again.to_xml(), doc.to_xml());
 }
 
+#[test]
+fn a_detached_node_does_not_decide_the_version() {
+    // Found by the mutate fuzz target: a control character in a
+    // detached subtree made the serialiser declare XML 1.1, but the
+    // subtree is not written. Reparsing the output found nothing that
+    // needs 1.1, so the second pass dropped the declaration and the
+    // output was not a fixed point.
+    let (mut doc, top) = built();
+    let gone = doc.append_element(top, None, "gone").expect("live");
+    let _ = doc.append_text(gone, "\u{1}").expect("expressible");
+    doc.set_attribute(gone, None, "k", "\u{1}")
+        .expect("expressible");
+    let _ = doc
+        .declare_namespace(gone, Some("p"), "")
+        .expect("an unbinding");
+    doc.detach(gone).expect("a child can be detached");
+    assert_eq!(doc.to_xml(), "<top/>");
+    let _ = round_trip(&doc);
+
+    // Attached again, the same content needs 1.1.
+    doc.insert_at(top, 0, gone).expect("live");
+    assert!(doc.to_xml().starts_with("<?xml version=\"1.1\"?>"));
+    let _ = round_trip(&doc);
+}
+
 // --- namespaces ---------------------------------------------------------
 
 #[test]

@@ -149,8 +149,13 @@ impl Document {
     /// A namespace URI is written as an attribute value too, whether
     /// declared or given only in a name, so a control character in one
     /// needs 1.1 as much as one in a value does.
+    ///
+    /// Only what is written counts. A detached subtree is still live,
+    /// so walking every node declared 1.1 for a control character that
+    /// never reached the output; reparsing that output found nothing
+    /// needing 1.1, and the second pass dropped the declaration.
     fn needs_xml_11(&self) -> bool {
-        self.nodes().any(|id| match self.kind(id) {
+        self.written().any(|id| match self.kind(id) {
             Some(NodeKind::Text(t)) => t.chars().any(is_c0_control),
             Some(NodeKind::Attr(a)) => {
                 a.value.chars().any(is_c0_control) || self.c0_in_uri(a.name)
@@ -161,6 +166,16 @@ impl Document {
                     || uri.chars().any(is_c0_control)
             }
             _ => false,
+        })
+    }
+
+    /// Every node the writer visits: the root's descendants, each
+    /// followed by its attribute and namespace nodes.
+    fn written(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.descendants_of(self.root()).flat_map(move |id| {
+            core::iter::once(id)
+                .chain(self.attribute_nodes(id).iter().copied())
+                .chain(self.namespace_nodes(id).iter().copied())
         })
     }
 
