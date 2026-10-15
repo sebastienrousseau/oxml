@@ -1392,60 +1392,62 @@ impl<'a> Parser<'a> {
             }
             match self.bytes[self.pos] {
                 b'<' => break,
-                b'&' => {
-                    let s = self.pos;
-                    self.pos += 1;
-                    let end =
-                        self.input[self.pos..].find(';').ok_or_else(|| {
-                            Error::new(ErrorKind::Unterminated("entity"), s)
-                        })?;
-                    let ent = &self.input[self.pos..self.pos + end];
-                    // Element content, not an attribute value: section
-                    // 3.3.3 does not apply, and a newline in content is
-                    // content.
-                    let expanded = self.expand_entity(ent, s, false)?;
-                    // The one thing in a text run the input does not
-                    // hold verbatim: this is where a run stops being a
-                    // slice and starts being a string.
-                    out.push_owned(&expanded, self.input);
-                    self.pos += end + 1;
-                }
-                _ => {
-                    let start = self.pos;
-                    while self.pos + 8 <= self.bytes.len() {
-                        let Ok(chunk) =
-                            self.bytes[self.pos..self.pos + 8].try_into()
-                        else {
-                            break;
-                        };
-                        let v = u64::from_ne_bytes(chunk);
-                        if Self::has_text_delimiter(v) {
-                            break;
-                        }
-                        self.pos += 8;
-                    }
-                    while self.pos < self.bytes.len()
-                        && self.bytes[self.pos] != b'<'
-                        && self.bytes[self.pos] != b'&'
-                    {
-                        self.pos += 1;
-                    }
-                    // The check at the top of the loop only sees the
-                    // first byte of a run. Everything after it was
-                    // consumed here without being looked at, so
-                    // `]]]>`, `abc]]>def` and the text left over after
-                    // a nested CDATA section all passed.
-                    let run = &self.input[start..self.pos];
-                    if let Some(at) = run.find("]]>") {
-                        return Err(Error::new(
-                            ErrorKind::IllegalCdataEnd,
-                            start + at,
-                        ));
-                    }
-                    out.push_slice(start, run, self.input);
-                }
+                b'&' => self.text_reference(out)?,
+                _ => self.text_chars(out)?,
             }
         }
+        Ok(())
+    }
+
+    /// A reference in character data, at `&`, expanded into `out`.
+    fn text_reference(&mut self, out: &mut Run) -> Result<()> {
+        let s = self.pos;
+        self.pos += 1;
+        let end = self.input[self.pos..]
+            .find(';')
+            .ok_or_else(|| Error::new(ErrorKind::Unterminated("entity"), s))?;
+        let ent = &self.input[self.pos..self.pos + end];
+        // Element content, not an attribute value: section 3.3.3 does
+        // not apply, and a newline in content is content.
+        let expanded = self.expand_entity(ent, s, false)?;
+        // The one thing in a text run the input does not hold
+        // verbatim: this is where a run stops being a slice and starts
+        // being a string.
+        out.push_owned(&expanded, self.input);
+        self.pos += end + 1;
+        Ok(())
+    }
+
+    /// Literal character data up to the next `<` or `&`, joined to
+    /// `out` as a slice of the input.
+    fn text_chars(&mut self, out: &mut Run) -> Result<()> {
+        let start = self.pos;
+        while self.pos + 8 <= self.bytes.len() {
+            let Ok(chunk) = self.bytes[self.pos..self.pos + 8].try_into()
+            else {
+                break;
+            };
+            let v = u64::from_ne_bytes(chunk);
+            if Self::has_text_delimiter(v) {
+                break;
+            }
+            self.pos += 8;
+        }
+        while self.pos < self.bytes.len()
+            && self.bytes[self.pos] != b'<'
+            && self.bytes[self.pos] != b'&'
+        {
+            self.pos += 1;
+        }
+        // The check at the top of the run's loop only sees the first
+        // byte of a run. Everything after it was consumed here without
+        // being looked at, so `]]]>`, `abc]]>def` and the text left
+        // over after a nested CDATA section all passed.
+        let run = &self.input[start..self.pos];
+        if let Some(at) = run.find("]]>") {
+            return Err(Error::new(ErrorKind::IllegalCdataEnd, start + at));
+        }
+        out.push_slice(start, run, self.input);
         Ok(())
     }
 
@@ -1847,86 +1849,98 @@ impl<'a> Parser<'a> {
     /// from markup.
     fn parse_attribute_value(&mut self) -> Result<Run> {
         let start = self.pos;
-        if self.pos >= self.bytes.len() {
-            return Err(Error::new(ErrorKind::UnexpectedEof, start));
-        }
-        let quote = self.bytes[self.pos];
-        if quote != b'"' && quote != b'\'' {
-            return Err(Error::new(ErrorKind::UnquotedAttributeValue, start));
-        }
-        self.pos += 1;
+        let quote = self.attribute_quote()?;
         let mut out = Run::default();
         loop {
-            if self.pos >= self.bytes.len() {
-                return Err(Error::new(
-                    ErrorKind::Unterminated("attribute value"),
-                    start,
-                ));
-            }
-            match self.bytes[self.pos] {
-                b if b == quote => {
+            match self.bytes.get(self.pos).copied() {
+                None => {
+                    return Err(Error::new(
+                        ErrorKind::Unterminated("attribute value"),
+                        start,
+                    ));
+                }
+                Some(b) if b == quote => {
                     self.pos += 1;
                     return Ok(out);
                 }
-                b'<' => {
+                Some(b'<') => {
                     return Err(Error::new(
                         ErrorKind::IllegalCharacter('<'),
                         self.pos,
                     ));
                 }
-                b'&' => {
-                    let s = self.pos;
-                    self.pos += 1;
-                    let end =
-                        self.input[self.pos..].find(';').ok_or_else(|| {
-                            Error::new(ErrorKind::Unterminated("entity"), s)
-                        })?;
-                    let ent = &self.input[self.pos..self.pos + end];
-                    // Normalisation happens inside the expansion, so
-                    // that a character reference within an entity's
-                    // replacement text stays exempt.
-                    let expanded = self.expand_entity(ent, s, true)?;
-                    out.push_owned(&expanded, self.input);
-                    self.pos += end + 1;
-                }
-                _ => {
-                    // Stopping at `<` as well lets the arm above report
-                    // it. Without this the run swallowed it, so
-                    // `a="<x"` was rejected and `a="1 < 2"` was not.
-                    let s = self.pos;
-                    while self.pos + 8 <= self.bytes.len() {
-                        let Ok(chunk) =
-                            self.bytes[self.pos..self.pos + 8].try_into()
-                        else {
-                            break;
-                        };
-                        let v = u64::from_ne_bytes(chunk);
-                        if Self::has_attr_delimiter(v, quote) {
-                            break;
-                        }
-                        self.pos += 8;
-                    }
-                    while self.pos < self.bytes.len()
-                        && self.bytes[self.pos] != quote
-                        && self.bytes[self.pos] != b'&'
-                        && self.bytes[self.pos] != b'<'
-                    {
-                        self.pos += 1;
-                    }
-                    // Normalisation only rewrites a value that
-                    // contains a tab or a line break, which almost
-                    // none do. When it would change nothing, the value
-                    // is a slice of the input and costs nothing.
-                    let raw = &self.input[s..self.pos];
-                    if raw.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\r')) {
-                        let mut normalized = String::new();
-                        push_attribute_normalized(&mut normalized, raw);
-                        out.push_owned(&normalized, self.input);
-                    } else {
-                        out.push_slice(s, raw, self.input);
-                    }
-                }
+                Some(b'&') => self.value_reference(&mut out)?,
+                Some(_) => self.value_chars(quote, &mut out),
             }
+        }
+    }
+
+    /// The quote that opens an attribute value, consumed.
+    fn attribute_quote(&mut self) -> Result<u8> {
+        match self.bytes.get(self.pos).copied() {
+            None => Err(Error::new(ErrorKind::UnexpectedEof, self.pos)),
+            Some(quote @ (b'"' | b'\'')) => {
+                self.pos += 1;
+                Ok(quote)
+            }
+            Some(_) => {
+                Err(Error::new(ErrorKind::UnquotedAttributeValue, self.pos))
+            }
+        }
+    }
+
+    /// A reference in an attribute value, at `&`, expanded into `out`.
+    fn value_reference(&mut self, out: &mut Run) -> Result<()> {
+        let s = self.pos;
+        self.pos += 1;
+        let end = self.input[self.pos..]
+            .find(';')
+            .ok_or_else(|| Error::new(ErrorKind::Unterminated("entity"), s))?;
+        let ent = &self.input[self.pos..self.pos + end];
+        // Normalisation happens inside the expansion, so that a
+        // character reference within an entity's replacement text
+        // stays exempt.
+        let expanded = self.expand_entity(ent, s, true)?;
+        out.push_owned(&expanded, self.input);
+        self.pos += end + 1;
+        Ok(())
+    }
+
+    /// Literal characters of an attribute value up to its closing
+    /// `quote`, a `&` or a `<`, joined to `out` normalised.
+    fn value_chars(&mut self, quote: u8, out: &mut Run) {
+        // Stopping at `<` as well lets the caller report it. Without
+        // this the run swallowed it, so `a="<x"` was rejected and
+        // `a="1 < 2"` was not.
+        let s = self.pos;
+        while self.pos + 8 <= self.bytes.len() {
+            let Ok(chunk) = self.bytes[self.pos..self.pos + 8].try_into()
+            else {
+                break;
+            };
+            let v = u64::from_ne_bytes(chunk);
+            if Self::has_attr_delimiter(v, quote) {
+                break;
+            }
+            self.pos += 8;
+        }
+        while self.pos < self.bytes.len()
+            && self.bytes[self.pos] != quote
+            && self.bytes[self.pos] != b'&'
+            && self.bytes[self.pos] != b'<'
+        {
+            self.pos += 1;
+        }
+        // Normalisation only rewrites a value that contains a tab or a
+        // line break, which almost none do. When it would change
+        // nothing, the value is a slice of the input and costs nothing.
+        let raw = &self.input[s..self.pos];
+        if raw.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\r')) {
+            let mut normalized = String::new();
+            push_attribute_normalized(&mut normalized, raw);
+            out.push_owned(&normalized, self.input);
+        } else {
+            out.push_slice(s, raw, self.input);
         }
     }
 

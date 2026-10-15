@@ -15,12 +15,10 @@ crates/oxml/src/dtd.rs	validate_entity_value	14	23	35	65
 crates/oxml/src/error.rs	ErrorKind::fmt	26	1	15	75
 crates/oxml/src/parser.rs	Parser<'a>::expand_entity	27	24	46	162
 crates/oxml/src/parser.rs	Parser<'a>::expand_text	19	8	43	84
-crates/oxml/src/parser.rs	Parser<'a>::parse_attribute_value	22	17	48	84
 crates/oxml/src/parser.rs	Parser<'a>::parse_attributes	11	7	31	45
 crates/oxml/src/parser.rs	Parser<'a>::parse_children	19	10	32	36
 crates/oxml/src/parser.rs	Parser<'a>::parse_document	15	14	28	48
 crates/oxml/src/parser.rs	Parser<'a>::parse_entity_body	12	10	22	35
-crates/oxml/src/parser.rs	Parser<'a>::parse_text_run	15	20	40	67
 crates/oxml/src/parser.rs	Parser<'a>::push_namespace_nodes	3	2	35	31
 crates/oxml/src/parser.rs	Parser<'a>::resolve_parts	11	5	26	33
 crates/oxml/src/parser.rs	check_text_decl	14	9	25	47
