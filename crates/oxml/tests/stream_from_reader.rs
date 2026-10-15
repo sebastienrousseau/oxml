@@ -417,6 +417,10 @@ fn encoded() -> Vec<Vec<u8>> {
         ),
         b"\xEF\xBB\xBF<?xml version='1.0' encoding='iso-8859-1'?><a>\xE9</a>"
             .to_vec(),
+        // A declaration whose own bytes are not UTF-8 is refused for
+        // them, as `decode` refuses it, before a version is read from
+        // what they would have said.
+        b"<?xml version='2.0\xC4'?><a/>".to_vec(),
     ]
 }
 

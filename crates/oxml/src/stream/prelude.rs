@@ -22,7 +22,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::encoding::{Encoding, check_bom_agrees, declared_encoding};
-use crate::error::Result;
+use crate::error::{Error, ErrorKind, Result};
 use crate::parser::{
     Version, check_prolog_shape, declared_standalone, declared_version,
     normalize_line_endings,
@@ -90,6 +90,7 @@ impl Prelude {
         // version, so a declaration wrong about both is refused for
         // its encoding, here as there.
         let encoding = choose_encoding(body, decl, sniffed)?;
+        check_utf8_declaration(body, decl, encoding)?;
         let version = declared_version(decl)?;
         check_prolog_shape(&head)?;
         let standalone =
@@ -220,6 +221,30 @@ fn declaration(head: &str, eof: bool) -> Option<&str> {
     }
 }
 
+/// Refuse a UTF-8 declaration whose bytes are not UTF-8, at the first
+/// byte that is not, as `decode` refuses it.
+///
+/// The head text takes such a byte as Latin-1 so that the `?>` past
+/// it can be found, which is right for finding the declaration and
+/// wrong for reading it: a version read from those characters was
+/// refused as unsupported, where every other reader stops at the byte.
+fn check_utf8_declaration(
+    body: &[u8],
+    decl: &str,
+    encoding: Encoding,
+) -> Result<()> {
+    if encoding != Encoding::Utf8 || decl.is_empty() {
+        return Ok(());
+    }
+    let end = body
+        .windows(2)
+        .position(|w| w == b"?>")
+        .map_or(body.len(), |i| i + 2);
+    core::str::from_utf8(&body[..end])
+        .map(|_| ())
+        .map_err(|e| Error::new(ErrorKind::MalformedEncoding, e.valid_up_to()))
+}
+
 /// Which decoder to use, from the mark and the declaration together,
 /// decided as [`crate::encoding::decode`] decides it and by the same
 /// functions.
@@ -255,7 +280,6 @@ fn choose_encoding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::ErrorKind;
 
     fn decide(bytes: &[u8], eof: bool) -> Result<Option<Decision>> {
         let mut p = Prelude::default();

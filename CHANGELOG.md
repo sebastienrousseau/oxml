@@ -92,6 +92,12 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 - **The streaming reader judges the encoding before the version**, as
   `decode` and `prepare` do in turn, so a declaration wrong about both
   is refused for its encoding by every reader.
+- **A UTF-8 declaration that is not UTF-8 is refused for its bytes.**
+  The streaming reader read the version from a declaration holding a
+  byte that is not UTF-8, taken as Latin-1, and refused
+  `<?xml version='2.0\xC4'?>` as `UnsupportedVersion`; `decode` refuses
+  it with `MalformedEncoding` at the byte, and so does the streaming
+  reader now.
 
 ## [0.0.10] - 2026-10-05
 
