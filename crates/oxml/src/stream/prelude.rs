@@ -86,9 +86,12 @@ impl Prelude {
         let Some(decl) = declaration(&head, eof) else {
             return Ok(None);
         };
+        // `decode` decides the encoding before `prepare` reads the
+        // version, so a declaration wrong about both is refused for
+        // its encoding, here as there.
+        let encoding = choose_encoding(body, decl, sniffed)?;
         let version = declared_version(decl)?;
         check_prolog_shape(&head)?;
-        let encoding = choose_encoding(body, decl, sniffed)?;
         let standalone =
             declared_standalone(&normalize_line_endings(decl, version));
         Ok(Some(Decision {

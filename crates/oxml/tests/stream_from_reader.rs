@@ -337,6 +337,10 @@ fn malformed() -> Vec<&'static str> {
         // for the name while the in-memory one read them as UTF-8.
         "<?xml version='1.0' encoding='EBCDIC-CP-US'<a/>",
         "<?xml version='1.0' encoding='UTF~8'<a/>",
+        // `decode` judges the encoding before `prepare` judges the
+        // version, so a declaration wrong on both is refused for the
+        // encoding.
+        "<?xml version='2.0' encoding='EBCDIC-CP-US'?><a/>",
         // Found by the stream_chunked fuzz target: a reference with no
         // `;` before the next markup, or before the quote that closes
         // its value. The in-memory reader found one further on and

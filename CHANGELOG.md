@@ -89,6 +89,9 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   so ` \x0c<?xml version="1.0"?>` was `MalformedDeclaration` in memory
   and `IllegalCharacter('\x0c')` when streamed. It trims XML's `S` now,
   and both report the form feed.
+- **The streaming reader judges the encoding before the version**, as
+  `decode` and `prepare` do in turn, so a declaration wrong about both
+  is refused for its encoding by every reader.
 
 ## [0.0.10] - 2026-10-05
 
