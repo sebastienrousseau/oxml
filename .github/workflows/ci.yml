@@ -491,6 +491,13 @@ jobs:
             xpath_eval)    : ;;   # structure-aware; generates its own input
             *)             cp fuzz/seeds/parse/* fuzz/corpus/${{ matrix.target }}/ ;;
           esac
+          # A target's own seeds, the inputs it has failed on among
+          # them, go in on every run: the restored corpus may predate
+          # them, and libFuzzer runs every corpus input before it
+          # mutates, so each is replayed first.
+          if [ "${{ matrix.target }}" != xpath_compile ] && [ -d "fuzz/seeds/${{ matrix.target }}" ]; then
+            cp "fuzz/seeds/${{ matrix.target }}"/* "fuzz/corpus/${{ matrix.target }}/"
+          fi
       - name: Fuzz for 300s
         run: >
           cargo fuzz run ${{ matrix.target }} --
