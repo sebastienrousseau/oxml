@@ -331,7 +331,7 @@ Two architectural choices motivate the design:
 
 - **All 2,557** decided W3C conformance tests pass, with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 641 tests and 34 doctests; 96.8% line coverage, gated in CI
+- 642 tests and 34 doctests; 96.8% line coverage, gated in CI
 - Seven fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not here:** XSD validation (that is [`xmlschema`](https://github.com/sebastienrousseau/xmlschema)),
@@ -1198,7 +1198,7 @@ vulnerability.
 ## Development
 
 ```bash
-cargo test --workspace --all-features   # 641 tests, plus 34 doctests
+cargo test --workspace --all-features   # 642 tests, plus 34 doctests
 cargo test --no-default-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check

@@ -318,6 +318,27 @@ fn a_line_separator_survives_a_version_11_round_trip() {
     assert_eq!(again.attribute(top, "k"), Some("a\u{2028}b"));
 }
 
+#[test]
+fn a_carriage_return_is_refused_in_a_comment_or_pi() {
+    // A comment or PI body is written verbatim, and a literal `\r`
+    // reads back as `\n` in every XML version: `<!--a\rb-->` parsed to
+    // a comment holding `a\nb`, so the output was not a fixed point.
+    // Character data can hold one, written as `&#13;`.
+    let (mut doc, top) = built();
+    for bad in ["a\rb", "\r\n", "\r"] {
+        assert_eq!(doc.append_comment(top, bad), Err(NodeError::InvalidText));
+        assert_eq!(doc.append_pi(top, "t", bad), Err(NodeError::InvalidText));
+    }
+    assert!(doc.children(top).is_empty(), "nothing was stored");
+    let _ = doc
+        .append_comment(top, "a\nb")
+        .expect("a newline is literal");
+    let _ = doc
+        .append_text(top, "a\rb")
+        .expect("text takes a reference");
+    let _ = round_trip(&doc);
+}
+
 // --- namespaces ---------------------------------------------------------
 
 #[test]

@@ -55,9 +55,14 @@ pub(super) fn check_text(text: &str) -> Result<(), NodeError> {
 }
 
 /// A comment or processing-instruction body: written verbatim, so
-/// held to what may appear literally in XML 1.0.
+/// held to what may appear literally in XML 1.0 and reads back as
+/// itself.
+///
+/// `\r` is a `Char` but not the second: line-end normalisation turns
+/// it into `\n` when the output is parsed, and a body has no
+/// reference syntax to protect it.
 pub(super) fn check_literal(text: &str) -> Result<(), NodeError> {
-    if text.chars().all(is_xml_char) {
+    if text.chars().all(|c| c != '\r' && is_xml_char(c)) {
         Ok(())
     } else {
         Err(NodeError::InvalidText)

@@ -58,9 +58,10 @@ pub enum NodeError {
     /// For character data and attribute values that is `NUL`, `U+FFFE`
     /// and `U+FFFF`; a control character is fine and goes out as a
     /// reference. A comment or processing instruction is written
-    /// verbatim, so it is also held to what may appear literally:
-    /// no control characters, no `--` in a comment, no `?>` in a
-    /// processing instruction.
+    /// verbatim, so it is also held to what may appear literally and
+    /// read back unchanged: no control characters, no carriage
+    /// return, no `--` in a comment, no `?>` in a processing
+    /// instruction.
     InvalidText,
 }
 

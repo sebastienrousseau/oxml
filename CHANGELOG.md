@@ -40,6 +40,11 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   it came back as a newline in text and as a space in an attribute
   value or namespace URI. The reference reads back as the character in
   both versions, as `&#133;` already did for U+0085.
+- **`append_comment` and `append_pi` refuse a carriage return.** A
+  comment or PI body is written verbatim, and a literal `\r` reads back
+  as `\n` in every XML version, so `<!--a\rb-->` did not survive its
+  own round trip. They now return `NodeError::InvalidText`; character
+  data still takes `\r`, written as `&#13;`.
 
 ## [0.0.10] - 2026-10-05
 

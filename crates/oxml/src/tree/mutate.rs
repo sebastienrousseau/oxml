@@ -169,7 +169,7 @@ impl Document {
     ///
     /// As [`Document::append_text`]; a comment also may not contain
     /// `--` or end with `-`, and is written verbatim so it may not
-    /// contain a control character.
+    /// contain a control character or a carriage return.
     pub fn append_comment(
         &mut self,
         parent: NodeId,
@@ -187,7 +187,8 @@ impl Document {
     ///
     /// As [`Document::append_text`]; [`NodeError::InvalidName`] if the
     /// target is not an `NCName` or is `xml` in any case, and
-    /// [`NodeError::InvalidText`] if the data contains `?>`.
+    /// [`NodeError::InvalidText`] if the data contains `?>`, a control
+    /// character or a carriage return.
     pub fn append_pi(
         &mut self,
         parent: NodeId,
