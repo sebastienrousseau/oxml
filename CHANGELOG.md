@@ -60,6 +60,13 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   as `\n` in every XML version, so `<!--a\rb-->` did not survive its
   own round trip. They now return `NodeError::InvalidText`; character
   data still takes `\r`, written as `&#13;`.
+- **The streaming reader ignores a declaration that never closes.**
+  `Reader::from_reader` read the `encoding` pseudo-attribute of a
+  `<?xml` with no `?>` anywhere in the input, and refused the document
+  for an unsupported or illegal name. `encoding::decode` and the tree
+  parser treat such a declaration as absent, decode as UTF-8 and
+  report the unterminated declaration, and the streaming reader now
+  does the same. Found by the `stream_chunked` fuzz target.
 
 ## [0.0.10] - 2026-10-05
 

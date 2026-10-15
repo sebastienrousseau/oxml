@@ -195,7 +195,10 @@ fn utf16_head(body: &[u8], big_endian: bool) -> String {
 ///
 /// Only a `<?xml` followed by whitespace is a declaration, as the
 /// tree parser's `xml_declaration` has it: `<?xml-stylesheet?>` at
-/// offset 0 is a processing instruction.
+/// offset 0 is a processing instruction. Nor is one that the input
+/// never closes with `?>`: `encoding::decode` and `xml_declaration`
+/// both read no version or encoding from it, and taking the whole
+/// input as its text found an `encoding` they never saw.
 fn declaration(head: &str, eof: bool) -> Option<&str> {
     let trimmed = head.trim_start_matches(WS);
     if trimmed.len() < 6 && !eof {
@@ -209,7 +212,7 @@ fn declaration(head: &str, eof: bool) -> Option<&str> {
     }
     match head.find("?>") {
         Some(end) => Some(&head[..end + 2]),
-        None if eof => Some(head),
+        None if eof => Some(""),
         None => None,
     }
 }

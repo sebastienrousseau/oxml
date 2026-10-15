@@ -332,6 +332,11 @@ fn malformed() -> Vec<&'static str> {
         // Found by the stream_chunked fuzz target: it panicked.
         " </aa>  </a>",
         " </a>",
+        // A declaration never closed by `?>` declares nothing, so its
+        // `encoding` is not read: the streaming reader refused these
+        // for the name while the in-memory one read them as UTF-8.
+        "<?xml version='1.0' encoding='EBCDIC-CP-US'<a/>",
+        "<?xml version='1.0' encoding='UTF~8'<a/>",
     ]
 }
 
