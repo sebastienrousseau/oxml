@@ -206,7 +206,7 @@ jobs:
           notes="doc/release-notes/$v.md"
           prev="$(git tag --sort=-v:refname | grep -v "^$GITHUB_REF_NAME$" | head -1)"
           {
-            sed -n '/^## Highlights/,/^## /{/^## Highlights/p;/^## [^H]/!p}' "$notes" | sed '$d'
+            awk '/^## Highlights/{printing=1} printing && /^## / && !/^## Highlights/{exit} printing{print}' "$notes"
             echo
             gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
               -f tag_name="$GITHUB_REF_NAME" -f previous_tag_name="$prev" \

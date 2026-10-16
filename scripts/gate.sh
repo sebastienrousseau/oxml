@@ -50,6 +50,7 @@ step() {
 step "no tracked build dir" bash -c '! git ls-files | grep -qx target'
 step "fmt"            cargo "+$TOOLCHAIN" fmt --all --check
 step "fmt fuzz"       cargo "+$TOOLCHAIN" fmt --manifest-path fuzz/Cargo.toml --check
+step "release highlights" python3 scripts/test-release-highlights.py
 step "clippy"         cargo "+$TOOLCHAIN" clippy --workspace --all-targets --all-features -- -D warnings
 step "tests"          cargo "+$TOOLCHAIN" test --workspace --all-features
 step "tests minimal"  cargo "+$TOOLCHAIN" test -p oxml --no-default-features --locked
