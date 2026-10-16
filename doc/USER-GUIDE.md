@@ -24,14 +24,14 @@ The long form. The README is the tour; this is the manual.
 
 ```toml
 [dependencies]
-oxml = "0.0.10"
+oxml = "0.0.11"
 ```
 
 Without XPath, or without `std`:
 
 ```toml
-oxml = { version = "0.0.10", default-features = false, features = ["std"] }
-oxml = { version = "0.0.10", default-features = false, features = ["xpath", "libm"] }
+oxml = { version = "0.0.11", default-features = false, features = ["std"] }
+oxml = { version = "0.0.11", default-features = false, features = ["xpath", "libm"] }
 ```
 
 `xpath` without `std` needs `libm`, because XPath requires `floor`,
@@ -317,7 +317,7 @@ yourself and call `parse`.
 ## `no_std`
 
 ```toml
-oxml = { version = "0.0.10", default-features = false, features = ["xpath", "libm"] }
+oxml = { version = "0.0.11", default-features = false, features = ["xpath", "libm"] }
 ```
 
 Needs `alloc`. CI builds for `thumbv7em-none-eabihf`,

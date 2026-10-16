@@ -14,6 +14,7 @@ exclude = ["fuzz"]
 #   - `oxml-mcp`  → https://github.com/sebastienrousseau/oxml-mcp
 #   - `oxml-lsp`  → https://github.com/sebastienrousseau/oxml-lsp
 #   - `xmlschema` → https://github.com/sebastienrousseau/xmlschema
+#   - `oxml-json` → https://github.com/sebastienrousseau/oxml-json
 #
 # `xmlschema` is the XSD member: it already exists on crates.io under a
 # name that means exactly that, so it keeps its name and becomes the

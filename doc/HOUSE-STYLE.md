@@ -1,7 +1,7 @@
 # House style for the oxml ecosystem
 
 Every repository in the suite — `oxml`, `xmlschema`, `oxml-cli`,
-`oxml-mcp`, `oxml-lsp`, `oxml-wasm` — conforms to this document.
+`oxml-mcp`, `oxml-lsp`, `oxml-wasm`, `oxml-json` — conforms to this document.
 
 It exists because "match noyalib" is not a checkable instruction. This
 is: each item below is either present or it is not, and CI can say
@@ -57,7 +57,7 @@ doc/
 ├── BENCHMARKS.md            method, machine, numbers, how to reproduce
 ├── COMPARISON.md            against libxml2, quick-xml, roxmltree, …
 ├── CONFORMANCE.md           W3C suite results (oxml, xmlschema)
-├── ECOSYSTEM.md             the six crates and how they fit
+├── ECOSYSTEM.md             the seven crates and how they fit
 ├── MIGRATION-FROM-*.md      one per alternative crate
 ├── MSRV-AND-DEPRECATION.md  the support policy
 ├── SECURITY-MODEL.md        threat model; what is refused and why

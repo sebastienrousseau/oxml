@@ -4,7 +4,8 @@
 
 oxml is pre-1.0. Only the most recent `0.0.x` release receives security
 fixes. The whole suite (oxml, oxml-cli, oxml-wasm, oxml-mcp, oxml-lsp,
-xmlschema) ships at one version, so a fix lands in all of them at once.
+xmlschema, oxml-json) ships at one version, so a fix lands in all of
+them at once.
 
 ## Reporting a vulnerability
 

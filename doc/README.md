@@ -32,8 +32,8 @@ checked, not illustrative.
 | [BENCHMARKS.md](BENCHMARKS.md) | Method and machine — and why no throughput figures are published |
 | [COMPARISON.md](COMPARISON.md) | Against quick-xml, roxmltree, sxd, libxml2, Xerces, Go, lxml |
 | [CONFORMANCE.md](CONFORMANCE.md) | W3C results, the 28 undecided tests, the ratchet |
-| [ECOSYSTEM.md](ECOSYSTEM.md) | The six crates and which one you want |
-| [MSRV-AND-DEPRECATION.md](MSRV-AND-DEPRECATION.md) | 1.86.0, versioning, deprecation |
+| [ECOSYSTEM.md](ECOSYSTEM.md) | The seven crates and which one you want |
+| [MSRV-AND-DEPRECATION.md](MSRV-AND-DEPRECATION.md) | 1.89.0, versioning, deprecation |
 | [ROADMAP.md](ROADMAP.md) | Where the plan stands, and what is left |
 | [RELEASING.md](RELEASING.md) | The 0.0.4 sequence, and why the order matters |
 | [SECURITY-MODEL.md](SECURITY-MODEL.md) | Threat model, XXE, entity budgets, stack bounds |

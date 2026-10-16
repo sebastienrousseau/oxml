@@ -2,7 +2,7 @@
 
 # Releasing
 
-The suite ships one version across six crates. The order is
+The suite ships one version across seven crates. The order is
 load-bearing, and this document was **wrong about it** the first time —
 the correction is below, because the mistake is easy to repeat.
 
@@ -16,14 +16,20 @@ takes a moment to recognise for what it is.
 
 ```
 oxml
- └── xmlschema
-      ├── oxml-cli
-      └── oxml-mcp
-oxml-wasm, oxml-lsp   (depend on oxml only)
+ ├── xmlschema
+ │    ├── oxml-cli
+ │    └── oxml-mcp
+ ├── oxml-wasm
+ └── oxml-lsp
+oxml-json
+ └── oxml-lsp
 ```
 
-**Publish in that order.** This file previously called `xmlschema` "a
-plain bump" and listed it last.
+`oxml-json` is a separate root in the dependency graph and must be
+published before `oxml-lsp`. It has no runtime dependency on `oxml`.
+
+**Publish dependencies before consumers.** This file previously called
+`xmlschema` "a plain bump" and listed it last.
 
 ## The API constraint
 
@@ -45,10 +51,17 @@ error with no remedy, which is worse than either.
 
 1. Merge and publish `oxml`.
 2. Merge and publish `xmlschema`.
-3. Per remaining satellite, in **one** commit: bump its version, bump
-   its dependencies, add whatever API the release requires. Then
-   publish.
-4. Confirm: `curl -s https://crates.io/api/v1/crates/<name>` for each.
+3. Merge and publish `oxml-json` before `oxml-lsp`; it may be prepared
+   independently of the XML library.
+4. Per remaining satellite, bump its version and dependencies and add
+   whatever API the release requires before merging and publishing.
+5. Confirm: `curl -s https://crates.io/api/v1/crates/<name>` for each.
+
+All seven release branches must be prepared before declaring the suite
+ready. Publishing still follows dependency order; a green check against
+an older published dependency does not prove compatibility with 0.0.11.
+For the current assessment, see
+[0.0.11 readiness](release-notes/0.0.11-readiness.md).
 
 `main` is protected on every repository, so every step is a pull
 request. That is the point — a release is not a reason to push to a
@@ -63,10 +76,11 @@ cargo publish --dry-run
 
 ## What the tag does
 
-Pushing `vX.Y.Z` runs `.github/workflows/release.yml`, which refuses
-to continue unless:
+Before pushing a tag, verify that its target is the approved release
+commit on `main`. Pushing `vX.Y.Z` runs `.github/workflows/release.yml`,
+which refuses to continue unless:
 
-- the tag matches `Cargo.toml` and is reachable from `main`;
+- the tag matches `Cargo.toml`;
 - the tag is an annotated tag signed by a key listed in
   `.github/allowed_signers`, with the message `oxml vX.Y.Z`;
 - `doc/release-notes/X.Y.Z.md` exists and has a `## Highlights`

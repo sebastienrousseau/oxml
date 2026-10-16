@@ -29,15 +29,15 @@
 - [Install](#install) — Cargo, source
 - [Quick Start](#quick-start) — parse and query in ten lines
 
-**The oxml ecosystem** (library + five satellite crates)
+**The oxml ecosystem** (library + six satellite crates)
 
-- [The oxml ecosystem](#the-oxml-ecosystem) — `oxml`, `oxml-cli`, `oxml-lsp`, `oxml-mcp`, `oxml-wasm`, `xmlschema` at a glance
+- [The oxml ecosystem](#the-oxml-ecosystem) — `oxml`, `oxml-cli`, `oxml-lsp`, `oxml-mcp`, `oxml-wasm`, `xmlschema`, `oxml-json` at a glance
 
 **Library reference**
 
 - [One-minute migration](#one-minute-migration) — name-for-name mapping from `sxd-xpath`, `roxmltree`, `quick-xml`, `libxml`
 - [Why this approach?](#why-this-approach) — design rationale
-- [Capabilities in 0.0.10](#capabilities-in-0010) — release inventory
+- [Capabilities in 0.0.11](#capabilities-in-0011) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — what each crate does and does not do
 - [Benchmarks](#benchmarks) — measured, with the method stated
 - [Features](#features) — cargo feature flags
@@ -77,14 +77,14 @@
 
 ```toml
 [dependencies]
-oxml = "0.0.10"
+oxml = "0.0.11"
 ```
 
 Parsing only, without the XPath engine:
 
 ```toml
 [dependencies]
-oxml = { version = "0.0.10", default-features = false, features = ["std"] }
+oxml = { version = "0.0.11", default-features = false, features = ["std"] }
 ```
 
 From source:
@@ -142,6 +142,7 @@ line; `0.1.0` follows `0.0.999`.
 | [`oxml-mcp`](https://github.com/sebastienrousseau/oxml-mcp) | Model Context Protocol server | [crates.io](https://crates.io/crates/oxml-mcp) |
 | [`oxml-wasm`](https://github.com/sebastienrousseau/oxml-wasm) | WebAssembly bindings | [crates.io](https://crates.io/crates/oxml-wasm) |
 | [`xmlschema`](https://github.com/sebastienrousseau/xmlschema) | XSD validation | [crates.io](https://crates.io/crates/xmlschema) |
+| [`oxml-json`](https://github.com/sebastienrousseau/oxml-json) | JSON support for the language server | [crates.io](https://crates.io/crates/oxml-json) |
 
 `xmlschema` keeps its existing published name rather than being
 repurposed into the core: the name means XSD validation, and that is
@@ -243,7 +244,7 @@ Two architectural choices motivate the design:
    are usually well-vetted, but their existence makes a
    security-conscious downstream audit meaningfully harder.
 
-## Capabilities in 0.0.10
+## Capabilities in 0.0.11
 
 **Parsing**
 
@@ -419,7 +420,7 @@ the optimisation, not after it.
 | `std` | ✅ | Standard library integration, including `std::error::Error` and `write_xml_to`. |
 | `xpath` | ✅ | The XPath 1.0 engine. Disable if you only need to parse. |
 | `libm` | | Floating-point functions for `xpath` without `std`. |
-| `async` | | `stream::AsyncReader` over `tokio::io::AsyncRead`; implies `std`, adds `tokio` (`io-util`, `sync`). |
+| `async` | | `stream::AsyncReader` over `tokio::io::AsyncRead`; implies `std`, adds `tokio` (`io-util`). |
 | `tracing` | | `tracing` spans around parsing, evaluation, serialisation and streaming. |
 
 All are additive. With none, the crate is `no_std` and provides the
@@ -793,7 +794,7 @@ give you deeper documents; it gives you a crash.
 | `std` | yes | `std::error::Error` for `Error`, and `String`/`Vec` from `std` |
 | `xpath` | yes | The XPath 1.0 engine. Separable because the tree alone is useful |
 | `libm` | no | `floor`/`ceil`/`trunc` from `libm` rather than `std`. Required to build `xpath` without `std` |
-| `async` | no | `stream::AsyncReader`. Implies `std`; adds `tokio` with only `io-util` and `sync` |
+| `async` | no | `stream::AsyncReader`. Implies `std`; adds `tokio` with only `io-util` |
 | `tracing` | no | `tracing` spans; adds `tracing` with no default features |
 
 Building `xpath` with neither `std` nor `libm` is a compile error with
@@ -803,9 +804,9 @@ functions that `core` does not provide.
 ### `no_std` is checked, not claimed
 
 `scripts/check-no-std.sh` runs in CI and builds **every** feature
-combination with `std` off — none, `libm`, and `xpath,libm` — against
-**every** bare-metal target: `thumbv7em-none-eabihf`,
-`riscv32imac-unknown-none-elf` and `aarch64-unknown-none`. Nine builds.
+combination with `std` off: none, `libm`, `xpath,libm`, and each with
+`tracing`, against **every** bare-metal target: `thumbv7em-none-eabihf`,
+`riscv32imac-unknown-none-elf` and `aarch64-unknown-none`. Eighteen builds.
 
 It also greps for `std::` that is not behind `#[cfg(feature = "std")]`,
 which the builds cannot catch on their own: a std-only call in a
@@ -1028,8 +1029,8 @@ cannot be made to leak a file. There is no option to enable it, which is
 the difference between safe and *safe if you remember to set the flag*.
 
 The cost is real and is stated rather than hidden: an error that lives
-inside an external entity cannot be detected, and those account for most
-of the remaining conformance failures. The specification does not
+inside external content not supplied by the caller cannot be detected.
+The specification does not
 require a non-validating parser to read the external subset.
 
 ### Does it expand entities at all?
@@ -1069,7 +1070,8 @@ fails with one clear message rather than a dozen missing-method errors.
 
 ### Is `forbid(unsafe_code)` just marketing?
 
-It is CI-enforced, and it prevents memory-unsafety. It does **not**
+It is CI-enforced and forbids unsafe code in this crate. Dependencies
+and the Rust runtime remain part of the trust boundary. It does **not**
 prevent a parser exhausting memory or spending ten minutes in a
 quadratic loop — two HIGH-severity 2026 advisories against another Rust
 XML crate were exactly that, in entirely safe code. `Limits` exists for
@@ -1228,8 +1230,9 @@ In summary:
 - **Entity expansion is bounded per document**, not per reference. A
   per-reference budget still lets a quadratic blowup through: a
   thousand small expansions cost a thousand times the budget.
-- **`#![forbid(unsafe_code)]`** rules out memory-corruption bugs, and
-  CI checks the attribute is still there.
+- **`#![forbid(unsafe_code)]`** forbids unsafe code in this crate, and
+  CI checks the attribute is still there. Dependencies and the Rust
+  runtime remain part of the memory-safety trust boundary.
 - **Recursion is bounded** by `Limits::max_depth`, because a stack
   overflow aborts the process rather than unwinding and no caller can
   catch it.

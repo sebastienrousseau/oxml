@@ -6,7 +6,7 @@ body:
     id: version
     attributes:
       label: oxml version
-      placeholder: "0.0.10"
+      placeholder: "0.0.11"
     validations:
       required: true
   - type: textarea
