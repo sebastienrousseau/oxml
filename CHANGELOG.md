@@ -35,7 +35,9 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   remains unbounded for compatibility.
 - **Release attestations use the registry artifact.** The workflow checks
   the downloaded crate against the registry checksum and tagged source
-  commit before attaching and attesting those exact bytes.
+  commit before attaching and attesting those exact bytes. Source
+  identity uses Cargo's `git.sha1` metadata field; dirty and mismatched
+  archives are rejected.
 
 ### Changed
 

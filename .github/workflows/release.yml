@@ -182,7 +182,7 @@ jobs:
               | .checksum | select(test("^[0-9a-f]{64}$"))')"
           (cd dist && printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --strict)
           tar -xOf "dist/$archive" "oxml-$v/.cargo_vcs_info.json" \
-            | jq -e --arg sha "$GITHUB_SHA" '.git.sha == $sha and .git.dirty != true'
+            | jq -e --arg sha "$GITHUB_SHA" '.git.sha1 == $sha and .git.dirty != true'
           cargo cyclonedx -p oxml --all-features --format json --override-filename "oxml-$v.cdx"
           mv "crates/oxml/oxml-$v.cdx.json" dist/
           (cd dist && sha256sum oxml-* > "oxml-$v.sha256")

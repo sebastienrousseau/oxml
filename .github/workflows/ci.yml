@@ -136,7 +136,7 @@ jobs:
         run: cargo fmt --all --check
       - name: Format fuzz targets
         run: cargo fmt --manifest-path fuzz/Cargo.toml --check
-      - name: Release highlights extraction
+      - name: Release input contracts
         run: python3 scripts/test-release-highlights.py
       - name: Clippy
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
