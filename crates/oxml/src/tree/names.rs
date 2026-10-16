@@ -14,7 +14,7 @@
 use alloc::string::String;
 
 use super::{Chars, Document, ExpandedName, NameId, NodeData, NodeError};
-use crate::parser::{is_name_char, is_name_start, is_xml_char};
+use crate::xml::{is_name_char, is_name_start, is_xml_char};
 
 /// Whether `s` is an `NCName`: a `Name` with no colon.
 pub(super) fn is_ncname(s: &str) -> bool {
@@ -93,6 +93,27 @@ pub(super) fn namespace_of(namespace: Option<&str>) -> Option<&str> {
     namespace.filter(|u| !u.is_empty())
 }
 
+/// A name may use the XML namespace, but never the XMLNS namespace.
+pub(super) fn check_namespace(
+    namespace: Option<&str>,
+) -> Result<(), NodeError> {
+    if let Some(uri) = namespace {
+        check_text(uri)?;
+        if uri == "http://www.w3.org/2000/xmlns/" {
+            return Err(NodeError::InvalidName);
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn check_namespace_binding(uri: &str) -> Result<(), NodeError> {
+    check_namespace(Some(uri))?;
+    if uri == "http://www.w3.org/XML/1998/namespace" {
+        return Err(NodeError::InvalidName);
+    }
+    Ok(())
+}
+
 impl Document {
     /// Intern a name, reusing the entry if the document already has it.
     ///
@@ -111,6 +132,7 @@ impl Document {
         if !is_ncname(local) {
             return Err(NodeError::InvalidName);
         }
+        check_namespace(namespace)?;
         let namespace = namespace_of(namespace);
         let found = self.names.iter().position(|n| {
             n.namespace.as_deref() == namespace && n.local == local

@@ -107,6 +107,8 @@ impl Document {
     ///
     /// # Errors
     ///
+    /// [`SerialiseError::NoRootElement`] when the document has no element.
+    ///
     /// [`SerialiseError::VersionConflict`] when the document needs XML
     /// 1.1 and a comment or processing instruction holds a character
     /// 1.1 does not keep literally.
@@ -133,6 +135,9 @@ impl Document {
     /// );
     /// ```
     pub fn try_to_xml(&self) -> Result<String, SerialiseError> {
+        if self.root_element().is_none() {
+            return Err(SerialiseError::NoRootElement);
+        }
         match self.version_conflict() {
             Some(conflict) => Err(conflict),
             None => Ok(self.to_xml()),
@@ -268,6 +273,11 @@ impl Document {
         match self.kind(id) {
             Some(NodeKind::Element { name, .. }) => {
                 self.write_element(id, name, out, options, depth, scope)
+            }
+            // XML's document-level whitespace is not a text node on
+            // reparse, so omit it from the canonical representation.
+            Some(NodeKind::Text(_)) if self.parent(id) == Some(self.root()) => {
+                Ok(())
             }
             Some(NodeKind::Text(t)) => write_text(t, out),
             Some(NodeKind::Comment(c)) => write!(out, "<!--{c}-->"),

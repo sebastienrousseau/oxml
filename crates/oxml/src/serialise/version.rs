@@ -15,6 +15,8 @@ use crate::tree::{Document, NameId, NodeId, NodeKind};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SerialiseError {
+    /// The document is still being built, or its root element was removed.
+    NoRootElement,
     /// The document needs XML 1.1, and a comment or processing
     /// instruction holds a character 1.1 does not keep literally.
     ///
@@ -35,6 +37,9 @@ pub enum SerialiseError {
 impl core::fmt::Display for SerialiseError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::NoRootElement => {
+                f.write_str("the document has no root element")
+            }
             Self::VersionConflict { character, .. } => write!(
                 f,
                 "the document needs XML 1.1, which cannot hold U+{:04X} \

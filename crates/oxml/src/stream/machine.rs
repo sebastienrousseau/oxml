@@ -50,10 +50,12 @@ enum Stage {
 /// a byte-order mark, and ISO-8859-1 when declared -- and their line
 /// endings normalised, under the version the XML declaration names;
 /// the declaration is read before anything after it is judged.
-/// Memory is bounded by the largest single construct, and that in
-/// turn by [`Limits::max_construct_bytes`]: text the scanner has
-/// passed is dropped, and a construct that grows past the cap without
-/// ending is refused rather than buffered until memory runs out.
+/// Passed text is compacted, and [`Limits::max_construct_bytes`]
+/// bounds each complete or incomplete construct. Feed small chunks
+/// and drain events between feeds: a single supplied chunk can hold
+/// many constructs awaiting consumption. [`Limits::max_input_bytes`]
+/// and [`Limits::max_document_bytes`] additionally bound total source
+/// and decoded bytes when configured.
 ///
 /// Errors are the ones [`crate::parse_bytes`] gives, at the same
 /// offsets into the decoded document, with one qualification: an
@@ -126,6 +128,8 @@ pub struct Core<'e> {
     /// to every offset, so a caller's caret lands in their document
     /// rather than in a window of it.
     consumed: usize,
+    /// Raw bytes accepted, including the encoding declaration and BOM.
+    source_bytes: usize,
 }
 
 impl core::fmt::Debug for Core<'_> {
@@ -169,6 +173,7 @@ impl<'e> Core<'e> {
             compacts: true,
             pending_end: None,
             consumed: 0,
+            source_bytes: 0,
         }
     }
 
@@ -204,7 +209,20 @@ impl<'e> Core<'e> {
     /// that is malformed, or grow a construct past
     /// [`Limits::max_construct_bytes`]. A failed reader stays failed.
     pub fn feed(&mut self, bytes: &[u8]) -> Result<()> {
-        self.guarded(|core| core.ingest(bytes))
+        self.guarded(|core| {
+            let total = core.source_bytes.checked_add(bytes.len()).ok_or_else(
+                || Error::new(ErrorKind::InputTooLarge, core.consumed),
+            )?;
+            core.carried.limits.check_input(total)?;
+            core.source_bytes = total;
+            // Bound transient decoding storage even when a caller
+            // supplies one very large slice. Source and decoded-byte
+            // budgets remain cumulative across all feeds.
+            for chunk in bytes.chunks(8192) {
+                core.ingest(chunk)?;
+            }
+            Ok(())
+        })
     }
 
     /// The source has ended; nothing more will be fed.
@@ -297,6 +315,7 @@ impl<'e> Core<'e> {
             // streaming reader, still waiting for it, yielded the end.
             while core.pending_end.is_none() && core.ready() {
                 core.compact();
+                core.check_construct()?;
                 let external: &dyn ExternalSource = core.external;
                 let skipped = scan::skip_eventless(
                     &core.text,
@@ -348,7 +367,11 @@ impl<'e> Core<'e> {
         standalone: bool,
     ) -> Result<()> {
         self.carried.declare(version, standalone);
-        self.stage = Stage::Body(Decoder::new(Encoding::Utf8, version));
+        self.stage = Stage::Body(Decoder::new(
+            Encoding::Utf8,
+            version,
+            self.carried.limits.max_document_bytes,
+        ));
         self.text = text;
         self.end.eof = true;
         self.compacts = false;
@@ -394,9 +417,10 @@ impl<'e> Core<'e> {
             }
             Stage::Prelude(prelude) => {
                 prelude.push(bytes);
-                let held = prelude.len();
-                self.check_cap(held, 0)?;
                 self.read_declaration()?;
+                if let Stage::Prelude(prelude) = &self.stage {
+                    self.check_cap(prelude.len(), 0)?;
+                }
             }
         }
         self.after_input()
@@ -421,7 +445,11 @@ impl<'e> Core<'e> {
     /// Move from the prelude to the body, returning the held bytes.
     fn begin(&mut self, decision: Decision) -> Vec<u8> {
         self.carried.declare(decision.version, decision.standalone);
-        let decoder = Decoder::new(decision.encoding, decision.version);
+        let decoder = Decoder::new(
+            decision.encoding,
+            decision.version,
+            self.carried.limits.max_document_bytes,
+        );
         match core::mem::replace(&mut self.stage, Stage::Body(decoder)) {
             Stage::Prelude(prelude) => prelude.into_bytes(),
             Stage::Body(_) => Vec::new(),
@@ -436,11 +464,21 @@ impl<'e> Core<'e> {
         }
         self.whole =
             whole(&mut self.probe, &self.text, &mut self.cursor, self.end.eof);
-        if self.whole {
-            return Ok(());
+        self.check_construct()
+    }
+
+    fn check_construct(&self) -> Result<()> {
+        if self.compacts {
+            let (start, bytes) = self.construct_bytes();
+            self.check_cap(bytes, start)?;
         }
+        Ok(())
+    }
+
+    fn construct_bytes(&self) -> (usize, usize) {
         let start = self.probe.map_or(self.cursor.pos, |p| p.start);
-        self.check_cap(self.text.len().saturating_sub(start), start)
+        let end = self.probe.and_then(|p| p.end()).unwrap_or(self.text.len());
+        (start, end.saturating_sub(start))
     }
 
     /// Refuse a construct that has grown past
@@ -503,9 +541,6 @@ fn whole(
     cursor: &mut Cursor,
     eof: bool,
 ) -> bool {
-    if eof {
-        return true;
-    }
     let in_content = !cursor.open.is_empty();
     if !in_content {
         cursor.pos = skip_whitespace(text, cursor.pos);
@@ -515,7 +550,7 @@ fn whole(
     if probe.start != start {
         *probe = Probe::at(start);
     }
-    probe.is_whole(text, in_content)
+    probe.is_whole(text, in_content) || eof
 }
 
 fn skip_whitespace(text: &str, mut pos: usize) -> usize {

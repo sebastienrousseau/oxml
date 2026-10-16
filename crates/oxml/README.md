@@ -284,9 +284,9 @@ Two architectural choices motivate the design:
   way back in
 - `<?xml version="1.1"?>` is emitted only when the document needs it --
   a control character, or a prefix unbound with `xmlns:p=""`
-- `Document::try_to_xml()` refuses, with `SerialiseError`, the one
-  thing a built document can hold that no version writes: content
-  only 1.1 can express beside a comment or PI only 1.0 keeps
+- `Document::try_to_xml()` refuses, with `SerialiseError`, a document
+  with no element or content only 1.1 can express beside a comment
+  or PI only 1.0 keeps
 - Every document in the conformance corpus is a fixed point: parse,
   serialise, parse again, and the trees agree
 
@@ -325,17 +325,18 @@ Two architectural choices motivate the design:
 
 **Safety and limits**
 
-- Ten configurable bounds, in three profiles
+- Configurable parsing and compilation bounds, in three profiles
 - External entities never dereferenced
 - Entity expansion bounded per document, not per reference
-- Recursion bounded, so no input reaches a stack overflow
+- Element and DTD recursion bounded by separate depth limits
+- Opt-in XPath evaluation budgets for work, nodes and string bytes
 
 **Verification**
 
 - **All 2,557** decided W3C conformance tests pass, with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 644 tests and 35 doctests; 96.8% line coverage, gated in CI
-- Seven fuzz targets, Miri, property tests, and a feature powerset build
+- 667 tests and 35 doctests; line coverage gated at a 95% floor in CI
+- Eight fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not here:** XSD validation (that is [`xmlschema`](https://github.com/sebastienrousseau/xmlschema)),
 XSLT, XPath 2.0 and later, and any I/O. The external DTD subset is
@@ -748,11 +749,17 @@ assert!(parse_with("<a><b/></a>", limits).is_ok());
 | `max_name_length` | 256 | 8192 | 1048576 |
 | `max_nodes` | 100000 | unbounded | unbounded |
 | `max_text_length` | 1048576 | unbounded | unbounded |
+| `max_input_bytes` | 8388608 | unbounded | unbounded |
+| `max_document_bytes` | 8388608 | unbounded | unbounded |
 | `max_entity_depth` | 4 | 10 | 40 |
 | `max_entity_expansion` | 100000 | 10000000 | 1000000000 |
 | `max_xpath_depth` | 32 | 256 | 1000 |
 | `max_xpath_operators` | 1000 | 10000 | 1000000 |
+| `max_xpath_bytes` | 65536 | 1048576 | unbounded |
+| `max_xpath_nodes` | 4000 | 40000 | 4000000 |
+| `max_xpath_arguments` | 1000 | 10000 | 1000000 |
 | `max_dtd_bytes` | 65536 | 16777216 | unbounded |
+| `max_dtd_depth` | 32 | 64 | 64 |
 | `max_pe_expansion` | 100000 | 10000000 | 1000000000 |
 | `max_construct_bytes` | 1048576 | 67108864 | unbounded |
 
@@ -916,9 +923,9 @@ assert_eq!(doc.text(doc.root()), "hi");
 ```
 
 UTF-8, UTF-16 (both byte orders, with or without a BOM) and
-ISO-8859-1 are decoded. A BOM overrides a declaration that disagrees
-with it. UTF-8 input is borrowed rather than copied, so the common
-case costs nothing.
+ISO-8859-1 are decoded. A BOM that contradicts a supported declared
+encoding is rejected. UTF-8 decoding borrows the input; constructing
+the document copies its normalized text into owned storage.
 
 Two failures that look alike are kept apart, because they are not the
 same problem:
@@ -1009,16 +1016,10 @@ trades time for memory. If throughput is what you mean by streaming,
 Both numbers are published because either alone misleads: a pass rate
 can be raised by skipping the hard tests.
 
-One failure remains, and it is not about external content at all:
-it needs **type-aware attribute-value normalisation**, where a
-tokenized `ATTLIST` type is stripped and collapsed and a `CDATA` one
-is not. Since the parser performs no I/O by construction, closing
-them means the caller supplying that content, not oxml fetching it.
-
-Entity replacement text being parsed as markup rather than substituted
-as characters was the previous leader and accounted for 13; that is
-done. Every remaining failure is the parser being too *permissive* —
-there is no document in the suite it wrongly rejects.
+There are no failures among the 2,557 decided cases. The 28 unsupported
+cases require namespace processing to be disabled (14), Namespaces 1.1
+coverage outside the harness's scoring scope (8), or unsupported
+encodings (6). Type-aware attribute normalization is implemented.
 
 ### Why does it not fetch external entities?
 
@@ -1113,10 +1114,10 @@ Yes, since 0.0.8. `Document::empty()` and the `Builder` create one;
 `append_element`, `append_text`, `set_attribute`, `declare_namespace`,
 `insert_at`, `reparent`, `detach` and `remove` edit one; `to_xml` and
 `write_xml_to` serialise it, and parsing the output gives the same tree
-back. Names and text are validated on the way in, so the API cannot
-produce a document the parser would reject. The one combination no
-XML version can write, a control character beside a comment holding
-U+0085, is refused by `try_to_xml`. See the
+back. Names, namespace URIs and text placement are validated on the
+way in. An incomplete document without a root element, or a combination
+no XML version can write (a control character beside a comment holding
+U+0085), is refused by `try_to_xml`. See the
 [`build_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/build_a_document.rs)
 example.
 
@@ -1179,8 +1180,9 @@ agree on, and the disagreement surfaces later as a bug somewhere else.
 
 ### Is it thread-safe?
 
-`Document` is `Send` and `Sync`; it is immutable after parsing, so any
-number of threads can query one. `XPath` is likewise `Send` and `Sync`,
+`Document` is `Send` and `Sync`; shared references support concurrent
+queries, while mutation requires an exclusive reference.
+`XPath` is likewise `Send` and `Sync`,
 which is what makes compile-once-evaluate-many work across a thread
 pool.
 
@@ -1203,7 +1205,7 @@ vulnerability.
 ## Development
 
 ```bash
-cargo test --workspace --all-features   # 644 tests, plus 35 doctests
+cargo test --workspace --all-features   # 667 tests, plus 35 doctests
 cargo test --no-default-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check

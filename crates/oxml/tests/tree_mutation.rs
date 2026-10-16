@@ -28,6 +28,51 @@ fn built() -> (Document, NodeId) {
     (doc, top)
 }
 
+#[test]
+fn invalid_and_reserved_namespace_uris_are_refused() {
+    let (mut doc, top) = built();
+    for uri in ["\0", "http://www.w3.org/2000/xmlns/"] {
+        assert!(doc.append_element(top, Some(uri), "x").is_err());
+        assert!(doc.set_attribute(top, Some(uri), "x", "v").is_err());
+        assert!(doc.declare_namespace(top, Some("p"), uri).is_err());
+    }
+    assert!(
+        doc.set_attribute(top, None, "xmlns", "urn:changed")
+            .is_err()
+    );
+    assert!(
+        doc.declare_namespace(
+            top,
+            Some("p"),
+            "http://www.w3.org/XML/1998/namespace"
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn text_placement_is_checked_before_every_edit() {
+    let (mut doc, top) = built();
+    assert!(doc.append_text(doc.root(), "outside").is_err());
+    assert!(doc.append_text(doc.root(), "\r").is_err());
+    let text = doc.append_text(top, "inside").unwrap();
+    assert!(doc.reparent(text, doc.root()).is_err());
+    assert!(doc.insert_at(doc.root(), 0, text).is_err());
+    assert_eq!(doc.parent(text), Some(top));
+    let space = doc.append_text(doc.root(), " ").unwrap();
+    assert!(doc.set_text(space, "outside").is_err());
+    assert_eq!(doc.text(space), " ");
+    let _ = round_trip(&doc);
+}
+
+#[test]
+fn fallible_serialization_requires_a_root_element() {
+    assert!(Document::empty().try_to_xml().is_err());
+    let (mut doc, top) = built();
+    doc.remove(top).unwrap();
+    assert!(doc.try_to_xml().is_err());
+}
+
 /// Serialise, reparse, and check the text is a fixed point.
 fn round_trip(doc: &Document) -> Document {
     let once = doc.to_xml();

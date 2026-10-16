@@ -65,6 +65,9 @@ struct P<'a> {
     /// The operator count at which the expression is refused, from
     /// [`Limits::max_xpath_operators`].
     max_ops: usize,
+    nodes: usize,
+    max_nodes: usize,
+    max_arguments: usize,
     /// Prefix-to-URI bindings for name tests.
     ///
     /// `XPath` 1.0 resolves a prefix against the *expression's* context,
@@ -103,6 +106,9 @@ pub fn compile(
     namespaces: &[(&str, &str)],
     limits: &Limits,
 ) -> Result<Compiled, XPathError> {
+    if limits.max_xpath_bytes.is_some_and(|max| expr.len() > max) {
+        return Err(error_at("expression exceeds the byte limit", 0));
+    }
     let mut p = P {
         s: expr,
         b: expr.as_bytes(),
@@ -111,6 +117,9 @@ pub fn compile(
         max_depth: limits.max_xpath_depth,
         ops: 0,
         max_ops: limits.max_xpath_operators,
+        nodes: 0,
+        max_nodes: limits.max_xpath_nodes,
+        max_arguments: limits.max_xpath_arguments,
         namespaces,
         variables: Vec::new(),
     };
@@ -147,10 +156,19 @@ impl P<'_> {
 
     /// Count one operator, step, predicate or call against the budget.
     fn charge(&mut self) -> Result<(), XPathError> {
+        self.charge_node()?;
         self.ops += 1;
         if self.ops > self.max_ops {
             return Err(self.err("expression has too many operators"));
         }
+        Ok(())
+    }
+
+    fn charge_node(&mut self) -> Result<(), XPathError> {
+        if self.nodes >= self.max_nodes {
+            return Err(self.err("expression has too many syntax nodes"));
+        }
+        self.nodes += 1;
         Ok(())
     }
 
@@ -213,7 +231,7 @@ impl P<'_> {
         let mut steps = Vec::new();
         match self.eat_separator() {
             Some(Separator::Double) => {
-                steps.push(self.descendant_step());
+                steps.push(self.descendant_step()?);
                 self.parse_relative_path(&mut steps)?;
             }
             Some(Separator::Single) => self.parse_relative_path(&mut steps)?,
@@ -307,6 +325,9 @@ impl P<'_> {
         let mut args = Vec::new();
         if self.peek() != Some(b')') {
             loop {
+                if args.len() >= self.max_arguments {
+                    return Err(self.err("function has too many arguments"));
+                }
                 args.push(self.parse_or()?);
                 if !self.eat(",") {
                     break;
@@ -324,7 +345,7 @@ impl P<'_> {
         let absolute = leading.is_some();
         let mut steps = Vec::new();
         if leading == Some(Separator::Double) {
-            steps.push(self.descendant_step());
+            steps.push(self.descendant_step()?);
         } else if absolute && self.at_path_end() {
             // A lone `/` selects the root and has no steps.
             return Ok(Expr::Path { absolute, steps });
@@ -336,10 +357,8 @@ impl P<'_> {
         // stack before `Limits::max_xpath_depth` can refuse the next.
         loop {
             steps.push(self.parse_step()?);
-            match self.eat_separator() {
-                Some(Separator::Double) => steps.push(self.descendant_step()),
-                Some(Separator::Single) => {}
-                None => return Ok(Expr::Path { absolute, steps }),
+            if !self.more_path_steps(&mut steps)? {
+                return Ok(Expr::Path { absolute, steps });
             }
         }
     }
@@ -352,11 +371,25 @@ impl P<'_> {
     ) -> Result<(), XPathError> {
         loop {
             steps.push(self.parse_step()?);
-            match self.eat_separator() {
-                Some(Separator::Double) => steps.push(self.descendant_step()),
-                Some(Separator::Single) => {}
-                None => return Ok(()),
+            if !self.more_path_steps(steps)? {
+                return Ok(());
             }
+        }
+    }
+
+    /// Called after a step returns, so this frame does not accumulate
+    /// while nested predicates are being parsed.
+    fn more_path_steps(
+        &mut self,
+        steps: &mut Vec<Step>,
+    ) -> Result<bool, XPathError> {
+        match self.eat_separator() {
+            Some(Separator::Double) => {
+                steps.push(self.descendant_step()?);
+                Ok(true)
+            }
+            Some(Separator::Single) => Ok(true),
+            None => Ok(false),
         }
     }
 
@@ -384,16 +417,14 @@ impl P<'_> {
 
     /// The `descendant-or-self::node()` step that `//` abbreviates.
     ///
-    /// Counted against the budget but not checked here: `//` is
-    /// always followed by a step, whose own [`P::charge`] reports the
-    /// overrun one token later.
-    fn descendant_step(&mut self) -> Step {
-        self.ops += 1;
-        Step {
+    /// Charged before constructing the implicit step.
+    fn descendant_step(&mut self) -> Result<Step, XPathError> {
+        self.charge()?;
+        Ok(Step {
             axis: Axis::DescendantOrSelf,
             test: NodeTest::Any,
             predicates: Vec::new(),
-        }
+        })
     }
 
     fn parse_step(&mut self) -> Result<Step, XPathError> {

@@ -12,19 +12,55 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ## [0.0.11] - Unreleased
 
+### Security
+
+- **DTD groups and conditional sections have a nesting limit.**
+  `Limits::max_dtd_depth` bounds both; content-model groups use an
+  iterative stack instead of recursion proportional to hostile input.
+- **Node limits reserve complete allocations.** Document-level comments
+  and processing instructions, attributes and namespace nodes now count
+  before allocation in both the tree parser and streaming reader.
+- **Streaming construct limits include completed constructs.** The reader
+  checks each construct boundary, including later events in an EOF feed,
+  without treating several small constructs as one oversized construct.
+- **Raw and decoded document limits precede owned copies.**
+  `max_input_bytes` and `max_document_bytes` are optional by default and
+  each 8 MiB in `Limits::strict()`. UTF-16 and Latin-1 expansion checks
+  the decoded limit before growing the output. Streaming charges decoded
+  UTF-8 bytes before XML line-ending normalization, as the tree parser does.
+- **XPath compilation bounds bytes, syntax nodes and arguments**, in
+  addition to depth and operators. Untrusted evaluation can opt into
+  per-call work, node and string reservations with
+  `EvalContext::with_limits(EvalLimits::default())`; legacy evaluation
+  remains unbounded for compatibility.
+- **Release attestations use the registry artifact.** The workflow checks
+  the downloaded crate against the registry checksum and tagged source
+  commit before attaching and attesting those exact bytes.
+
 ### Changed
 
 - **Breaking: the MSRV is now Rust 1.89.0** (was 1.86.0), one floor
   shared with the maintainer's other Rust crates.
+- **Exhaustive matches on `EvalError` must handle `LimitExceeded`.**
+  The new variant reports opt-in evaluation budgets; existing unbounded
+  entry points retain their behavior.
 - **The MSRV job checks its toolchain first.** It already set
   `RUSTUP_TOOLCHAIN`; it now also asserts `rustc --version` before
   building.
-- **`as_chunks` replaces two suppressed lints.** The UTF-16 decoder and
-  the conformance SHA-256 used `chunks_exact` under
+- **`as_chunks` replaces a suppressed lint.** The UTF-16 decoder used
+  `chunks_exact` under
   `#[allow(clippy::chunks_exact_to_as_chunks)]` because `as_chunks`
-  (1.88) was above the floor; both now use it.
+  (1.88) was above the floor; it now uses `as_chunks`.
 - **Lints the new floor enables**: let-chains for nested `if let`s and
   `is_multiple_of`, applied as clippy suggests. Behaviour is unchanged.
+- **Conformance checks use RustCrypto SHA-256** instead of a local
+  implementation. This is a tooling dependency, not a parser runtime
+  dependency. The 0.11.1 pin includes the upstream
+  [ARM64 round-constant fix](https://github.com/RustCrypto/hashes/pull/922).
+  Removed the duplicate conformance dependency and unused
+  Tokio `sync` feature.
+- **XML character and name rules live in a shared leaf module**, removing
+  the tree mutation layer's dependency on parser internals.
 
 ### Added
 
@@ -43,6 +79,14 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Fixed
 
+- **Tree mutation validates namespace URIs and document-level text.**
+  Invalid characters, reserved namespace bindings and text outside the
+  document element are rejected before mutation. `try_to_xml` reports
+  `NoRootElement` for an incomplete document. Serialization omits
+  document-level whitespace text, matching the parser's canonical tree.
+- **Package-only minimal-feature tests build independently.** XPath and
+  host-reader tests no longer rely on workspace feature unification.
+  CI now tests the parser package without default features directly.
 - **A detached subtree no longer decides the XML version.** The
   serialiser declared 1.1 for a control character anywhere in the
   arena, including a subtree `detach` had taken out of the document.

@@ -164,21 +164,18 @@ Miri, libm and the host disagreed by 2 ULP on `17.49`.
 
 ## Coverage
 
-≥95% of lines, gated in CI, measured with `cargo-llvm-cov`. Currently
-**96.8%**. It fell when 0.0.7 added streaming from a reader, and stays
-above the floor.
+≥95% of lines, gated in CI, measured with `cargo-llvm-cov` against the
+workspace test suite and W3C corpus.
 
-**Branch coverage is 91.7%**, gated at 80 by its own job. That needs a
+Branch coverage is gated at 80% by its own job. That needs a
 nightly toolchain — `cargo llvm-cov --branch` does not build on the
 version this project pins — and `cargo-llvm-cov` has no
 `--fail-under-branches`, so the floor is enforced by reading the
 summary. The check was tested against an 80% bar (passes) and a 95%
 bar (fails) before being relied on.
 
-Branch coverage was recorded as unmeasurable for a while, on the
-strength of one failed attempt with the pinned toolchain. That was a
-conclusion drawn from a single try, and the figure above is what it
-was hiding.
+Branch coverage was previously recorded as unmeasurable after a failed
+attempt with the stable toolchain. The nightly job measures it directly.
 
 Two exclusions, both narrow and deliberate: `conformance/src/bin/`,
 whose two `main()` functions shell out to the network and to `tar`.
@@ -218,7 +215,7 @@ powerset were the ones that did it — a `Vec` that resolves through the
 The individual commands:
 
 ```bash
-cargo test --workspace --all-features        # 644 tests + 35 doctests
+cargo test --workspace --all-features        # 667 tests + 35 doctests
 cargo test --no-default-features             # the no_std surface
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check

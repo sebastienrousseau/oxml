@@ -49,11 +49,17 @@ fn actual(limits: &Limits, field: &str) -> String {
         "max_name_length" => limits.max_name_length.to_string(),
         "max_nodes" => unbounded(limits.max_nodes),
         "max_text_length" => unbounded(limits.max_text_length),
+        "max_input_bytes" => unbounded(limits.max_input_bytes),
+        "max_document_bytes" => unbounded(limits.max_document_bytes),
         "max_entity_depth" => limits.max_entity_depth.to_string(),
         "max_entity_expansion" => limits.max_entity_expansion.to_string(),
         "max_xpath_depth" => limits.max_xpath_depth.to_string(),
         "max_xpath_operators" => limits.max_xpath_operators.to_string(),
+        "max_xpath_bytes" => unbounded(limits.max_xpath_bytes),
+        "max_xpath_nodes" => limits.max_xpath_nodes.to_string(),
+        "max_xpath_arguments" => limits.max_xpath_arguments.to_string(),
         "max_dtd_bytes" => unbounded(limits.max_dtd_bytes),
+        "max_dtd_depth" => limits.max_dtd_depth.to_string(),
         "max_pe_expansion" => limits.max_pe_expansion.to_string(),
         "max_construct_bytes" => unbounded(limits.max_construct_bytes),
         other => panic!(
@@ -124,6 +130,7 @@ fn the_table_documents_every_field() {
 /// were absent from all three and from the tests, and compiled to an
 /// empty result rather than an error, so nothing failed.
 #[test]
+#[cfg(feature = "xpath")]
 fn the_readme_lists_every_xpath_function_and_no_others() {
     let readme = include_str!("../README.md");
     let start = readme
@@ -163,6 +170,7 @@ fn the_readme_lists_every_xpath_function_and_no_others() {
 
 /// Whether a call to `name` compiles with anywhere from zero to three
 /// arguments.
+#[cfg(feature = "xpath")]
 fn compiles_at_some_arity(name: &str) -> bool {
     (0..=3).any(|n| {
         let args = ["'a'"; 3][..n].join(",");

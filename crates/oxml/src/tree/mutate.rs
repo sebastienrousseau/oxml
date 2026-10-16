@@ -110,6 +110,23 @@ impl Document {
 
     // --- appending -----------------------------------------------------
 
+    /// Root-level character data must remain literal XML whitespace.
+    /// A carriage return would be escaped by the writer, which is not
+    /// legal in the document's `Misc` production.
+    fn check_text_at(
+        &self,
+        parent: Option<NodeId>,
+        text: &str,
+    ) -> Result<(), NodeError> {
+        check_text(text)?;
+        if parent == Some(self.root())
+            && text.chars().any(|c| !matches!(c, ' ' | '\t' | '\n'))
+        {
+            return Err(NodeError::InvalidText);
+        }
+        Ok(())
+    }
+
     /// Add an element as the last child of `parent`.
     ///
     /// A `namespace` is the namespace *name* (the URI). No prefix is
@@ -158,7 +175,7 @@ impl Document {
         text: &str,
     ) -> Result<NodeId, NodeError> {
         self.container(parent)?;
-        check_text(text)?;
+        self.check_text_at(Some(parent), text)?;
         let chars = self.store_text(text);
         Ok(self.append_node(parent, NodeData::Text(chars)))
     }
@@ -224,7 +241,7 @@ impl Document {
             Some(NodeData::Text(c)) => *c,
             Some(_) => return Err(NodeError::NotText),
         };
-        check_text(text)?;
+        self.check_text_at(self.parent(id), text)?;
         let chars = self.replace_text(old, text);
         if let Some(n) = self.resolve_mut(id) {
             n.data = NodeData::Text(chars);
@@ -376,6 +393,9 @@ impl Document {
         self.container(new_parent)?;
         self.check_no_cycle(id, new_parent)?;
         self.refuse_second_root(new_parent, self.is_element(id), Some(id))?;
+        if let Some(super::NodeKind::Text(text)) = self.kind(id) {
+            self.check_text_at(Some(new_parent), text)?;
+        }
         self.unlink_from_parent(id);
         if let Some(n) = self.resolve_mut(id) {
             n.parent = Some(new_parent);

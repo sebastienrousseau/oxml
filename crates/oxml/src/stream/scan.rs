@@ -164,42 +164,18 @@ impl Cursor {
 struct NodeTally {
     /// Nodes so far, the document node included.
     count: usize,
-    /// A text run has been yielded but not yet counted.
-    ///
-    /// The tree parser accumulates a run and flushes it into a node
-    /// when the next construct arrives, *after* checking the limit
-    /// for that construct. Counting the run when it is yielded would
-    /// trip the limit one event early.
-    pending_text: bool,
 }
 
 impl NodeTally {
     const fn new() -> Self {
-        Self {
-            count: 1,
-            pending_text: false,
-        }
+        Self { count: 1 }
     }
 
-    /// The check the tree parser makes before each child, then the
-    /// flush of any text run it had been accumulating.
-    fn check(&mut self, limit: Option<usize>, at: usize) -> Result<()> {
-        if limit.is_some_and(|m| self.count > m) {
-            return Err(Error::new(ErrorKind::TooManyNodes, at));
-        }
-        if self.pending_text {
-            self.pending_text = false;
-            self.count += 1;
-        }
-        Ok(())
-    }
-
-    fn add(&mut self, nodes: usize) {
+    /// Reserve the same complete insertion the tree parser reserves.
+    fn add(&mut self, nodes: usize, limits: Limits, at: usize) -> Result<()> {
+        limits.check_nodes(self.count, nodes, at)?;
         self.count += nodes;
-    }
-
-    fn text(&mut self) {
-        self.pending_text = true;
+        Ok(())
     }
 }
 
@@ -285,6 +261,7 @@ fn eventless_step(
     cursor: &mut Cursor,
 ) -> Result<bool> {
     if !cursor.started {
+        parser.limits.check_nodes(0, 1, 0)?;
         declaration(parser)?;
         cursor.started = true;
         return Ok(true);
@@ -316,24 +293,32 @@ fn one_event<'a>(
     if cursor.open.is_empty() {
         return outside_root(parser, cursor);
     }
-    // Where the tree parser checks its arena: before each child.
-    cursor.nodes.check(parser.limits.max_nodes, parser.pos)?;
     if parser.pos >= parser.bytes.len() {
         return Err(Error::new(ErrorKind::UnexpectedEof, parser.pos));
     }
     if !parser.peek_is(b'<') || parser.starts_with("<![CDATA[") {
         let text = char_data(parser)?;
-        cursor.nodes.text();
+        tally_text(&text, &mut cursor.nodes, parser)?;
         return Ok(Scanned::Event(text));
     }
     if parser.starts_with("</") {
         return end_tag(parser, &mut cursor.open);
     }
-    if let Some(event) = misc(parser)? {
-        cursor.nodes.add(1);
+    if let Some(event) = misc(parser, &mut cursor.nodes)? {
         return Ok(Scanned::Event(event));
     }
     start_tag(parser, cursor)
+}
+
+fn tally_text(
+    event: &BorrowedEvent<'_>,
+    nodes: &mut NodeTally,
+    parser: &Parser<'_>,
+) -> Result<()> {
+    if matches!(event, BorrowedEvent::Text(t) if !t.is_empty()) {
+        nodes.add(1, parser.limits, parser.pos)?;
+    }
+    Ok(())
 }
 
 /// Consume the XML declaration, and nothing after it.
@@ -394,8 +379,7 @@ fn outside_root<'a>(
         // is never well-formed.
         return Err(Error::new(ErrorKind::TrailingContent, parser.pos));
     }
-    if let Some(event) = misc(parser)? {
-        cursor.nodes.add(1);
+    if let Some(event) = misc(parser, &mut cursor.nodes)? {
         return Ok(Scanned::Event(event));
     }
     if parser.starts_with("</") {
@@ -433,7 +417,13 @@ fn doctype(parser: &mut Parser<'_>, cursor: &Cursor) -> Result<()> {
 
 /// A comment or processing instruction, which may appear anywhere,
 /// or `None` if what comes next is neither.
-fn misc<'a>(parser: &mut Parser<'a>) -> Result<Option<BorrowedEvent<'a>>> {
+fn misc<'a>(
+    parser: &mut Parser<'a>,
+    nodes: &mut NodeTally,
+) -> Result<Option<BorrowedEvent<'a>>> {
+    if parser.starts_with("<!--") || parser.starts_with("<?") {
+        nodes.add(1, parser.limits, parser.pos)?;
+    }
     if parser.starts_with("<!--") {
         let c = parser.parse_comment()?;
         return Ok(Some(BorrowedEvent::Comment(chars_to_cow(parser, c))));
@@ -536,9 +526,11 @@ fn start_tag<'a>(
     // a node per declaration and, on the root element, one for the
     // `xml` prefix every document has.
     let is_root = parser.depth == 0;
-    cursor
-        .nodes
-        .add(1 + attributes.len() + tag.declared.len() + usize::from(is_root));
+    cursor.nodes.add(
+        1 + attributes.len() + tag.declared.len() + usize::from(is_root),
+        parser.limits,
+        parser.pos,
+    )?;
     let name = resolve(parser, tag.qname, true, at)?;
     let start = BorrowedEvent::StartElement {
         name: name.clone(),

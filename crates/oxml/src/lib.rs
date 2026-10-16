@@ -152,6 +152,7 @@ pub mod encoding;
 pub mod external;
 mod limits;
 mod names4e;
+mod xml;
 pub use limits::{Edition, Limits};
 
 pub use error::{Error, ErrorKind, Result};

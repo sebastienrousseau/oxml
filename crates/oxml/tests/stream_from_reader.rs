@@ -17,6 +17,8 @@
 //! before reporting it, and a malformed construct before it is
 //! reported first.
 
+#![cfg(feature = "std")]
+
 use std::fmt::Write as _;
 use std::io::{BufReader, Cursor, Read};
 

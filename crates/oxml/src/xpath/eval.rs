@@ -18,6 +18,7 @@ use super::ast::{Axis, BinaryOp, Expr, Step};
 use super::axes::{
     following_union, for_each_on_axis, preceding_union, test_matches,
 };
+use super::budget::{Budget, sort_factor, string_len};
 use super::compare::{compare, ieee_eq};
 use super::float;
 use super::functions::eval_function;
@@ -35,6 +36,102 @@ pub(crate) struct Ev<'a> {
     pub(crate) strict: bool,
     /// Where document order comes from.
     pub(crate) order: Order<'a>,
+    pub(crate) budget: Budget,
+}
+
+impl Ev<'_> {
+    pub(crate) fn node_string(
+        &self,
+        node: NodeId,
+    ) -> Result<String, EvalError> {
+        if !self.budget.bounded() {
+            return Ok(super::value::string_value(self.doc, node));
+        }
+        self.budget.charge(self.budget.document_cost)?;
+        self.budget.string(string_len(self.doc, node))?;
+        Ok(super::value::string_value(self.doc, node))
+    }
+
+    pub(crate) fn stringify(&self, value: &Value) -> Result<String, EvalError> {
+        if let Value::NodeSet(nodes) = value {
+            return nodes
+                .first()
+                .map_or_else(|| Ok(String::new()), |&id| self.node_string(id));
+        }
+        let bytes = match value {
+            Value::String(s) => s.len(),
+            Value::Boolean(_) => 5,
+            _ => 1024,
+        };
+        self.budget.string(bytes)?;
+        Ok(value.to_str(self.doc))
+    }
+
+    pub(crate) fn number(&self, value: &Value) -> Result<f64, EvalError> {
+        match value {
+            Value::NodeSet(_) => {
+                Ok(super::compare::xpath_number(&self.stringify(value)?))
+            }
+            Value::String(s) => {
+                self.budget.charge(s.len())?;
+                Ok(value.to_number(self.doc))
+            }
+            _ => Ok(value.to_number(self.doc)),
+        }
+    }
+
+    pub(crate) fn sort(
+        &self,
+        nodes: &mut Vec<NodeId>,
+    ) -> Result<(), EvalError> {
+        self.budget.nodes(nodes.len())?;
+        self.budget
+            .charge(nodes.len().saturating_mul(sort_factor(nodes.len())))?;
+        sort_document_order(&self.order, nodes);
+        Ok(())
+    }
+
+    fn reserve_axis(&self, axis: Axis, node: NodeId) -> Result<(), EvalError> {
+        if !self.budget.bounded() {
+            return Ok(());
+        }
+        let units = match axis {
+            Axis::Child => self.doc.children(node).len(),
+            Axis::Attribute => self.doc.attribute_nodes(node).len(),
+            Axis::SelfAxis | Axis::Parent => 1,
+            Axis::Namespace => {
+                return self.budget.charge(
+                    self.budget
+                        .document_cost
+                        .saturating_mul(self.doc.nodes.len()),
+                );
+            }
+            _ => return self.budget.charge(self.budget.document_cost),
+        };
+        self.budget.charge(
+            units.saturating_mul(self.budget.name_bytes.saturating_add(1)),
+        )
+    }
+
+    fn clone_value(&self, value: &Value) -> Result<Value, EvalError> {
+        self.budget.value(value)?;
+        match value {
+            Value::String(s) => self.budget.string(s.len())?,
+            Value::NodeSet(nodes) => self.check_variable_nodes(nodes)?,
+            _ => {}
+        }
+        Ok(value.clone())
+    }
+
+    fn check_variable_nodes(&self, nodes: &[NodeId]) -> Result<(), EvalError> {
+        self.budget.charge(nodes.len())?;
+        if self.budget.bounded()
+            && nodes.iter().any(|&id| self.doc.kind(id).is_none())
+        {
+            return Err(EvalError::Stale);
+        }
+        Ok(())
+    }
 }
 
 /// The context of one sub-expression: the node, and its proximity
@@ -63,6 +160,7 @@ pub(crate) fn evaluate(
         doc,
         vars,
         strict,
+        budget: Budget::new(doc, vars.limits)?,
         order: Order::for_document(doc),
     };
     let ctx = Ctx {
@@ -90,19 +188,40 @@ pub(crate) fn eval(
     expr: &Expr,
     c: Ctx,
 ) -> Result<Value, EvalError> {
+    ev.budget.charge(1)?;
+    let value = eval_value(ev, expr, c)?;
+    ev.budget.value(&value)?;
+    Ok(value)
+}
+
+fn eval_value(ev: &Ev<'_>, expr: &Expr, c: Ctx) -> Result<Value, EvalError> {
     match expr {
-        Expr::Literal(s) => Ok(Value::String(s.clone())),
+        Expr::Literal(s) => literal_value(ev, s),
         Expr::Number(n) => Ok(Value::Number(*n)),
-        Expr::Negate(inner) => {
-            Ok(Value::Number(-eval(ev, inner, c)?.to_number(ev.doc)))
-        }
+        Expr::Negate(inner) => negate_value(ev, inner, c),
         Expr::Variable(name) => lookup_variable(ev, name),
-        Expr::Path { absolute, steps } => {
-            let start = if *absolute { ev.doc.root() } else { c.node };
-            Ok(Value::NodeSet(eval_steps(ev, steps, alloc::vec![start])?))
-        }
+        Expr::Path { absolute, steps } => path_value(ev, *absolute, steps, c),
         compound => eval_compound(ev, compound, c),
     }
+}
+
+fn literal_value(ev: &Ev<'_>, text: &str) -> Result<Value, EvalError> {
+    ev.budget.string(text.len())?;
+    Ok(Value::String(String::from(text)))
+}
+
+fn negate_value(ev: &Ev<'_>, expr: &Expr, c: Ctx) -> Result<Value, EvalError> {
+    Ok(Value::Number(-ev.number(&eval(ev, expr, c)?)?))
+}
+
+fn path_value(
+    ev: &Ev<'_>,
+    absolute: bool,
+    steps: &[Step],
+    c: Ctx,
+) -> Result<Value, EvalError> {
+    let start = if absolute { ev.doc.root() } else { c.node };
+    Ok(Value::NodeSet(eval_steps(ev, steps, alloc::vec![start])?))
 }
 
 /// The expressions with sub-expressions.
@@ -124,12 +243,31 @@ fn lookup_variable(
     ev: &Ev<'_>,
     name: &ExpandedName,
 ) -> Result<Value, EvalError> {
-    ev.vars.variable(name).cloned().ok_or_else(|| {
-        EvalError::UnboundVariable(match &name.namespace {
-            Some(uri) => format!("{{{uri}}}{}", name.local),
-            None => name.local.clone(),
-        })
-    })
+    let bytes = name
+        .local
+        .len()
+        .saturating_add(name.namespace.as_ref().map_or(0, String::len));
+    ev.budget.charge(
+        ev.vars
+            .binding_count()
+            .saturating_mul(bytes.saturating_add(1)),
+    )?;
+    match ev.vars.variable(name) {
+        Some(value) => ev.clone_value(value),
+        None => unbound_variable(ev, name, bytes),
+    }
+}
+
+fn unbound_variable(
+    ev: &Ev<'_>,
+    name: &ExpandedName,
+    bytes: usize,
+) -> Result<Value, EvalError> {
+    ev.budget.string(bytes.saturating_add(2))?;
+    Err(EvalError::UnboundVariable(match &name.namespace {
+        Some(uri) => format!("{{{uri}}}{}", name.local),
+        None => name.local.clone(),
+    }))
 }
 
 /// `(primary)[pred].../step...`: the predicates filter the primary's
@@ -155,7 +293,7 @@ fn eval_filter(
     // Every node-set the evaluator builds is already in document
     // order; one bound to a variable came from the caller.
     if matches!(base, Expr::Variable(_)) {
-        sort_document_order(&ev.order, &mut nodes);
+        ev.sort(&mut nodes)?;
     }
     let kept = apply_predicates(ev, nodes, predicates)?;
     Ok(Value::NodeSet(eval_steps(ev, steps, kept)?))
@@ -191,15 +329,8 @@ fn eval_step(
     if let [only] = context {
         return step_from(ev, step, *only);
     }
-    if step.predicates.is_empty() {
-        if step.axis == Axis::Following {
-            return Ok(following_union(ev.doc, context, &step.test));
-        }
-        if step.axis == Axis::Preceding {
-            let mut out = preceding_union(ev.doc, context, &step.test);
-            sort_document_order(&ev.order, &mut out);
-            return Ok(out);
-        }
+    if let Some(nodes) = eval_axis_union(ev, step, context)? {
+        return Ok(nodes);
     }
     let mut seen = Seen::default();
     let mut out = Vec::new();
@@ -210,8 +341,31 @@ fn eval_step(
             }
         }
     }
-    sort_document_order(&ev.order, &mut out);
+    ev.sort(&mut out)?;
     Ok(out)
+}
+
+fn eval_axis_union(
+    ev: &Ev<'_>,
+    step: &Step,
+    context: &[NodeId],
+) -> Result<Option<Vec<NodeId>>, EvalError> {
+    if !step.predicates.is_empty() {
+        return Ok(None);
+    }
+    match step.axis {
+        Axis::Following => {
+            ev.budget.charge(ev.budget.document_cost)?;
+            Ok(Some(following_union(ev.doc, context, &step.test)))
+        }
+        Axis::Preceding => {
+            ev.budget.charge(ev.budget.document_cost)?;
+            let mut out = preceding_union(ev.doc, context, &step.test);
+            ev.sort(&mut out)?;
+            Ok(Some(out))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Section 2.4: the axis from one context node, filtered by the node
@@ -224,6 +378,7 @@ fn step_from(
     step: &Step,
     node: NodeId,
 ) -> Result<Vec<NodeId>, EvalError> {
+    ev.reserve_axis(step.axis, node)?;
     let mut candidates = Vec::new();
     for_each_on_axis(ev.doc, node, step.axis, &mut |found| {
         if test_matches(ev.doc, found, &step.test, step.axis) {
@@ -236,7 +391,7 @@ fn step_from(
     } else if step.axis == Axis::Namespace {
         // In-scope namespaces are gathered nearest declaration first,
         // which is not where the nodes sit in the document.
-        sort_document_order(&ev.order, &mut kept);
+        ev.sort(&mut kept)?;
     }
     Ok(kept)
 }
@@ -411,7 +566,7 @@ fn eval_binary(
         return Ok(decided);
     }
     let r = eval(ev, rhs, c)?;
-    Ok(apply_binary(ev, op, &l, &r))
+    apply_binary(ev, op, &l, &r)
 }
 
 /// A flat chain, folded from the left: the same answer the nested
@@ -430,7 +585,7 @@ fn eval_chain(
             return Ok(decided);
         }
         let r = eval(ev, rhs, c)?;
-        acc = apply_binary(ev, *op, &acc, &r);
+        acc = apply_binary(ev, *op, &acc, &r)?;
     }
     Ok(acc)
 }
@@ -450,13 +605,23 @@ fn short_circuit(op: BinaryOp, l: &Value) -> Option<Value> {
 /// For `and`/`or` the left side has already been through
 /// [`short_circuit`] and did not decide, so the answer is the right
 /// side's truth.
-fn apply_binary(ev: &Ev<'_>, op: BinaryOp, l: &Value, r: &Value) -> Value {
-    match op {
+fn apply_binary(
+    ev: &Ev<'_>,
+    op: BinaryOp,
+    l: &Value,
+    r: &Value,
+) -> Result<Value, EvalError> {
+    Ok(match op {
         BinaryOp::And | BinaryOp::Or => Value::Boolean(r.to_boolean()),
         BinaryOp::Union => {
+            ev.budget.nodes(
+                l.nodes()
+                    .map_or(0, <[NodeId]>::len)
+                    .saturating_add(r.nodes().map_or(0, <[NodeId]>::len)),
+            )?;
             let mut out = l.nodes().unwrap_or(&[]).to_vec();
             out.extend_from_slice(r.nodes().unwrap_or(&[]));
-            sort_document_order(&ev.order, &mut out);
+            ev.sort(&mut out)?;
             Value::NodeSet(out)
         }
         BinaryOp::Eq
@@ -464,17 +629,18 @@ fn apply_binary(ev: &Ev<'_>, op: BinaryOp, l: &Value, r: &Value) -> Value {
         | BinaryOp::Lt
         | BinaryOp::Le
         | BinaryOp::Gt
-        | BinaryOp::Ge => Value::Boolean(compare(ev.doc, op, l, r)),
+        | BinaryOp::Ge => {
+            ev.budget.comparison(l, r)?;
+            Value::Boolean(compare(ev.doc, op, l, r))
+        }
         BinaryOp::Add
         | BinaryOp::Sub
         | BinaryOp::Mul
         | BinaryOp::Div
-        | BinaryOp::Mod => Value::Number(arithmetic(
-            op,
-            l.to_number(ev.doc),
-            r.to_number(ev.doc),
-        )),
-    }
+        | BinaryOp::Mod => {
+            Value::Number(arithmetic(op, ev.number(l)?, ev.number(r)?))
+        }
+    })
 }
 
 fn arithmetic(op: BinaryOp, a: f64, b: f64) -> f64 {

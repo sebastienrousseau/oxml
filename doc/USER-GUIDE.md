@@ -24,14 +24,14 @@ The long form. The README is the tour; this is the manual.
 
 ```toml
 [dependencies]
-oxml = "0.0.4"
+oxml = "0.0.10"
 ```
 
 Without XPath, or without `std`:
 
 ```toml
-oxml = { version = "0.0.4", default-features = false, features = ["std"] }
-oxml = { version = "0.0.4", default-features = false, features = ["xpath", "libm"] }
+oxml = { version = "0.0.10", default-features = false, features = ["std"] }
+oxml = { version = "0.0.10", default-features = false, features = ["xpath", "libm"] }
 ```
 
 `xpath` without `std` needs `libm`, because XPath requires `floor`,
@@ -203,7 +203,25 @@ assert_eq!(total.evaluate(&doc).to_str(&doc), "14.49");
 
 A compiled `XPath` is document-independent and `Send + Sync`, so a
 server compiles at startup and evaluates per request across a thread
-pool.
+pool. For queries supplied by untrusted users, bound compilation and
+evaluation independently:
+
+```rust
+use oxml::{Limits, XPath, parse_with};
+use oxml::xpath::{EvalContext, EvalLimits};
+
+let limits = Limits::strict();
+let doc = parse_with("<r><a/><a/></r>", limits).unwrap();
+let query = XPath::compile_with_limits("count(//a)", &limits).unwrap();
+let context = EvalContext::new().with_limits(EvalLimits::default());
+assert_eq!(query.evaluate_with(&doc, &context).unwrap().to_number(&doc), 2.0);
+```
+
+Each evaluation receives fresh budgets. Work charges and string
+reservations are conservative upper bounds, not CPU timings or total
+allocator bytes. Legacy `evaluate` and contexts without `with_limits`
+remain unbounded. Converting a returned `Value` separately is outside
+the evaluation budget.
 
 Four value types, with XPath's own conversions:
 
@@ -287,8 +305,9 @@ assert_eq!(doc.text(doc.root()), "hi");
 ```
 
 UTF-8, UTF-16 in both byte orders with or without a BOM, and
-ISO-8859-1. A BOM overrides a declaration that disagrees with it. UTF-8
-is borrowed rather than copied.
+ISO-8859-1. A BOM selects the encoding; a contradictory declaration is
+rejected. `encoding::decode` borrows UTF-8, while parsing stores an
+owned normalized copy in the document.
 
 `MalformedEncoding` and `UnsupportedEncoding` are different failures:
 the first is a malformed document that every parser must reject, the
@@ -298,20 +317,22 @@ yourself and call `parse`.
 ## `no_std`
 
 ```toml
-oxml = { version = "0.0.4", default-features = false, features = ["xpath", "libm"] }
+oxml = { version = "0.0.10", default-features = false, features = ["xpath", "libm"] }
 ```
 
 Needs `alloc`. CI builds for `thumbv7em-none-eabihf`,
 `riscv32imac-unknown-none-elf` and `aarch64-unknown-none` on every
 push, so this is verified rather than claimed.
 
-Without `std` you lose `std::error::Error` for `Error`; everything else
-is present.
+Without `std`, host I/O adapters and `std::error::Error` implementations
+are absent. The parser, mutable tree, serializer and optional XPath
+remain available with `alloc`. Bare-metal builds do not verify an RTOS,
+allocator, stack budget or board at runtime.
 
 ## Threads
 
-`Document` and `XPath` are both `Send + Sync`. A document is immutable
-after parsing, so any number of threads can query one:
+`Document` and `XPath` are both `Send + Sync`. Shared references permit
+concurrent queries; mutations require exclusive access:
 
 ```rust
 use oxml::parse;
