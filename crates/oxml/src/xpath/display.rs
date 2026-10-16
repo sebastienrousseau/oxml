@@ -124,13 +124,18 @@ impl Render<'_> {
     /// One operand of `op`. A union's operands are path expressions in
     /// the grammar and `-` binds more loosely than `|`, so a negation
     /// there is parenthesised: `-1 | 2` would read back as `-(1 | 2)`.
+    /// A bare root path also needs grouping: `/ * 2` selects a wildcard
+    /// step instead of multiplying the root, and `/ or 2` starts a step
+    /// named `or`. Negating the root does not remove that ambiguity.
     fn operand(
         &self,
         op: BinaryOp,
         e: &Expr,
         f: &mut Formatter<'_>,
     ) -> fmt::Result {
-        if matches!(op, BinaryOp::Union) && matches!(e, Expr::Negate(_)) {
+        if (matches!(op, BinaryOp::Union) && matches!(e, Expr::Negate(_)))
+            || ends_with_root_path(e)
+        {
             f.write_char('(')?;
             self.expr(e, f)?;
             f.write_char(')')
@@ -243,6 +248,15 @@ impl Render<'_> {
             None => write!(f, "{{{uri}}}{local}"),
         }
     }
+}
+
+/// Whether an operand's rendering ends in a root slash that could
+/// consume the next operator as a path step.
+fn ends_with_root_path(mut e: &Expr) -> bool {
+    while let Expr::Negate(inner) = e {
+        e = inner;
+    }
+    matches!(e, Expr::Path { absolute: true, steps } if steps.is_empty())
 }
 
 /// `text()`, `comment()`, `processing-instruction()` with or without

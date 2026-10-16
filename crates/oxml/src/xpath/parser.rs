@@ -93,14 +93,14 @@ pub struct Compiled {
 /// Compile an `XPath` 1.0 expression with namespace prefixes bound
 /// to URIs, under `limits`.
 ///
-/// Only [`Limits::max_xpath_depth`] and
-/// [`Limits::max_xpath_operators`] apply to an expression; the other
-/// fields bound documents.
+/// The `max_xpath_*` fields bound nesting, operators, source bytes,
+/// syntax nodes and arguments per function call. Document limits do
+/// not apply to compilation.
 ///
 /// # Errors
 ///
 /// Returns [`XPathError`] if the expression is malformed, uses a
-/// prefix that `namespaces` does not bind, or exceeds either limit.
+/// prefix that `namespaces` does not bind, or exceeds a compilation limit.
 pub fn compile(
     expr: &str,
     namespaces: &[(&str, &str)],

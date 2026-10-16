@@ -149,15 +149,17 @@ impl XPath {
     /// (`1+1+1+...`) drives work. [`Limits::max_xpath_depth`] bounds
     /// the first and [`Limits::max_xpath_operators`] the second,
     /// counting every binary operator, unary minus, location step,
-    /// predicate and function call. The other fields of `Limits`
-    /// concern documents and are not consulted here.
+    /// predicate and function call. [`Limits::max_xpath_bytes`],
+    /// [`Limits::max_xpath_nodes`] and [`Limits::max_xpath_arguments`]
+    /// additionally bound source bytes, syntax storage and arguments
+    /// per function call. Document limits are not consulted here.
     ///
     /// [`XPath::compile`] is this with [`Limits::default`].
     ///
     /// # Errors
     ///
     /// Returns [`XPathError`] as [`XPath::compile`] does, and
-    /// additionally when the expression exceeds either bound; the
+    /// additionally when the expression exceeds a compilation limit; the
     /// message says which, and the offset is where the bound was
     /// crossed.
     ///
@@ -190,7 +192,7 @@ impl XPath {
     /// # Errors
     ///
     /// Returns [`XPathError`] for a malformed expression, an unbound
-    /// prefix, or an expression over either limit.
+    /// prefix, or an expression over a compilation limit.
     pub fn compile_with_namespaces_and_limits(
         expr: &str,
         namespaces: &[(&str, &str)],

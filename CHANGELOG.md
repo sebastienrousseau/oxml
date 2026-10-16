@@ -79,6 +79,11 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Fixed
 
+- **XPath rendering groups root-path operands.** A root slash followed
+  by `*` or a word operator could absorb that operator as a path step,
+  changing or invalidating the expression on recompilation. Grouping
+  preserves binary and chained expressions, including negated roots.
+  Found by the `xpath_compile` fuzz target.
 - **Tree mutation validates namespace URIs and document-level text.**
   Invalid characters, reserved namespace bindings and text outside the
   document element are rejected before mutation. `try_to_xml` reports

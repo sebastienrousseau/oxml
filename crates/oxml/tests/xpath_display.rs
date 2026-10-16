@@ -86,6 +86,23 @@ fn operators_are_parenthesised_by_level() {
 }
 
 #[test]
+fn root_operands_keep_their_token_boundaries() {
+    assert_eq!(
+        round_trips("omment*(/)*/*/comment()/*"),
+        "(child::omment * (/) * /child::*/child::comment()/child::*)"
+    );
+    for op in [
+        "or", "and", "=", "!=", "<", "<=", ">", ">=", "+", "-", "*", "div",
+        "mod", "|",
+    ] {
+        for root in ["(/)", "(-/)", "(--/)", "(--(-/))"] {
+            let _ = round_trips(&format!("{root} {op} 2"));
+            let _ = round_trips(&format!("1 {op} {root} {op} /r"));
+        }
+    }
+}
+
+#[test]
 fn literals_and_numbers_render_as_the_parser_reads_them() {
     assert_eq!(round_trips("'a'"), "'a'");
     assert_eq!(round_trips("\"it's\""), "\"it's\"");
