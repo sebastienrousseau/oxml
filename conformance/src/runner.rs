@@ -49,6 +49,7 @@ fn unsupported_reason(case: &TestCase) -> Option<&'static str> {
 /// in the parser is the point: the parser never opens a file, so
 /// supplying content is a decision made out here where it can be seen.
 fn sibling_files(path: &std::path::Path) -> Vec<(String, String)> {
+    const SUPPLIED: [&str; 4] = [".ent", ".dtd", ".pe", ".txt"];
     let Some(dir) = path.parent() else {
         return Vec::new();
     };
@@ -69,7 +70,6 @@ fn sibling_files(path: &std::path::Path) -> Vec<(String, String)> {
         // spent this session in the failure list for that reason,
         // while the parser had implemented the rule correctly all
         // along.
-        const SUPPLIED: [&str; 4] = [".ent", ".dtd", ".pe", ".txt"];
         if !SUPPLIED.iter().any(|ext| name.ends_with(ext)) {
             continue;
         }
@@ -103,6 +103,18 @@ pub fn run_one(case: &TestCase) -> Scored {
         return scored(Outcome::Unsupported, reason.to_owned());
     }
 
+    let parsed = parse_case(case, &bytes);
+    let Ok(parsed) = parsed else {
+        return scored(Outcome::Panic, "panicked".to_owned());
+    };
+    let (outcome, detail) = score_parsed(case.kind, parsed);
+    scored(outcome, detail)
+}
+
+fn parse_case(
+    case: &TestCase,
+    bytes: &[u8],
+) -> std::thread::Result<oxml::Result<oxml::Document>> {
     // `catch_unwind` so one panicking input reports as a panic rather
     // than ending the whole run. A panic is the worst outcome available
     // and must be visible per-test.
@@ -133,18 +145,22 @@ pub fn run_one(case: &TestCase) -> Scored {
         .collect();
     let source: &[(&str, &str)] = &pairs;
 
-    let parsed = std::panic::catch_unwind(|| {
-        let text = match oxml::encoding::decode(&bytes) {
+    std::panic::catch_unwind(|| {
+        let text = match oxml::encoding::decode(bytes) {
             Ok(text) => text,
             // The byte entry point owns decoding; fall back to it so an
             // encoding failure is reported exactly as before.
             Err(e) => return Err(e),
         };
         oxml::parse_with_external(&text, limits, &source)
-    });
-    let Ok(parsed) = parsed else {
-        return scored(Outcome::Panic, "panicked".to_owned());
-    };
+    })
+}
+
+/// Score a parser answer independently from filesystem access and panic handling.
+fn score_parsed(
+    kind: TestType,
+    parsed: oxml::Result<oxml::Document>,
+) -> (Outcome, String) {
     // An encoding this crate cannot decode is out of scope rather than
     // wrong. A *malformed* encoding name is not — that is a
     // well-formedness error and is scored normally.
@@ -152,7 +168,7 @@ pub fn run_one(case: &TestCase) -> Scored {
         parsed.as_ref().err().map(|e| &e.kind),
         Some(oxml::ErrorKind::UnsupportedEncoding)
     ) {
-        return scored(Outcome::Unsupported, "unsupported-encoding".to_owned());
+        return (Outcome::Unsupported, "unsupported-encoding".to_owned());
     }
 
     // `TYPE="error"` marks a condition the suite's own DTD says a
@@ -160,29 +176,26 @@ pub fn run_one(case: &TestCase) -> Scored {
     // what must not happen is a panic, and that is caught above. This
     // is scored rather than skipped because "we did not crash on it" is
     // a real result, and leaving it undecided understates coverage.
-    if case.kind == TestType::Error {
-        return scored(Outcome::Pass, "optional-error-test".to_owned());
+    if kind == TestType::Error {
+        return (Outcome::Pass, "optional-error-test".to_owned());
     }
 
-    match (case.kind, parsed) {
+    match (kind, parsed) {
         // Must accept, and did.
-        (TestType::Valid, Ok(_)) => scored(Outcome::Pass, String::new()),
-        (TestType::Valid, Err(e)) => {
-            scored(Outcome::Fail, format!("rejected a valid document: {e}"))
-        }
         // Must reject, and did.
-        (TestType::NotWellFormed, Err(_)) => {
-            scored(Outcome::Pass, String::new())
-        }
-        (TestType::NotWellFormed, Ok(_)) => scored(
-            Outcome::Fail,
-            "accepted a document that is not well-formed".to_owned(),
-        ),
         // A non-validating parser is *permitted* to accept these, and
         // `oxml` does not validate. Accepting is the correct outcome;
         // rejecting means we found it not well-formed, which is wrong.
-        (TestType::Invalid, Ok(_)) => scored(Outcome::Pass, String::new()),
-        (TestType::Invalid, Err(e)) => scored(
+        (TestType::Valid | TestType::Invalid, Ok(_))
+        | (TestType::NotWellFormed, Err(_)) => (Outcome::Pass, String::new()),
+        (TestType::Valid, Err(e)) => {
+            (Outcome::Fail, format!("rejected a valid document: {e}"))
+        }
+        (TestType::NotWellFormed, Ok(_)) => (
+            Outcome::Fail,
+            "accepted a document that is not well-formed".to_owned(),
+        ),
+        (TestType::Invalid, Err(e)) => (
             Outcome::Fail,
             format!("invalid document treated as not well-formed: {e}"),
         ),

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Everything CI runs, locally, in the order that fails fastest.
+# Core CI checks, locally, in the order that fails fastest. Coverage,
+# Miri, fuzzing and advisory scans run separately in isolated CI jobs.
 #
 # This exists because three separate pushes went out red on checks that
 # were green locally -- and each time the reason was the same: the
@@ -48,8 +49,11 @@ step() {
 # it -- every build job fails until it is removed.
 step "no tracked build dir" bash -c '! git ls-files | grep -qx target'
 step "fmt"            cargo "+$TOOLCHAIN" fmt --all --check
+step "fmt fuzz"       cargo "+$TOOLCHAIN" fmt --manifest-path fuzz/Cargo.toml --check
 step "clippy"         cargo "+$TOOLCHAIN" clippy --workspace --all-targets --all-features -- -D warnings
 step "tests"          cargo "+$TOOLCHAIN" test --workspace --all-features
+step "tests minimal"  cargo "+$TOOLCHAIN" test -p oxml --no-default-features --locked
+step "tests no_std XPath" cargo "+$TOOLCHAIN" test -p oxml --no-default-features --features xpath,libm --locked
 step "no_std"         cargo "+$TOOLCHAIN" build -p oxml --no-default-features --features libm,xpath
 step "no_std minimal" cargo "+$TOOLCHAIN" build -p oxml --no-default-features
 step "feature powerset" \
@@ -79,7 +83,6 @@ step "examples run" bash -c '
   meta="$(cargo metadata --no-deps --format-version 1 --locked)"
   for f in crates/oxml/examples/*.rs; do
     name=$(basename "$f" .rs)
-    cargo test --quiet --no-run >/dev/null 2>&1
     feats="$(jq -r --arg n "$name" ".packages[]
       | select(.name == \"oxml\") | .targets[]
       | select(.kind == [\"example\"] and .name == \$n)

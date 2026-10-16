@@ -165,16 +165,24 @@ jobs:
         with:
           tool: cargo-cyclonedx@0.5.9
 
-      # The exact archive crates.io serves, built here so its checksum
-      # can be attached and attested; plus an SBOM of what it depends
-      # on with every feature enabled.
+      # Download the immutable registry archive and verify both its
+      # checksum and source commit before attaching or attesting it.
       - name: Package, SBOM and checksums
         id: assets
         run: |
           v="${{ needs.preflight.outputs.version }}"
-          cargo package -p oxml --locked --allow-dirty
           mkdir -p dist
-          cp "target/package/oxml-$v.crate" dist/
+          archive="oxml-$v.crate"
+          curl --fail --silent --show-error --location --proto '=https' \
+            "https://static.crates.io/crates/oxml/$archive" --output "dist/$archive"
+          expected="$(curl --fail --silent --show-error --proto '=https' \
+            -H 'User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)' \
+            "https://crates.io/api/v1/crates/oxml/$v" \
+            | jq -er --arg v "$v" '.version | select(.crate == "oxml" and .num == $v) \
+              | .checksum | select(test("^[0-9a-f]{64}$"))')"
+          (cd dist && printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --strict)
+          tar -xOf "dist/$archive" "oxml-$v/.cargo_vcs_info.json" \
+            | jq -e --arg sha "$GITHUB_SHA" '.git.sha == $sha and .git.dirty != true'
           cargo cyclonedx -p oxml --all-features --format json --override-filename "oxml-$v.cdx"
           mv "crates/oxml/oxml-$v.cdx.json" dist/
           (cd dist && sha256sum oxml-* > "oxml-$v.sha256")

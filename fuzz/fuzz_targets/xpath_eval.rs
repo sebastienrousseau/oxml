@@ -8,6 +8,7 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
+use oxml::xpath::{EvalContext, EvalError, EvalLimits};
 
 /// A small, always-well-formed document plus an expression.
 #[derive(Debug, Arbitrary)]
@@ -23,16 +24,40 @@ struct Case {
 /// rather than to be random text — `xpath_compile` already fuzzes the
 /// parser.
 const EXPRS: &[&str] = &[
-    "/", "//a", "//a/b", "//a//b", "//@x", "//a/@*", "//text()",
-    "//comment()", "//node()", "//processing-instruction()",
-    "//a[1]", "//a[last()]", "//a[position() > 1]", "//a[@x]",
-    "//a[@x='1']", "count(//a)", "string(//a)", "//a | //b",
-    "//a/parent::*", "//a/ancestor::*", "//a/ancestor-or-self::*",
-    "//a/following-sibling::*", "//a/preceding-sibling::*",
-    "//a/descendant::*", "//a/self::a", "normalize-space(//a)",
-    "substring(string(//a), 2, 3)", "//a[count(b) > 0]",
-    "local-name(//a)", "namespace-uri(//a)", "sum(//a)",
-    "//a[string-length(.) > 2]", "round(1.5)", "floor(-1.5)",
+    "/",
+    "//a",
+    "//a/b",
+    "//a//b",
+    "//@x",
+    "//a/@*",
+    "//text()",
+    "//comment()",
+    "//node()",
+    "//processing-instruction()",
+    "//a[1]",
+    "//a[last()]",
+    "//a[position() > 1]",
+    "//a[@x]",
+    "//a[@x='1']",
+    "count(//a)",
+    "string(//a)",
+    "//a | //b",
+    "//a/parent::*",
+    "//a/ancestor::*",
+    "//a/ancestor-or-self::*",
+    "//a/following-sibling::*",
+    "//a/preceding-sibling::*",
+    "//a/descendant::*",
+    "//a/self::a",
+    "normalize-space(//a)",
+    "substring(string(//a), 2, 3)",
+    "//a[count(b) > 0]",
+    "local-name(//a)",
+    "namespace-uri(//a)",
+    "sum(//a)",
+    "//a[string-length(.) > 2]",
+    "round(1.5)",
+    "floor(-1.5)",
 ];
 
 fn build(c: &Case) -> String {
@@ -69,6 +94,19 @@ fuzz_target!(|case: Case| {
     // yields a value, never a panic.
     let value = x.evaluate(&doc);
     let _ = value.to_str(&doc);
+    let mut limits = EvalLimits::default();
+    limits.max_work = usize::from(case.depth).saturating_mul(256);
+    limits.max_nodes = usize::from(case.breadth);
+    limits.max_string_bytes = usize::from(case.expr_pick);
+    let context = EvalContext::new().with_limits(limits);
+    match x.evaluate_with(&doc, &context) {
+        Ok(bounded) => {
+            assert_eq!(bounded.to_str(&doc), value.to_str(&doc));
+            assert_eq!(bounded.nodes(), value.nodes());
+        }
+        Err(EvalError::LimitExceeded(_)) => {}
+        Err(error) => panic!("bounded evaluation changed semantics: {error}"),
+    }
     if let Some(nodes) = value.nodes() {
         for n in nodes {
             // Every returned node must be a real node of *this*

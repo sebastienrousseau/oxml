@@ -36,14 +36,13 @@ cargo test
 ## Before opening a pull request
 
 ```bash
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-cargo doc --no-deps
+./scripts/gate.sh
 ```
 
-All four must pass. CI runs the same commands, so a green local run
-means a green pipeline.
+The gate checks formatting, linting, feature-isolated tests, bare-metal
+builds, conformance, documentation, examples, packaging and the MSRV.
+CI additionally runs OS-specific tests, coverage, fuzzing, Miri and
+dependency security checks. A local pass does not replace those jobs.
 
 ## Signing off your work
 

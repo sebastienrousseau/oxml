@@ -66,10 +66,7 @@ fuzz_target!(|data: &[u8]| {
         (Err(s), Err(p)) => {
             // The same refusal, not merely both refusing.
             assert_eq!(s.kind, p.kind, "error kinds differ for {text:?}");
-            assert_eq!(
-                s.offset, p.offset,
-                "error offsets differ for {text:?}"
-            );
+            assert_eq!(s.offset, p.offset, "error offsets differ for {text:?}");
         }
         (Ok(_), Err(p)) => {
             panic!("the reader accepted what `parse` refused ({p}): {text:?}")

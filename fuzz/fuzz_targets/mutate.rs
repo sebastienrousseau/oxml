@@ -240,9 +240,5 @@ fn check_serialisation(doc: &Document) {
     assert_eq!(xml, doc.to_xml(), "try_to_xml and to_xml disagree");
     let reparsed = oxml::parse(&xml)
         .unwrap_or_else(|e| panic!("output does not parse: {e}\n{xml}"));
-    assert_eq!(
-        reparsed.to_xml(),
-        xml,
-        "serialisation is not a fixed point"
-    );
+    assert_eq!(reparsed.to_xml(), xml, "serialisation is not a fixed point");
 }

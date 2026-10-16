@@ -19,7 +19,7 @@ export RUSTFLAGS="${RUSTFLAGS:--D warnings}"
 TARGETS=(thumbv7em-none-eabihf riscv32imac-unknown-none-elf aarch64-unknown-none)
 # Every combination with `std` off. `xpath` alone is deliberately
 # impossible and is checked separately below.
-COMBOS=("" "libm" "xpath,libm")
+COMBOS=("" "libm" "xpath,libm" "tracing" "libm,tracing" "xpath,libm,tracing")
 FAILED=0
 
 echo "== every no_std feature combination, on every bare-metal target =="

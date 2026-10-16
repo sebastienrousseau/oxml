@@ -34,6 +34,8 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit
         run: cargo audit
+      - name: Audit fuzz workspace
+        run: cargo audit --file fuzz/Cargo.lock
 
   deny:
     name: cargo deny
