@@ -16,7 +16,7 @@ set -uo pipefail
 # the caller's. `git rev-parse` reads the *current* directory, so
 # running this by absolute path from anywhere else failed with
 # "fatal: not a git repository".
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 
 TOOLCHAIN="${OXML_TOOLCHAIN:-1.98.0}"
 # Read from Cargo.toml, as the CI MSRV job does. A literal here went
@@ -79,16 +79,19 @@ step "examples cover the API" python3 scripts/check-example-coverage.py
 # Cargo metadata as the CI job reads them: a bare `cargo run
 # --example` refuses `stream_async`, which needs `async`, and this
 # step failed on every run once that example existed.
-step "examples run" bash -c '
+step "examples run" bash -s <<'EXAMPLES'
+  set -euo pipefail
   meta="$(cargo metadata --no-deps --format-version 1 --locked)"
+  [ -n "$meta" ]
   for f in crates/oxml/examples/*.rs; do
     name=$(basename "$f" .rs)
-    feats="$(jq -r --arg n "$name" ".packages[]
-      | select(.name == \"oxml\") | .targets[]
-      | select(.kind == [\"example\"] and .name == \$n)
-      | (.\"required-features\" // []) | join(\",\")" <<< "$meta")"
-    cargo run --quiet --locked -p oxml --example "$name" --features "$feats" >/dev/null || exit 1
-  done'
+    feats="$(jq -r --arg n "$name" '.packages[]
+      | select(.name == "oxml") | .targets[]
+      | select(.kind == ["example"] and .name == $n)
+      | (."required-features" // []) | join(",")' <<< "$meta")"
+    cargo run --quiet --locked -p oxml --example "$name" --features "$feats" >/dev/null
+  done
+EXAMPLES
 
 # What `cargo publish` would upload, and whether the assurance case in
 # it describes this crate. oxml-json 0.0.8 shipped one inherited from

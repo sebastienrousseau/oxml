@@ -7,7 +7,7 @@
 # `std` prelude shipped and broke all three bare-metal jobs at once.
 # The build that would have caught it was not being run.
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)"
+cd "$(git rev-parse --show-toplevel)" || exit 1
 
 TOOLCHAIN="${OXML_TOOLCHAIN:-1.98.0}"
 # CI sets `RUSTFLAGS: -D warnings`, so a build that only warns there is
@@ -50,7 +50,7 @@ echo "== xpath without std or libm must fail, with an explanation =="
 # names the feature to add.
 out="$(cargo "+$TOOLCHAIN" build -p oxml --target "${TARGETS[0]}" \
         --no-default-features --features xpath 2>&1 || true)"
-if grep -q 'requires feature `libm`' <<< "$out"; then
+if grep -q "requires feature \`libm\`" <<< "$out"; then
   echo "  refused with the intended message                    ok"
 else
   echo "  FAIL: expected a compile_error naming libm"
