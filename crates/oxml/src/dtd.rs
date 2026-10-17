@@ -239,6 +239,8 @@ pub(crate) const LIMIT_PE: &str =
     "parameter entity expansion exceeds the limit";
 /// See [`LIMIT_NAME`].
 pub(crate) const LIMIT_DTD: &str = "the doctype exceeds the size limit";
+/// See [`LIMIT_NAME`].
+pub(crate) const LIMIT_DEPTH: &str = "the doctype exceeds the nesting limit";
 
 /// The [`ErrorKind`] a `DtdError` reason stands for.
 ///
@@ -256,6 +258,7 @@ pub(crate) fn error_kind(reason: &'static str) -> crate::ErrorKind {
         LIMIT_ATTRIBUTE => ErrorKind::AttributeTooLarge,
         LIMIT_PE => ErrorKind::EntityLimitExceeded,
         LIMIT_DTD => ErrorKind::DtdTooLarge,
+        LIMIT_DEPTH => ErrorKind::DtdDepthLimitExceeded,
         other => ErrorKind::MalformedDtd(other),
     }
 }
@@ -693,16 +696,12 @@ impl<'a> DtdParser<'a> {
         terminator: Option<u8>,
         depth: usize,
     ) -> Result<(), DtdError> {
+        self.check_dtd_depth(depth)?;
         loop {
             self.skip_ws();
             let start = self.pos;
-            match self.peek() {
-                None if terminator.is_none() => return Ok(()),
-                None => return Err((self.pos, "unterminated internal subset")),
-                Some(b) if Some(b) == terminator => return Ok(()),
-                Some(b'%') => self.subset_pe_reference(dtd, depth)?,
-                Some(b'<') => self.subset_markup(dtd, terminator, depth)?,
-                _ => return Err((self.pos, "expected a markup declaration")),
+            if self.subset_declaration(dtd, terminator, depth)? {
+                return Ok(());
             }
             // Only the outermost loop reads declaration text from the
             // document or an external subset; a nested one reads
@@ -711,6 +710,26 @@ impl<'a> DtdParser<'a> {
             if depth == 0 {
                 self.charge_dtd_bytes(dtd, self.pos - start, start)?;
             }
+        }
+    }
+
+    fn subset_declaration(
+        &mut self,
+        dtd: &mut Dtd,
+        terminator: Option<u8>,
+        depth: usize,
+    ) -> Result<bool, DtdError> {
+        match (self.peek(), terminator) {
+            (None, None) => Ok(true),
+            (None, _) => Err((self.pos, "unterminated internal subset")),
+            (Some(b), Some(end)) if b == end => Ok(true),
+            (Some(b'%'), _) => {
+                self.subset_pe_reference(dtd, depth).map(|()| false)
+            }
+            (Some(b'<'), _) => {
+                self.subset_markup(dtd, terminator, depth).map(|()| false)
+            }
+            _ => Err((self.pos, "expected a markup declaration")),
         }
     }
 
@@ -920,6 +939,7 @@ impl<'a> DtdParser<'a> {
     /// not mix `|` with `,`. Skipping to the closing parenthesis
     /// accepted both.
     fn parse_content_spec(&mut self) -> Result<(), DtdError> {
+        self.check_dtd_depth(1)?;
         self.pos += 1; // '('
         self.skip_ws();
         if self.starts_with("#PCDATA") {
@@ -971,40 +991,69 @@ impl<'a> DtdParser<'a> {
 
     /// A `choice` or `seq`, after its opening parenthesis.
     fn parse_group_tail(&mut self) -> Result<(), DtdError> {
-        // `None` until the first separator fixes which kind this is.
-        let mut separator: Option<u8> = None;
+        let mut groups = alloc::vec![None];
         loop {
+            self.check_dtd_depth(groups.len())?;
             self.skip_ws();
-            // Each particle is a name or a nested group.
             if self.peek() == Some(b'(') {
                 self.pos += 1;
-                self.parse_group_tail()?;
-            } else {
-                let _ = self.name()?;
+                self.check_dtd_depth(groups.len().saturating_add(1))?;
+                groups.push(None);
+                continue;
             }
+            let _ = self.name()?;
+            if self.finish_group_particle(&mut groups)? {
+                return Ok(());
+            }
+        }
+    }
+
+    fn check_dtd_depth(&self, depth: usize) -> Result<(), DtdError> {
+        if depth > self.limits.max_dtd_depth {
+            return Err((self.pos, LIMIT_DEPTH));
+        }
+        Ok(())
+    }
+
+    /// Finish a particle, then any enclosing groups that close with it.
+    fn finish_group_particle(
+        &mut self,
+        groups: &mut Vec<Option<u8>>,
+    ) -> Result<bool, DtdError> {
+        while let Some(separator) = groups.last_mut() {
             if matches!(self.peek(), Some(b'?' | b'*' | b'+')) {
                 self.pos += 1;
             }
             self.skip_ws();
-            match self.peek() {
-                Some(sep @ (b'|' | b',')) => {
-                    // A group is a choice or a sequence, never both.
-                    if separator.is_some_and(|s| s != sep) {
-                        return Err((
-                            self.pos,
-                            "a content model group cannot mix `|` and `,`",
-                        ));
-                    }
-                    separator = Some(sep);
-                    self.pos += 1;
-                }
-                Some(b')') => {
-                    self.pos += 1;
-                    return Ok(());
-                }
-                _ => return Err((self.pos, "malformed content model")),
+            if self.group_separator(separator)? {
+                return Ok(false);
             }
+            let _ = groups.pop();
         }
+        Ok(true)
+    }
+
+    /// A separator continues this group; a closing bracket completes it.
+    fn group_separator(
+        &mut self,
+        separator: &mut Option<u8>,
+    ) -> Result<bool, DtdError> {
+        let more = match self.peek() {
+            Some(sep @ (b'|' | b',')) => {
+                if separator.is_some_and(|s| s != sep) {
+                    return Err((
+                        self.pos,
+                        "a content model group cannot mix `|` and `,`",
+                    ));
+                }
+                *separator = Some(sep);
+                true
+            }
+            Some(b')') => false,
+            _ => return Err((self.pos, "malformed content model")),
+        };
+        self.pos += 1;
+        Ok(more)
     }
 
     fn parse_attlist_decl(&mut self, dtd: &mut Dtd) -> Result<(), DtdError> {

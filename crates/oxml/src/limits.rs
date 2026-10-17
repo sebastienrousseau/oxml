@@ -136,6 +136,18 @@ pub struct Limits {
     /// Default: `None`.
     pub max_text_length: Option<usize>,
 
+    /// Maximum source bytes, before decoding or copying the input.
+    ///
+    /// Also applies to incremental readers across all feeds. Default:
+    /// unbounded; strict: `8 MiB`.
+    pub max_input_bytes: Option<usize>,
+
+    /// Maximum UTF-8 bytes in the decoded document, before its copy.
+    ///
+    /// External content is checked before normalization too. Default:
+    /// unbounded; strict: `8 MiB`.
+    pub max_document_bytes: Option<usize>,
+
     /// Maximum nesting depth of an `XPath` expression.
     ///
     /// An expression is untrusted input in every front end of this
@@ -183,6 +195,19 @@ pub struct Limits {
     /// Default: `10_000`.
     pub max_xpath_operators: usize,
 
+    /// Maximum bytes of an expression, checked before parsing it.
+    /// Default: `1 MiB`; strict: `64 KiB`; permissive: unbounded.
+    pub max_xpath_bytes: Option<usize>,
+
+    /// Maximum syntax units (operands and operators) in an expression.
+    /// Bounds AST growth even for calls with many literal arguments.
+    /// Default: `40_000`; strict: `4_000`.
+    pub max_xpath_nodes: usize,
+
+    /// Maximum arguments in one function call, before parsing another.
+    /// Default: `10_000`; strict: `1_000`.
+    pub max_xpath_arguments: usize,
+
     /// Maximum total bytes of document type declaration text the DTD
     /// parser will read, if any.
     ///
@@ -200,6 +225,12 @@ pub struct Limits {
     ///
     /// [`ExternalSource`]: crate::external::ExternalSource
     pub max_dtd_bytes: Option<usize>,
+
+    /// Maximum nesting of DTD content groups and included sections.
+    ///
+    /// Default: `64`; strict: `32`. Content groups use a bounded
+    /// explicit stack. Included sections still use recursive descent.
+    pub max_dtd_depth: usize,
 
     /// Maximum total bytes of replacement text produced by expanding
     /// parameter entities in one document.
@@ -251,11 +282,17 @@ impl Default for Limits {
             max_name_length: 8_192,
             max_nodes: None,
             max_text_length: None,
+            max_input_bytes: None,
+            max_document_bytes: None,
             max_entity_depth: 10,
             max_entity_expansion: 10_000_000,
             max_xpath_depth: 256,
             max_xpath_operators: 10_000,
+            max_xpath_bytes: Some(1024 * 1024),
+            max_xpath_nodes: 40_000,
+            max_xpath_arguments: 10_000,
             max_dtd_bytes: Some(16 * 1024 * 1024),
+            max_dtd_depth: 64,
             max_pe_expansion: 10_000_000,
             max_construct_bytes: Some(64 * 1024 * 1024),
         }
@@ -263,6 +300,46 @@ impl Default for Limits {
 }
 
 impl Limits {
+    pub(crate) fn check_input(&self, len: usize) -> crate::Result<()> {
+        check_bytes(
+            len,
+            self.max_input_bytes,
+            crate::ErrorKind::InputTooLarge,
+            0,
+        )
+    }
+
+    pub(crate) fn check_document(
+        &self,
+        len: usize,
+        at: usize,
+    ) -> crate::Result<()> {
+        check_bytes(
+            len,
+            self.max_document_bytes,
+            crate::ErrorKind::DocumentTooLarge,
+            at,
+        )
+    }
+
+    /// Check an arena reservation before any of its nodes are allocated.
+    pub(crate) fn check_nodes(
+        &self,
+        current: usize,
+        additional: usize,
+        at: usize,
+    ) -> crate::Result<()> {
+        let total = current.checked_add(additional);
+        if total.is_none()
+            || self
+                .max_nodes
+                .is_some_and(|max| total.unwrap_or(usize::MAX) > max)
+        {
+            return Err(crate::Error::new(crate::ErrorKind::TooManyNodes, at));
+        }
+        Ok(())
+    }
+
     /// Bounds suitable for input you produced yourself.
     ///
     /// Raises every cap substantially and removes the optional ones.
@@ -284,11 +361,17 @@ impl Limits {
             max_name_length: 1024 * 1024,
             max_nodes: None,
             max_text_length: None,
+            max_input_bytes: None,
+            max_document_bytes: None,
             max_entity_depth: 40,
             max_entity_expansion: 1_000_000_000,
             max_xpath_depth: 1_000,
             max_xpath_operators: 1_000_000,
+            max_xpath_bytes: None,
+            max_xpath_nodes: 4_000_000,
+            max_xpath_arguments: 1_000_000,
             max_dtd_bytes: None,
+            max_dtd_depth: 64,
             max_pe_expansion: 1_000_000_000,
             max_construct_bytes: None,
         }
@@ -296,9 +379,9 @@ impl Limits {
 
     /// Bounds suitable for small documents from an untrusted source.
     ///
-    /// Tight enough that a single document cannot consume meaningful
-    /// memory or time. Will reject some legitimate large documents —
-    /// that is the intent.
+    /// Finite source, decoded-byte, structural and entity budgets.
+    /// Will reject some legitimate large documents. Callers still
+    /// need concurrency limits and a separate `XPath` evaluation policy.
     #[must_use]
     pub fn strict() -> Self {
         Self {
@@ -309,13 +392,32 @@ impl Limits {
             max_name_length: 256,
             max_nodes: Some(100_000),
             max_text_length: Some(1024 * 1024),
+            max_input_bytes: Some(8 * 1024 * 1024),
+            max_document_bytes: Some(8 * 1024 * 1024),
             max_entity_depth: 4,
             max_entity_expansion: 100_000,
             max_xpath_depth: 32,
             max_xpath_operators: 1_000,
+            max_xpath_bytes: Some(64 * 1024),
+            max_xpath_nodes: 4_000,
+            max_xpath_arguments: 1_000,
             max_dtd_bytes: Some(64 * 1024),
+            max_dtd_depth: 32,
             max_pe_expansion: 100_000,
             max_construct_bytes: Some(1024 * 1024),
         }
     }
+}
+
+/// Refuse a byte reservation before allocating its storage.
+pub(crate) fn check_bytes(
+    len: usize,
+    limit: Option<usize>,
+    kind: crate::ErrorKind,
+    at: usize,
+) -> crate::Result<()> {
+    if limit.is_some_and(|max| len > max) {
+        return Err(crate::Error::new(kind, at));
+    }
+    Ok(())
 }

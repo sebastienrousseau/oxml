@@ -14,7 +14,7 @@
 use alloc::string::String;
 
 use super::{Chars, Document, ExpandedName, NameId, NodeData, NodeError};
-use crate::parser::{is_name_char, is_name_start, is_xml_char};
+use crate::xml::{is_name_char, is_name_start, is_xml_char};
 
 /// Whether `s` is an `NCName`: a `Name` with no colon.
 pub(super) fn is_ncname(s: &str) -> bool {
@@ -55,9 +55,14 @@ pub(super) fn check_text(text: &str) -> Result<(), NodeError> {
 }
 
 /// A comment or processing-instruction body: written verbatim, so
-/// held to what may appear literally in XML 1.0.
+/// held to what may appear literally in XML 1.0 and reads back as
+/// itself.
+///
+/// `\r` is a `Char` but not the second: line-end normalisation turns
+/// it into `\n` when the output is parsed, and a body has no
+/// reference syntax to protect it.
 pub(super) fn check_literal(text: &str) -> Result<(), NodeError> {
-    if text.chars().all(is_xml_char) {
+    if text.chars().all(|c| c != '\r' && is_xml_char(c)) {
         Ok(())
     } else {
         Err(NodeError::InvalidText)
@@ -88,6 +93,27 @@ pub(super) fn namespace_of(namespace: Option<&str>) -> Option<&str> {
     namespace.filter(|u| !u.is_empty())
 }
 
+/// A name may use the XML namespace, but never the XMLNS namespace.
+pub(super) fn check_namespace(
+    namespace: Option<&str>,
+) -> Result<(), NodeError> {
+    if let Some(uri) = namespace {
+        check_text(uri)?;
+        if uri == "http://www.w3.org/2000/xmlns/" {
+            return Err(NodeError::InvalidName);
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn check_namespace_binding(uri: &str) -> Result<(), NodeError> {
+    check_namespace(Some(uri))?;
+    if uri == "http://www.w3.org/XML/1998/namespace" {
+        return Err(NodeError::InvalidName);
+    }
+    Ok(())
+}
+
 impl Document {
     /// Intern a name, reusing the entry if the document already has it.
     ///
@@ -106,6 +132,7 @@ impl Document {
         if !is_ncname(local) {
             return Err(NodeError::InvalidName);
         }
+        check_namespace(namespace)?;
         let namespace = namespace_of(namespace);
         let found = self.names.iter().position(|n| {
             n.namespace.as_deref() == namespace && n.local == local
@@ -133,11 +160,11 @@ impl Document {
         if text.is_empty() {
             return Chars::EMPTY;
         }
-        if let Some(i) = self.free_expanded.pop() {
-            if let Some(slot) = self.expanded.get_mut(i as usize) {
-                slot.push_str(text);
-                return Chars::Expanded(i);
-            }
+        if let Some(i) = self.free_expanded.pop()
+            && let Some(slot) = self.expanded.get_mut(i as usize)
+        {
+            slot.push_str(text);
+            return Chars::Expanded(i);
         }
         let id = u32::try_from(self.expanded.len())
             .expect("document exceeds u32::MAX texts");
@@ -151,25 +178,25 @@ impl Document {
     /// Pushing a new entry per replacement retained every old value:
     /// a thousand replacements of a 10 KB value held 10 MB.
     pub(super) fn replace_text(&mut self, old: Chars, text: &str) -> Chars {
-        if let Chars::Expanded(i) = old {
-            if let Some(slot) = self.expanded.get_mut(i as usize) {
-                slot.clear();
-                slot.push_str(text);
-                return old;
-            }
+        if let Chars::Expanded(i) = old
+            && let Some(slot) = self.expanded.get_mut(i as usize)
+        {
+            slot.clear();
+            slot.push_str(text);
+            return old;
         }
         self.store_text(text)
     }
 
     /// Give an expanded-text entry back for reuse.
     pub(super) fn release_chars(&mut self, chars: Chars) {
-        if let Chars::Expanded(i) = chars {
-            if let Some(slot) = self.expanded.get_mut(i as usize) {
-                // A fresh `String` rather than `clear`, which keeps the
-                // capacity: the point is to stop holding the bytes.
-                *slot = String::new();
-                self.free_expanded.push(i);
-            }
+        if let Chars::Expanded(i) = chars
+            && let Some(slot) = self.expanded.get_mut(i as usize)
+        {
+            // A fresh `String` rather than `clear`, which keeps the
+            // capacity: the point is to stop holding the bytes.
+            *slot = String::new();
+            self.free_expanded.push(i);
         }
     }
 

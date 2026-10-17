@@ -92,6 +92,7 @@ impl P<'_> {
     /// is kept for that reason, and the parity of the rest decides
     /// whether a single negation remains on top.
     fn parse_unary(&mut self) -> Result<Expr, XPathError> {
+        self.charge_node()?;
         let mut negations = 0_usize;
         while self.eat("-") {
             self.charge()?;

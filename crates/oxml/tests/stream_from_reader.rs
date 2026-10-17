@@ -17,6 +17,8 @@
 //! before reporting it, and a malformed construct before it is
 //! reported first.
 
+#![cfg(feature = "std")]
+
 use std::fmt::Write as _;
 use std::io::{BufReader, Cursor, Read};
 
@@ -110,11 +112,15 @@ fn drain(mut next: impl FnMut() -> oxml::Result<Option<Event>>) -> Outcome {
 
 /// What `parse_bytes` would see: decode, then read in memory.
 fn in_memory(bytes: &[u8]) -> Outcome {
-    let text = match oxml::encoding::decode(bytes) {
-        Ok(text) => text,
-        Err(e) => return (Vec::new(), Some((e.kind, e.offset))),
-    };
-    match Reader::new(&text) {
+    match oxml::encoding::decode(bytes) {
+        Ok(text) => read(&text),
+        Err(e) => (Vec::new(), Some((e.kind, e.offset))),
+    }
+}
+
+/// `Reader::new` over text that is already decoded.
+fn read(text: &str) -> Outcome {
+    match Reader::new(text) {
         Ok(mut r) => drain(|| r.next_event()),
         Err(e) => (Vec::new(), Some((e.kind, e.offset))),
     }
@@ -136,13 +142,59 @@ fn found_while_decoding(kind: &ErrorKind) -> bool {
     )
 }
 
+/// The length of a byte-order mark, which decoding offsets exclude.
+fn bom_len(bytes: &[u8]) -> usize {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        3
+    } else if bytes.starts_with(&[0xFE, 0xFF])
+        || bytes.starts_with(&[0xFF, 0xFE])
+    {
+        2
+    } else {
+        0
+    }
+}
+
+/// What `Reader::new` reports over the text that the bytes before
+/// `refused` decode to, in that text's offsets, shrinking the prefix
+/// past any earlier decoding error `decode` reported second.
+fn before_refusal(
+    bytes: &[u8],
+    mut refused: usize,
+) -> Option<(ErrorKind, usize)> {
+    let bom = bom_len(bytes);
+    loop {
+        match oxml::encoding::decode(&bytes[..bom + refused]) {
+            Ok(text) => return read(&text).1,
+            Err(e) if e.offset < refused => refused = e.offset,
+            Err(e) => return Some((e.kind, e.offset)),
+        }
+    }
+}
+
+/// Whether `got` is earlier than decoding's refusal at byte
+/// `refused`. A decoding error is placed in input bytes, every other
+/// error in decoded text, so each is compared in its own unit.
+fn is_earlier(bytes: &[u8], refused: usize, got: &(ErrorKind, usize)) -> bool {
+    match got {
+        (ErrorKind::MalformedEncoding, at) => *at <= refused,
+        (_, at) => {
+            before_refusal(bytes, refused).is_some_and(|(kind, there)| {
+                (&kind, there) == (&got.0, *at) || *at < there
+            })
+        }
+    }
+}
+
 /// The contract between the two readers.
 ///
 /// Exact agreement, except when the in-memory reader refused the
 /// document for a character or byte it found while decoding: the
 /// streaming reader decodes a chunk at a time, so it may have yielded
 /// the events before that point, and a malformed construct before it
-/// is reported first -- at an earlier offset, never a later one.
+/// is reported first -- at an earlier offset, never a later one. A
+/// decoding offset counts input bytes and any other offset counts
+/// decoded text, which in UTF-16 differ for the same place.
 fn agree(bytes: &[u8], chunk: usize, expected: &Outcome, got: &Outcome) {
     let label = || {
         format!(
@@ -154,15 +206,25 @@ fn agree(bytes: &[u8], chunk: usize, expected: &Outcome, got: &Outcome) {
         (events, Some((kind, offset)))
             if events.is_empty() && found_while_decoding(kind) =>
         {
-            let Some((got_kind, got_offset)) = &got.1 else {
+            let Some(reported) = &got.1 else {
                 panic!(
                     "{}: streamed read accepted what decoding refused",
                     label()
                 );
             };
+            let legitimate = *reported == (kind.clone(), *offset)
+                || match kind {
+                    ErrorKind::MalformedEncoding => {
+                        is_earlier(bytes, *offset, reported)
+                    }
+                    _ => {
+                        reported.0 != ErrorKind::MalformedEncoding
+                            && reported.1 < *offset
+                    }
+                };
             assert!(
-                (got_kind, got_offset) == (kind, offset) || got_offset < offset,
-                "{}: expected {kind:?} at {offset}, got {got_kind:?} at {got_offset}",
+                legitimate,
+                "{}: expected {kind:?} at {offset}, got {reported:?}",
                 label()
             );
         }
@@ -187,6 +249,11 @@ fn documents() -> Vec<String> {
     let pad = "x".repeat(1100);
     let mut docs: Vec<String> = [
         "<a/>",
+        // Whitespace before the root and no declaration: the reader
+        // used to skip the whitespace, then measure the absent
+        // declaration from offset 0 and slice behind its own cursor.
+        " <a/>",
+        "\n\t <a>x</a>",
         "<a><b>text</b></a>",
         "<a><b/><c/></a>",
         r#"<r xmlns:m="urn:u"><m:a k="1">x</m:a></r>"#,
@@ -264,6 +331,36 @@ fn malformed() -> Vec<&'static str> {
         "   ",
         "<",
         "<!-- no root -->",
+        // Found by the stream_chunked fuzz target: it panicked.
+        " </aa>  </a>",
+        " </a>",
+        // A declaration never closed by `?>` declares nothing, so its
+        // `encoding` is not read: the streaming reader refused these
+        // for the name while the in-memory one read them as UTF-8.
+        "<?xml version='1.0' encoding='EBCDIC-CP-US'<a/>",
+        "<?xml version='1.0' encoding='UTF~8'<a/>",
+        // `decode` judges the encoding before `prepare` judges the
+        // version, so a declaration wrong on both is refused for the
+        // encoding.
+        "<?xml version='2.0' encoding='EBCDIC-CP-US'?><a/>",
+        // Found by the stream_chunked fuzz target: a reference with no
+        // `;` before the next markup, or before the quote that closes
+        // its value. The in-memory reader found one further on and
+        // reported the span as an unknown entity's name; the
+        // streaming reader sees only to the construct's end.
+        "<g>am&></>>p;/></>>",
+        "<g>6&<!ENT>b/+&amp;/><",
+        "<g a=\"0&0\"[1]/><g>V<b/><b/ib4t&lt;",
+        // Whitespace before a declaration is XML whitespace only: a
+        // form feed is an illegal character, not a misplaced
+        // declaration.
+        " \u{c}\u{c}<?xml version=\"1.0\"?>\u{c}\u{c}",
+        // Found by the stream_chunked fuzz target: the end of a
+        // self-closed root is an event of its own, owed before
+        // anything after it is judged. The in-memory reader judged a
+        // trailing DOCTYPE first and never yielded it.
+        "<!DOCTYPE g><b/><!DOCTYPE g>",
+        "<b/><!DOCTYPE g>",
     ]
 }
 
@@ -309,6 +406,29 @@ fn encoded() -> Vec<Vec<u8>> {
         b"<a>\xE2\x82</a>".to_vec(),
         b"<a><b>fine</b>\xFF</a>".to_vec(),
         utf16("<a>\u{1F600}", false, true)[..9].to_vec(),
+        // Found by the stream_chunked fuzz target: UTF-16BE by shape,
+        // a NUL at input byte 12 (text offset 16) and an odd byte at
+        // input byte 16. The harness compared the two 16s.
+        b"\0<< `&a<\0\0m".to_vec(),
+        // Found by the stream_chunked fuzz target: the encoding is
+        // read from the declaration's bytes, as `decode` reads it. A
+        // byte that is not UTF-8 before `encoding` moved the offset
+        // the streaming reader reported; a name `decode` ignores
+        // under a UTF-16 mark refused the document; and a UTF-8 mark
+        // that contradicts the declaration was let through by
+        // `decode` when a later byte was not UTF-8.
+        b"<?xml \x8f encoding='UTF~8'?><a/>".to_vec(),
+        utf16(
+            "<?xml version='1.0' encoding='EBCDIC-CP-US'?><a>x</a>",
+            false,
+            true,
+        ),
+        b"\xEF\xBB\xBF<?xml version='1.0' encoding='iso-8859-1'?><a>\xE9</a>"
+            .to_vec(),
+        // A declaration whose own bytes are not UTF-8 is refused for
+        // them, as `decode` refuses it, before a version is read from
+        // what they would have said.
+        b"<?xml version='2.0\xC4'?><a/>".to_vec(),
     ]
 }
 
@@ -465,10 +585,10 @@ fn a_document_larger_than_the_buffer_is_read() {
         Reader::from_reader(trickle(doc.as_bytes(), 64)).expect("valid");
     let mut items = 0usize;
     while let Some(event) = reader.next_event().expect("valid") {
-        if let Event::StartElement { name, .. } = event {
-            if name.local == "item" {
-                items += 1;
-            }
+        if let Event::StartElement { name, .. } = event
+            && name.local == "item"
+        {
+            items += 1;
         }
     }
     assert_eq!(

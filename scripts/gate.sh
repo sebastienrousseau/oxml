@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Everything CI runs, locally, in the order that fails fastest.
+# Core CI checks, locally, in the order that fails fastest. Coverage,
+# Miri, fuzzing and advisory scans run separately in isolated CI jobs.
 #
 # This exists because three separate pushes went out red on checks that
 # were green locally -- and each time the reason was the same: the
@@ -15,10 +16,13 @@ set -uo pipefail
 # the caller's. `git rev-parse` reads the *current* directory, so
 # running this by absolute path from anywhere else failed with
 # "fatal: not a git repository".
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 
 TOOLCHAIN="${OXML_TOOLCHAIN:-1.98.0}"
-MSRV="${OXML_MSRV:-1.86.0}"
+# Read from Cargo.toml, as the CI MSRV job does. A literal here went
+# stale when the floor moved to 1.89.0, and the gate went on proving
+# a toolchain the crate no longer promises.
+MSRV="${OXML_MSRV:-$(grep -m1 '^rust-version' Cargo.toml | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')}"
 # CI sets this for every job. This script did not, so it was weaker
 # than the thing it exists to predict: a `no_std` build that only
 # warned passed here and turned all three bare-metal jobs red on the
@@ -45,8 +49,12 @@ step() {
 # it -- every build job fails until it is removed.
 step "no tracked build dir" bash -c '! git ls-files | grep -qx target'
 step "fmt"            cargo "+$TOOLCHAIN" fmt --all --check
+step "fmt fuzz"       cargo "+$TOOLCHAIN" fmt --manifest-path fuzz/Cargo.toml --check
+step "release inputs"  python3 scripts/test-release-highlights.py
 step "clippy"         cargo "+$TOOLCHAIN" clippy --workspace --all-targets --all-features -- -D warnings
 step "tests"          cargo "+$TOOLCHAIN" test --workspace --all-features
+step "tests minimal"  cargo "+$TOOLCHAIN" test -p oxml --no-default-features --locked
+step "tests no_std XPath" cargo "+$TOOLCHAIN" test -p oxml --no-default-features --features xpath,libm --locked
 step "no_std"         cargo "+$TOOLCHAIN" build -p oxml --no-default-features --features libm,xpath
 step "no_std minimal" cargo "+$TOOLCHAIN" build -p oxml --no-default-features
 step "feature powerset" \
@@ -68,11 +76,23 @@ step "doc tests generated" bash -c '
 step "examples cover the API" python3 scripts/check-example-coverage.py
 
 # Examples are run by CI one at a time; a failure in any is a failure.
-step "examples run" bash -c '
+# Each with the features its `required-features` names, read from
+# Cargo metadata as the CI job reads them: a bare `cargo run
+# --example` refuses `stream_async`, which needs `async`, and this
+# step failed on every run once that example existed.
+step "examples run" bash -s <<'EXAMPLES'
+  set -euo pipefail
+  meta="$(cargo metadata --no-deps --format-version 1 --locked)"
+  [ -n "$meta" ]
   for f in crates/oxml/examples/*.rs; do
-    cargo test --quiet --no-run >/dev/null 2>&1
-    cargo run --quiet --example "$(basename "$f" .rs)" >/dev/null || exit 1
-  done'
+    name=$(basename "$f" .rs)
+    feats="$(jq -r --arg n "$name" '.packages[]
+      | select(.name == "oxml") | .targets[]
+      | select(.kind == ["example"] and .name == $n)
+      | (."required-features" // []) | join(",")' <<< "$meta")"
+    cargo run --quiet --locked -p oxml --example "$name" --features "$feats" >/dev/null
+  done
+EXAMPLES
 
 # What `cargo publish` would upload, and whether the assurance case in
 # it describes this crate. oxml-json 0.0.8 shipped one inherited from

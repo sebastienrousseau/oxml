@@ -10,6 +10,151 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [0.0.11] - 2026-10-17
+
+### Security
+
+- **DTD groups and conditional sections have a nesting limit.**
+  `Limits::max_dtd_depth` bounds both; content-model groups use an
+  iterative stack instead of recursion proportional to hostile input.
+- **Node limits reserve complete allocations.** Document-level comments
+  and processing instructions, attributes and namespace nodes now count
+  before allocation in both the tree parser and streaming reader.
+- **Streaming construct limits include completed constructs.** The reader
+  checks each construct boundary, including later events in an EOF feed,
+  without treating several small constructs as one oversized construct.
+- **Raw and decoded document limits precede owned copies.**
+  `max_input_bytes` and `max_document_bytes` are optional by default and
+  each 8 MiB in `Limits::strict()`. UTF-16 and Latin-1 expansion checks
+  the decoded limit before growing the output. Streaming charges decoded
+  UTF-8 bytes before XML line-ending normalization, as the tree parser does.
+- **XPath compilation bounds bytes, syntax nodes and arguments**, in
+  addition to depth and operators. Untrusted evaluation can opt into
+  per-call work, node and string reservations with
+  `EvalContext::with_limits(EvalLimits::default())`; legacy evaluation
+  remains unbounded for compatibility.
+- **Release attestations use the registry artifact.** The workflow checks
+  the downloaded crate against the registry checksum and tagged source
+  commit before attaching and attesting those exact bytes. Source
+  identity uses Cargo's `git.sha1` metadata field; dirty and mismatched
+  archives are rejected.
+
+### Changed
+
+- **Breaking: the MSRV is now Rust 1.89.0** (was 1.86.0), one floor
+  shared with the maintainer's other Rust crates.
+- **Exhaustive matches on `EvalError` must handle `LimitExceeded`.**
+  The new variant reports opt-in evaluation budgets; existing unbounded
+  entry points retain their behavior.
+- **The MSRV job checks its toolchain first.** It already set
+  `RUSTUP_TOOLCHAIN`; it now also asserts `rustc --version` before
+  building.
+- **`as_chunks` replaces a suppressed lint.** The UTF-16 decoder used
+  `chunks_exact` under
+  `#[allow(clippy::chunks_exact_to_as_chunks)]` because `as_chunks`
+  (1.88) was above the floor; it now uses `as_chunks`.
+- **Lints the new floor enables**: let-chains for nested `if let`s and
+  `is_multiple_of`, applied as clippy suggests. Behaviour is unchanged.
+- **Conformance checks use RustCrypto SHA-256** instead of a local
+  implementation. This is a tooling dependency, not a parser runtime
+  dependency. The 0.11.1 pin includes the upstream
+  [ARM64 round-constant fix](https://github.com/RustCrypto/hashes/pull/922).
+  Removed the duplicate conformance dependency and unused
+  Tokio `sync` feature.
+- **XML character and name rules live in a shared leaf module**, removing
+  the tree mutation layer's dependency on parser internals.
+
+### Added
+
+- **`Document::try_to_xml` and `SerialiseError`.** A built document can
+  need XML 1.1 (a control character, or a prefix unbound with
+  `xmlns:p=""`) and also hold a comment or PI with a character 1.1
+  does not keep literally: `U+0085` and `U+2028` are line endings
+  there and the rest of `U+007F..U+009F` is refused. A body has no
+  reference syntax, so no version writes that document faithfully;
+  `to_xml` wrote it as 1.1 and the comment came back changed.
+  `try_to_xml` returns `SerialiseError::VersionConflict` naming the
+  node and the character, and otherwise exactly what `to_xml` returns.
+  A parsed document always succeeds. Found by the `mutate` fuzz
+  target, which now uses `try_to_xml` and accepts a refusal only when
+  `to_xml` of the same document is not a fixed point.
+
+### Fixed
+
+- **XPath rendering groups root-path operands.** A root slash followed
+  by `*` or a word operator could absorb that operator as a path step,
+  changing or invalidating the expression on recompilation. Grouping
+  preserves binary and chained expressions, including negated roots.
+  Found by the `xpath_compile` fuzz target.
+- **Tree mutation validates namespace URIs and document-level text.**
+  Invalid characters, reserved namespace bindings and text outside the
+  document element are rejected before mutation. `try_to_xml` reports
+  `NoRootElement` for an incomplete document. Serialization omits
+  document-level whitespace text, matching the parser's canonical tree.
+- **Package-only minimal-feature tests build independently.** XPath and
+  host-reader tests no longer rely on workspace feature unification.
+  CI now tests the parser package without default features directly.
+- **A detached subtree no longer decides the XML version.** The
+  serialiser declared 1.1 for a control character anywhere in the
+  arena, including a subtree `detach` had taken out of the document.
+  That subtree is not written, so the output reparsed without the
+  declaration and serialising it again dropped it: not a fixed point.
+  Only the nodes the writer visits are considered now. Found by the
+  `mutate` fuzz target.
+- **U+2028 is written as `&#8232;`.** XML 1.1 reads LINE SEPARATOR as
+  a line ending, so written literally into a document that needs 1.1
+  it came back as a newline in text and as a space in an attribute
+  value or namespace URI. The reference reads back as the character in
+  both versions, as `&#133;` already did for U+0085.
+- **`append_comment` and `append_pi` refuse a carriage return.** A
+  comment or PI body is written verbatim, and a literal `\r` reads back
+  as `\n` in every XML version, so `<!--a\rb-->` did not survive its
+  own round trip. They now return `NodeError::InvalidText`; character
+  data still takes `\r`, written as `&#13;`.
+- **The streaming reader ignores a declaration that never closes.**
+  `Reader::from_reader` read the `encoding` pseudo-attribute of a
+  `<?xml` with no `?>` anywhere in the input, and refused the document
+  for an unsupported or illegal name. `encoding::decode` and the tree
+  parser treat such a declaration as absent, decode as UTF-8 and
+  report the unterminated declaration, and the streaming reader now
+  does the same. Found by the `stream_chunked` fuzz target.
+- **The streaming reader decides the encoding as `encoding::decode`
+  does, with the same functions.** It read the declaration from text
+  in which every byte that was not UTF-8 had become two, so an error
+  in the `encoding` pseudo-attribute was reported one byte later per
+  such byte; and under a UTF-16 mark it refused a name `decode`
+  leaves alone. `decode` in turn checked a UTF-8 mark against the
+  declaration only when every later byte was UTF-8, so a contradicting
+  declaration let the document through as Latin-1 when one was not:
+  it is now refused with `MalformedEncoding` at 0, as it already was
+  otherwise. Found by the `stream_chunked` fuzz target.
+- **A reference ends before the next `<`, or before the quote that
+  closes its value.** For `<g>am&></>>p;` the parser searched the rest
+  of the document for the `;` and reported `UnknownEntity("></>>p")`,
+  a name spanning tags; the streaming reader, holding only the text
+  run, reported `Unterminated("entity")`. Attribute values did the
+  same past their closing quote. Both readers and `parse` now report
+  the reference unterminated, at the same offset.
+- **Only XML whitespace before a declaration makes it misplaced.** The
+  prolog check trimmed Rust's whitespace, which includes a form feed,
+  so ` \x0c<?xml version="1.0"?>` was `MalformedDeclaration` in memory
+  and `IllegalCharacter('\x0c')` when streamed. It trims XML's `S` now,
+  and both report the form feed.
+- **The streaming reader judges the encoding before the version**, as
+  `decode` and `prepare` do in turn, so a declaration wrong about both
+  is refused for its encoding by every reader.
+- **A UTF-8 declaration that is not UTF-8 is refused for its bytes.**
+  The streaming reader read the version from a declaration holding a
+  byte that is not UTF-8, taken as Latin-1, and refused
+  `<?xml version='2.0\xC4'?>` as `UnsupportedVersion`; `decode` refuses
+  it with `MalformedEncoding` at the byte, and so does the streaming
+  reader now.
+- **The end of a self-closed root comes before a trailing-content
+  error.** For `<!DOCTYPE g><b/><!DOCTYPE g>` `Reader::new` yielded the
+  start of `b` and then reported the second `DOCTYPE`, never yielding
+  the end; the streaming reader yielded both. The end is now always
+  yielded first.
+
 ## [0.0.10] - 2026-10-05
 
 ### Security

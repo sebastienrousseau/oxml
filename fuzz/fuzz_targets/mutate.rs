@@ -21,7 +21,11 @@ const MAX_OPS: usize = 256;
 /// Names and namespaces to draw from, some repeated under two names.
 const NAMES: [&str; 4] = ["e", "f", "ns-name", "r"];
 const NAMESPACES: [Option<&str>; 3] = [None, Some("urn:a"), Some("urn:b")];
-const TEXTS: [&str; 4] = ["t", "a & b", "caf\u{85}", "\u{1}"];
+/// U+0085 and U+2028 are line endings in XML 1.1 only, and `\r` is one
+/// in both, so each must survive a round trip as text, as a value and
+/// as a URI, and be refused or rejected where it cannot.
+const TEXTS: [&str; 6] =
+    ["t", "a & b", "caf\u{85}", "\u{1}", "l\u{2028}s", "c\rr"];
 
 fuzz_target!(|data: &[u8]| {
     let mut doc = Document::empty();
@@ -34,6 +38,13 @@ fuzz_target!(|data: &[u8]| {
     let mut live: Vec<NodeId> = vec![top];
 
     for chunk in data.chunks(4).take(MAX_OPS) {
+        // The root element can still go: moved under a detached
+        // element that is then removed, which takes it along. Nothing
+        // is left to pick from, and a document without its root
+        // element is the caller's business, as for removal below.
+        if live.is_empty() {
+            break;
+        }
         let op = chunk[0] % 13;
         let pick = |i: usize| chunk.get(i).copied().unwrap_or(0) as usize;
         let target = live[pick(1) % live.len()];
@@ -195,13 +206,13 @@ fn check_order(doc: &mut Document) {
 }
 
 /// Whatever was built serialises to something the parser accepts and
-/// that is a fixed point.
+/// that is a fixed point, or is refused because no XML version can
+/// hold it.
 ///
 /// This is the property a caller actually depends on. It is asserted
 /// only when the document is well-formed at the top level: the API
 /// permits text beside the root element, which is not XML.
 fn check_serialisation(doc: &Document) {
-    let xml = doc.to_xml();
     let well_formed_top = doc.root_element().is_some()
         && doc.children(doc.root()).iter().all(|c| {
             matches!(
@@ -216,11 +227,18 @@ fn check_serialisation(doc: &Document) {
     if !well_formed_top {
         return;
     }
+    let Ok(xml) = doc.try_to_xml() else {
+        // A refusal is only right when there is no fixed point to
+        // find: what `to_xml` writes instead must not read back as
+        // itself. Otherwise the check is over-cautious, and a harness
+        // that accepted it unconditionally would test nothing.
+        let xml = doc.to_xml();
+        let same = oxml::parse(&xml).is_ok_and(|d| d.to_xml() == xml);
+        assert!(!same, "refused a document that round-trips:\n{xml}");
+        return;
+    };
+    assert_eq!(xml, doc.to_xml(), "try_to_xml and to_xml disagree");
     let reparsed = oxml::parse(&xml)
         .unwrap_or_else(|e| panic!("output does not parse: {e}\n{xml}"));
-    assert_eq!(
-        reparsed.to_xml(),
-        xml,
-        "serialisation is not a fixed point"
-    );
+    assert_eq!(reparsed.to_xml(), xml, "serialisation is not a fixed point");
 }

@@ -4,6 +4,8 @@
 //! Escaping, character references, and the I/O adapter.
 
 use core::fmt::Write;
+#[cfg(feature = "std")]
+use std::io;
 
 /// Captures the first I/O error behind a `fmt::Write` face.
 ///
@@ -12,11 +14,11 @@ use core::fmt::Write;
 #[cfg(feature = "std")]
 pub(super) struct IoSink<W> {
     pub(super) inner: W,
-    pub(super) error: Option<std::io::Error>,
+    pub(super) error: Option<io::Error>,
 }
 
 #[cfg(feature = "std")]
-impl<W: std::io::Write> Write for IoSink<W> {
+impl<W: io::Write> Write for IoSink<W> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         self.inner.write_all(s.as_bytes()).map_err(|e| {
             self.error = Some(e);
@@ -90,8 +92,20 @@ pub(super) const fn is_c0_control(c: char) -> bool {
 /// written as a reference too -- which both versions accept. This is
 /// deliberately wider than [`is_c0_control`], which decides the
 /// version declaration.
+///
+/// `U+2028` is the other 1.1 line ending. Written literally into a
+/// document that needs 1.1, it read back as a newline in character
+/// data and as a space in an attribute value.
 pub(super) const fn needs_reference(c: char) -> bool {
-    is_c0_control(c) || matches!(c, '\u{7f}'..='\u{9f}')
+    is_c0_control(c) || changes_in_11(c)
+}
+
+/// A character XML 1.1 does not read back as itself when it is
+/// written literally: `U+0085` and `U+2028` are line endings there,
+/// and the rest of `U+007F..U+009F` is restricted to references. XML
+/// 1.0 reads every one of them literally.
+pub(super) const fn changes_in_11(c: char) -> bool {
+    matches!(c, '\u{7f}'..='\u{9f}' | '\u{2028}')
 }
 
 /// Write one character as a numeric reference.

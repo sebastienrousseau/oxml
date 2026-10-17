@@ -28,11 +28,15 @@ src/
 ├── encoding.rs    BOM and declaration sniffing; UTF-16 and Latin-1
 ├── error.rs       Error, ErrorKind, line/column reporting
 ├── limits.rs      Limits, Edition, the three profiles
+├── xml.rs         shared character/name rules, independent of parser and tree
+├── serialise/     output escaping, options, namespace scope and version checks
+├── stream/        incremental core, byte decoder and blocking/Tokio adapters
 ├── names4e.rs     XML 1.0 fourth-edition name tables
 └── xpath/
     ├── mod.rs     XPath, the compile/evaluate entry points
     ├── parser.rs  expression → syntax tree
     ├── eval.rs    syntax tree + document → Value
+    ├── budget.rs  per-evaluation work, node and string reservations
     └── float.rs   floor/ceil/trunc, shimmed for no_std
 ```
 
@@ -74,8 +78,9 @@ start tag and are already contiguous.
 with one. Counting runs at memory speed; the reallocate-and-copy it
 avoids does not.
 
-> **Still to do.** Text and attribute values are owned `String`s. See
-> [design/owned-input.md](design/owned-input.md).
+Text and attribute values use ranges into owned input where possible;
+expanded or mutated values live in the side table. See
+[design/owned-input.md](design/owned-input.md).
 
 Three consequences follow from the arena:
 
@@ -93,8 +98,8 @@ Three consequences follow from the arena:
 Because a tree of reference-counted cells allocates once per node,
 scatters those allocations across the heap, pays a borrow check at
 every access, and cannot be `Send`. The arena is `Send + Sync` for
-free: it is immutable after parsing and contains no interior
-mutability.
+free: it contains no interior mutability, and editing requires an
+exclusive reference.
 
 ## Names are interned
 
@@ -232,7 +237,13 @@ uses the stored prefix when it is bound here, else a prefix in scope
 for that URI, else declares one on the element. The output is a fixed
 point over the W3C corpus and parses back to the same expanded names
 for a built document. The XML version is declared only when a C0
-control character or a prefix undeclaration requires 1.1.
+control character or a prefix undeclaration requires 1.1, and only
+the nodes the writer visits count: a detached subtree is not written,
+so it does not decide. A comment or PI body has no reference syntax,
+so a built document that needs 1.1 and has a comment holding a character
+1.1 rewrites (U+0085, U+2028) or refuses (the rest of U+007F..U+009F)
+has no faithful output; `try_to_xml` reports it as
+`SerialiseError::VersionConflict`.
 
 ## What is deliberately absent
 
@@ -241,7 +252,6 @@ control character or a prefix undeclaration requires 1.1.
   construction rather than by a default.
 - **`unsafe`.** `#![forbid(unsafe_code)]`, checked in CI. This costs
   throughput; see [COMPARISON.md](COMPARISON.md).
-- **Streaming from a reader.** [`stream::Reader`](../crates/oxml/src/stream.rs)
-  yields events without building a tree, but it is handed a `&str`, so
-  the document is resident even though its tree is not. For inputs
-  larger than memory, or for reading from a socket, use `quick-xml`.
+- **An event writer.** The DOM serializes to a writer, but there is no
+  matching event-writing API. Incremental reading is implemented by
+  `stream::Core`, `Reader::from_reader` and the optional Tokio adapter.

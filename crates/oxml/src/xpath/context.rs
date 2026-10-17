@@ -10,6 +10,33 @@ use alloc::vec::Vec;
 use super::Value;
 use crate::tree::ExpandedName;
 
+/// Resource bounds for one fallible evaluation.
+///
+/// Work units are conservative charges for expression operations,
+/// traversals and byte processing, not elapsed time. String bytes are
+/// cumulative reservations across temporary values; some operations
+/// reserve upper bounds before running. Node limits include arena slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct EvalLimits {
+    /// Maximum work units spent by an evaluation.
+    pub max_work: usize,
+    /// Maximum arena slots or nodes in an intermediate node-set.
+    pub max_nodes: usize,
+    /// Maximum total UTF-8 bytes materialized as strings.
+    pub max_string_bytes: usize,
+}
+
+impl Default for EvalLimits {
+    fn default() -> Self {
+        Self {
+            max_work: 10_000_000,
+            max_nodes: 100_000,
+            max_string_bytes: 1024 * 1024,
+        }
+    }
+}
+
 /// Variable bindings for [`XPath::evaluate_with`](super::XPath::evaluate_with).
 ///
 /// `XPath` 1.0 has variable references, `$name`, bound by the
@@ -21,16 +48,16 @@ use crate::tree::ExpandedName;
 /// use oxml::xpath::{EvalContext, Value};
 /// use oxml::{ExpandedName, XPath, parse};
 ///
-/// let doc = parse("<r><a>1</a><a>2</a></r>")?;
-/// let xp = XPath::compile("count(//a[. > $min])")?;
+/// let doc = parse("<r><a>1</a><a>2</a></r>").unwrap();
+/// let xp = XPath::compile("count(//a[. > $min])").unwrap();
 /// let ctx = EvalContext::new()
 ///     .bind(ExpandedName::local("min"), Value::Number(1.0));
-/// assert_eq!(xp.evaluate_with(&doc, &ctx)?.to_str(&doc), "1");
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// assert_eq!(xp.evaluate_with(&doc, &ctx).unwrap().to_str(&doc), "1");
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EvalContext {
     variables: Vec<(ExpandedName, Value)>,
+    pub(crate) limits: Option<EvalLimits>,
 }
 
 impl EvalContext {
@@ -38,6 +65,16 @@ impl EvalContext {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Bound work and allocation during [`XPath::evaluate_with`](super::XPath::evaluate_with).
+    ///
+    /// Each evaluation starts with fresh budgets. Existing contexts
+    /// remain unbounded unless this method is called.
+    #[must_use]
+    pub fn with_limits(mut self, limits: EvalLimits) -> Self {
+        self.limits = Some(limits);
+        self
     }
 
     /// Bind `name` to `value`, replacing any earlier binding of it.
@@ -53,6 +90,11 @@ impl EvalContext {
             None => self.variables.push((name, value)),
         }
         self
+    }
+
+    /// Number of names inspected by a variable lookup in the worst case.
+    pub(crate) fn binding_count(&self) -> usize {
+        self.variables.len()
     }
 
     /// The value bound to `name`, if any.
@@ -86,6 +128,8 @@ pub enum EvalError {
     /// longer belongs to the document: it was removed, and its slot
     /// may since have been reused.
     Stale,
+    /// An evaluation exhausted a work, node or string-byte budget.
+    LimitExceeded(&'static str),
 }
 
 impl core::fmt::Display for EvalError {
@@ -96,6 +140,9 @@ impl core::fmt::Display for EvalError {
             }
             Self::TypeError(message) => f.write_str(message),
             Self::Stale => f.write_str("the context node has been removed"),
+            Self::LimitExceeded(resource) => {
+                write!(f, "XPath evaluation exceeds the {resource} limit")
+            }
         }
     }
 }

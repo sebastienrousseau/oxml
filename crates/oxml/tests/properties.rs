@@ -9,7 +9,9 @@
 //! `proptest-regressions/` and replayed on every later run, so a bug
 //! found once is tested for forever.
 
-use oxml::{Limits, NodeKind, XPath, parse, parse_with};
+#[cfg(feature = "xpath")]
+use oxml::XPath;
+use oxml::{Limits, NodeKind, parse, parse_with};
 use proptest::prelude::*;
 
 /// Arbitrary bytes, biased towards things that look like XML.
@@ -131,6 +133,7 @@ proptest! {
     }
 
     /// XPath compilation is total and deterministic.
+    #[cfg(feature = "xpath")]
     #[test]
     fn xpath_compilation_never_panics(expr in "\\PC{0,60}") {
         if let Ok(a) = XPath::compile(&expr) {
@@ -141,6 +144,7 @@ proptest! {
 
     /// `count(X)` agrees with the number of nodes `X` selects. Two
     /// independent paths through the evaluator that must not diverge.
+    #[cfg(feature = "xpath")]
     #[test]
     fn count_agrees_with_the_node_set(src in well_formed()) {
         let doc = parse(&src).expect("well-formed");
@@ -161,6 +165,7 @@ proptest! {
     /// Number formatting round-trips: whatever XPath prints must parse
     /// back to the same value. This is the property the `log10`/`powf`
     /// removal was about — it must hold identically on every backend.
+    #[cfg(feature = "xpath")]
     #[test]
     fn formatted_numbers_round_trip(n in proptest::num::f64::NORMAL) {
         let doc = parse("<a/>").expect("well-formed");

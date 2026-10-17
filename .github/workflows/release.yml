@@ -161,20 +161,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: 1.98.0
-      - uses: taiki-e/install-action@b1dc9d84e209ed242bc6ca434b9d0b64be656fa4 # v2.87.26
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cargo-cyclonedx@0.5.9
 
-      # The exact archive crates.io serves, built here so its checksum
-      # can be attached and attested; plus an SBOM of what it depends
-      # on with every feature enabled.
+      # Download the immutable registry archive and verify both its
+      # checksum and source commit before attaching or attesting it.
       - name: Package, SBOM and checksums
         id: assets
         run: |
           v="${{ needs.preflight.outputs.version }}"
-          cargo package -p oxml --locked --allow-dirty
           mkdir -p dist
-          cp "target/package/oxml-$v.crate" dist/
+          archive="oxml-$v.crate"
+          curl --fail --silent --show-error --location --proto '=https' \
+            "https://static.crates.io/crates/oxml/$archive" --output "dist/$archive"
+          expected="$(curl --fail --silent --show-error --proto '=https' \
+            -H 'User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)' \
+            "https://crates.io/api/v1/crates/oxml/$v" \
+            | jq -er --arg v "$v" '.version | select(.crate == "oxml" and .num == $v) \
+              | .checksum | select(test("^[0-9a-f]{64}$"))')"
+          (cd dist && printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --strict)
+          tar -xOf "dist/$archive" "oxml-$v/.cargo_vcs_info.json" \
+            | jq -e --arg sha "$GITHUB_SHA" '.git.sha1 == $sha and .git.dirty != true'
           cargo cyclonedx -p oxml --all-features --format json --override-filename "oxml-$v.cdx"
           mv "crates/oxml/oxml-$v.cdx.json" dist/
           (cd dist && sha256sum oxml-* > "oxml-$v.sha256")
@@ -198,7 +206,7 @@ jobs:
           notes="doc/release-notes/$v.md"
           prev="$(git tag --sort=-v:refname | grep -v "^$GITHUB_REF_NAME$" | head -1)"
           {
-            sed -n '/^## Highlights/,/^## /{/^## Highlights/p;/^## [^H]/!p}' "$notes" | sed '$d'
+            awk '/^## Highlights/{printing=1} printing && /^## / && !/^## Highlights/{exit} printing{print}' "$notes"
             echo
             gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
               -f tag_name="$GITHUB_REF_NAME" -f previous_tag_name="$prev" \

@@ -20,10 +20,10 @@ use alloc::vec::Vec;
 use super::EvalError;
 use super::ast::{Expr, Func};
 use super::compare::{is_xml_whitespace, xpath_number, xpath_round};
-use super::eval::{Ctx, Ev, eval, sort_document_order, type_error};
+use super::eval::{Ctx, Ev, eval, type_error};
 use super::float;
 use super::names::{lang_matches, name_parts, qualified_name};
-use super::value::{Value, string_value};
+use super::value::Value;
 use crate::tree::{Document, NodeId};
 
 pub(crate) fn eval_function(
@@ -78,9 +78,10 @@ fn string_arg(
     i: usize,
     c: Ctx,
 ) -> Result<String, EvalError> {
-    Ok(arg(ev, args, i, c)?
-        .map(|v| v.to_str(ev.doc))
-        .unwrap_or_default())
+    match arg(ev, args, i, c)? {
+        Some(value) => ev.stringify(&value),
+        None => Ok(String::new()),
+    }
 }
 
 /// Argument `i` as a string, or the context node's string-value when
@@ -91,8 +92,10 @@ fn string_arg_or_context(
     i: usize,
     c: Ctx,
 ) -> Result<String, EvalError> {
-    Ok(arg(ev, args, i, c)?
-        .map_or_else(|| string_value(ev.doc, c.node), |v| v.to_str(ev.doc)))
+    match arg(ev, args, i, c)? {
+        Some(value) => ev.stringify(&value),
+        None => ev.node_string(c.node),
+    }
 }
 
 /// Argument `i` as a number, or `NaN` when absent.
@@ -102,7 +105,10 @@ fn number_arg(
     i: usize,
     c: Ctx,
 ) -> Result<f64, EvalError> {
-    Ok(arg(ev, args, i, c)?.map_or(f64::NAN, |v| v.to_number(ev.doc)))
+    match arg(ev, args, i, c)? {
+        Some(value) => ev.number(&value),
+        None => Ok(f64::NAN),
+    }
 }
 
 /// Argument `i`, which `func` requires to be a node-set. `None` when
@@ -183,6 +189,9 @@ fn describe_node(
     describe: fn(&Document, NodeId) -> Option<String>,
 ) -> Result<Value, EvalError> {
     let node = node_argument(ev, func, args, c)?;
+    if node.is_some() {
+        ev.budget.string(ev.budget.name_bytes)?;
+    }
     Ok(Value::String(
         node.and_then(|n| describe(ev.doc, n)).unwrap_or_default(),
     ))
@@ -204,25 +213,44 @@ fn id_function(ev: &Ev<'_>, args: &[Expr], c: Ctx) -> Result<Value, EvalError> {
     let mut out = Vec::new();
     match arg(ev, args, 0, c)? {
         Some(Value::NodeSet(nodes)) => {
-            for node in nodes {
-                collect_ids(ev.doc, &string_value(ev.doc, node), &mut out);
-            }
+            collect_node_ids(ev, &nodes, &mut out)?;
         }
-        Some(other) => collect_ids(ev.doc, &other.to_str(ev.doc), &mut out),
+        Some(other) => collect_ids(ev, &ev.stringify(&other)?, &mut out)?,
         None => {}
     }
-    sort_document_order(&ev.order, &mut out);
+    ev.sort(&mut out)?;
     Ok(Value::NodeSet(out))
+}
+
+fn collect_node_ids(
+    ev: &Ev<'_>,
+    nodes: &[NodeId],
+    out: &mut Vec<NodeId>,
+) -> Result<(), EvalError> {
+    for &node in nodes {
+        collect_ids(ev, &ev.node_string(node)?, out)?;
+    }
+    Ok(())
 }
 
 /// The elements whose ID is one of the XML-whitespace-separated
 /// tokens of `list`.
-fn collect_ids(doc: &Document, list: &str, out: &mut Vec<NodeId>) {
+fn collect_ids(
+    ev: &Ev<'_>,
+    list: &str,
+    out: &mut Vec<NodeId>,
+) -> Result<(), EvalError> {
+    ev.budget.charge(
+        list.len()
+            .saturating_mul(super::budget::sort_factor(ev.doc.len())),
+    )?;
     for token in list.split(is_xml_whitespace).filter(|t| !t.is_empty()) {
-        if let Some(found) = doc.element_by_id(token) {
+        if let Some(found) = ev.doc.element_by_id(token) {
+            ev.budget.nodes(out.len().saturating_add(1))?;
             out.push(found);
         }
     }
+    Ok(())
 }
 
 fn string_function(
@@ -243,7 +271,9 @@ fn string_function(
 fn concat(ev: &Ev<'_>, args: &[Expr], c: Ctx) -> Result<Value, EvalError> {
     let mut s = String::new();
     for i in 0..args.len() {
-        s.push_str(&string_arg(ev, args, i, c)?);
+        let part = string_arg(ev, args, i, c)?;
+        ev.budget.string(part.len())?;
+        s.push_str(&part);
     }
     Ok(Value::String(s))
 }
@@ -257,6 +287,9 @@ fn string_pair_function(
 ) -> Result<Value, EvalError> {
     let a = string_arg(ev, args, 0, c)?;
     let b = string_arg(ev, args, 1, c)?;
+    if matches!(func, Func::SubstringBefore | Func::SubstringAfter) {
+        ev.budget.string(a.len())?;
+    }
     Ok(match func {
         Func::StartsWith => Value::Boolean(a.starts_with(&b)),
         Func::Contains => Value::Boolean(a.contains(&b)),
@@ -294,9 +327,12 @@ fn positional_string_function(
         Func::StringLength => Ok(Value::Number(
             string_arg_or_context(ev, args, 0, c)?.chars().count() as f64,
         )),
-        Func::NormalizeSpace => Ok(Value::String(normalize_space(
-            &string_arg_or_context(ev, args, 0, c)?,
-        ))),
+        Func::NormalizeSpace => {
+            let text = string_arg_or_context(ev, args, 0, c)?;
+            ev.budget.string(text.len())?;
+            ev.budget.charge(text.len().saturating_mul(3))?;
+            Ok(Value::String(normalize_space(&text)))
+        }
         _ => translate_call(ev, args, c),
     }
 }
@@ -308,7 +344,8 @@ fn substring_call(
 ) -> Result<Value, EvalError> {
     let s = string_arg(ev, args, 0, c)?;
     let start = number_arg(ev, args, 1, c)?;
-    let length = arg(ev, args, 2, c)?.map(|v| v.to_number(ev.doc));
+    let length = arg(ev, args, 2, c)?.map(|v| ev.number(&v)).transpose()?;
+    ev.budget.string(s.len())?;
     Ok(substring(&s, start, length))
 }
 
@@ -320,6 +357,10 @@ fn translate_call(
     let s = string_arg(ev, args, 0, c)?;
     let from = string_arg(ev, args, 1, c)?;
     let to = string_arg(ev, args, 2, c)?;
+    ev.budget.string(s.len().saturating_mul(4))?;
+    let bytes = s.len().saturating_add(from.len()).saturating_add(to.len());
+    ev.budget
+        .charge(bytes.saturating_mul(super::budget::sort_factor(from.len())))?;
     Ok(Value::String(translate(&s, &from, &to)))
 }
 
@@ -399,7 +440,10 @@ fn boolean_function(
         Func::False => false,
         Func::Not => !truth_arg(ev, args, c)?,
         Func::Boolean => truth_arg(ev, args, c)?,
-        _ => lang_matches(ev.doc, c.node, &string_arg(ev, args, 0, c)?),
+        _ => {
+            ev.budget.charge(ev.budget.document_cost)?;
+            lang_matches(ev.doc, c.node, &string_arg(ev, args, 0, c)?)
+        }
     }))
 }
 
@@ -417,16 +461,11 @@ fn number_function(
     if func == Func::Sum {
         // Each node converts as `number()` does, so one node that is
         // not a number makes the sum `NaN` rather than being skipped.
-        let total = node_set_arg(ev, func, args, 0, c)?
-            .unwrap_or_default()
-            .iter()
-            .map(|&id| xpath_number(&string_value(ev.doc, id)))
-            .sum();
-        return Ok(Value::Number(total));
+        return sum_function(ev, args, c);
     }
     let n = if args.is_empty() {
         // `number()` with no argument converts the context node.
-        xpath_number(&string_value(ev.doc, c.node))
+        xpath_number(&ev.node_string(c.node)?)
     } else {
         number_arg(ev, args, 0, c)?
     };
@@ -436,4 +475,16 @@ fn number_function(
         Func::Round => xpath_round(n),
         _ => n,
     }))
+}
+
+fn sum_function(
+    ev: &Ev<'_>,
+    args: &[Expr],
+    c: Ctx,
+) -> Result<Value, EvalError> {
+    let mut total = 0.0;
+    for node in node_set_arg(ev, Func::Sum, args, 0, c)?.unwrap_or_default() {
+        total += xpath_number(&ev.node_string(node)?);
+    }
+    Ok(Value::Number(total))
 }

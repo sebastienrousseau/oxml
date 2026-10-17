@@ -8,6 +8,8 @@
 //! non-numeric string. Those are the cases callers hit in practice and
 //! the ones where implementations quietly diverge.
 
+#![cfg(feature = "xpath")]
+
 use oxml::{XPath, parse};
 
 const DOC: &str = "\

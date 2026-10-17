@@ -29,15 +29,15 @@
 - [Install](#install) — Cargo, source
 - [Quick Start](#quick-start) — parse and query in ten lines
 
-**The oxml ecosystem** (library + five satellite crates)
+**The oxml ecosystem** (library + six satellite crates)
 
-- [The oxml ecosystem](#the-oxml-ecosystem) — `oxml`, `oxml-cli`, `oxml-lsp`, `oxml-mcp`, `oxml-wasm`, `xmlschema` at a glance
+- [The oxml ecosystem](#the-oxml-ecosystem) — `oxml`, `oxml-cli`, `oxml-lsp`, `oxml-mcp`, `oxml-wasm`, `xmlschema`, `oxml-json` at a glance
 
 **Library reference**
 
 - [One-minute migration](#one-minute-migration) — name-for-name mapping from `sxd-xpath`, `roxmltree`, `quick-xml`, `libxml`
 - [Why this approach?](#why-this-approach) — design rationale
-- [Capabilities in 0.0.10](#capabilities-in-0010) — release inventory
+- [Capabilities in 0.0.11](#capabilities-in-0011) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — what each crate does and does not do
 - [Benchmarks](#benchmarks) — measured, with the method stated
 - [Features](#features) — cargo feature flags
@@ -77,14 +77,14 @@
 
 ```toml
 [dependencies]
-oxml = "0.0.10"
+oxml = "0.0.11"
 ```
 
 Parsing only, without the XPath engine:
 
 ```toml
 [dependencies]
-oxml = { version = "0.0.10", default-features = false, features = ["std"] }
+oxml = { version = "0.0.11", default-features = false, features = ["std"] }
 ```
 
 From source:
@@ -95,7 +95,7 @@ cd oxml
 cargo test
 ```
 
-**Minimum supported Rust version:** 1.86.0. Raising it is a breaking
+**Minimum supported Rust version:** 1.89.0. Raising it is a breaking
 change and appears in the changelog.
 
 ## Quick Start
@@ -142,6 +142,7 @@ line; `0.1.0` follows `0.0.999`.
 | [`oxml-mcp`](https://github.com/sebastienrousseau/oxml-mcp) | Model Context Protocol server | [crates.io](https://crates.io/crates/oxml-mcp) |
 | [`oxml-wasm`](https://github.com/sebastienrousseau/oxml-wasm) | WebAssembly bindings | [crates.io](https://crates.io/crates/oxml-wasm) |
 | [`xmlschema`](https://github.com/sebastienrousseau/xmlschema) | XSD validation | [crates.io](https://crates.io/crates/xmlschema) |
+| [`oxml-json`](https://github.com/sebastienrousseau/oxml-json) | JSON support for the language server | [crates.io](https://crates.io/crates/oxml-json) |
 
 `xmlschema` keeps its existing published name rather than being
 repurposed into the core: the name means XSD validation, and that is
@@ -243,7 +244,7 @@ Two architectural choices motivate the design:
    are usually well-vetted, but their existence makes a
    security-conscious downstream audit meaningfully harder.
 
-## Capabilities in 0.0.10
+## Capabilities in 0.0.11
 
 **Parsing**
 
@@ -284,6 +285,9 @@ Two architectural choices motivate the design:
   way back in
 - `<?xml version="1.1"?>` is emitted only when the document needs it --
   a control character, or a prefix unbound with `xmlns:p=""`
+- `Document::try_to_xml()` refuses, with `SerialiseError`, a document
+  with no element or content only 1.1 can express beside a comment
+  or PI only 1.0 keeps
 - Every document in the conformance corpus is a fixed point: parse,
   serialise, parse again, and the trees agree
 
@@ -322,17 +326,18 @@ Two architectural choices motivate the design:
 
 **Safety and limits**
 
-- Ten configurable bounds, in three profiles
+- Configurable parsing and compilation bounds, in three profiles
 - External entities never dereferenced
 - Entity expansion bounded per document, not per reference
-- Recursion bounded, so no input reaches a stack overflow
+- Element and DTD recursion bounded by separate depth limits
+- Opt-in XPath evaluation budgets for work, nodes and string bytes
 
 **Verification**
 
 - **All 2,557** decided W3C conformance tests pass, with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 484 tests and 30 doctests; 96.8% line coverage, gated in CI
-- Seven fuzz targets, Miri, property tests, and a feature powerset build
+- 668 tests and 35 doctests; line coverage gated at a 95% floor in CI
+- Eight fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not here:** XSD validation (that is [`xmlschema`](https://github.com/sebastienrousseau/xmlschema)),
 XSLT, XPath 2.0 and later, and any I/O. The external DTD subset is
@@ -415,7 +420,7 @@ the optimisation, not after it.
 | `std` | ✅ | Standard library integration, including `std::error::Error` and `write_xml_to`. |
 | `xpath` | ✅ | The XPath 1.0 engine. Disable if you only need to parse. |
 | `libm` | | Floating-point functions for `xpath` without `std`. |
-| `async` | | `stream::AsyncReader` over `tokio::io::AsyncRead`; implies `std`, adds `tokio` (`io-util`, `sync`). |
+| `async` | | `stream::AsyncReader` over `tokio::io::AsyncRead`; implies `std`, adds `tokio` (`io-util`). |
 | `tracing` | | `tracing` spans around parsing, evaluation, serialisation and streaming. |
 
 All are additive. With none, the crate is `no_std` and provides the
@@ -711,7 +716,7 @@ cargo run --example parse_and_query
 | [`stream_events`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/stream_events.rs) | Reading a document as events with no tree built, and the identical errors both entry points give |
 | [`stream_async`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/stream_async.rs) | The same events from a `tokio` reader (feature `async`) |
 | [`build_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/build_a_document.rs) | Building and editing a tree: elements, attributes, namespaces, moves, and what the API refuses |
-| [`serialise_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/serialise_a_document.rs) | `to_xml`, `write_xml_to`, indentation options, and when the output declares XML 1.1 |
+| [`serialise_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/serialise_a_document.rs) | `to_xml`, `try_to_xml`, `write_xml_to`, indentation options, and when the output declares XML 1.1 |
 | [`telemetry_tracing`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/telemetry_tracing.rs) | The spans the `tracing` feature emits (feature `tracing`) |
 
 ## Configuration
@@ -745,11 +750,17 @@ assert!(parse_with("<a><b/></a>", limits).is_ok());
 | `max_name_length` | 256 | 8192 | 1048576 |
 | `max_nodes` | 100000 | unbounded | unbounded |
 | `max_text_length` | 1048576 | unbounded | unbounded |
+| `max_input_bytes` | 8388608 | unbounded | unbounded |
+| `max_document_bytes` | 8388608 | unbounded | unbounded |
 | `max_entity_depth` | 4 | 10 | 40 |
 | `max_entity_expansion` | 100000 | 10000000 | 1000000000 |
 | `max_xpath_depth` | 32 | 256 | 1000 |
 | `max_xpath_operators` | 1000 | 10000 | 1000000 |
+| `max_xpath_bytes` | 65536 | 1048576 | unbounded |
+| `max_xpath_nodes` | 4000 | 40000 | 4000000 |
+| `max_xpath_arguments` | 1000 | 10000 | 1000000 |
 | `max_dtd_bytes` | 65536 | 16777216 | unbounded |
+| `max_dtd_depth` | 32 | 64 | 64 |
 | `max_pe_expansion` | 100000 | 10000000 | 1000000000 |
 | `max_construct_bytes` | 1048576 | 67108864 | unbounded |
 
@@ -783,7 +794,7 @@ give you deeper documents; it gives you a crash.
 | `std` | yes | `std::error::Error` for `Error`, and `String`/`Vec` from `std` |
 | `xpath` | yes | The XPath 1.0 engine. Separable because the tree alone is useful |
 | `libm` | no | `floor`/`ceil`/`trunc` from `libm` rather than `std`. Required to build `xpath` without `std` |
-| `async` | no | `stream::AsyncReader`. Implies `std`; adds `tokio` with only `io-util` and `sync` |
+| `async` | no | `stream::AsyncReader`. Implies `std`; adds `tokio` with only `io-util` |
 | `tracing` | no | `tracing` spans; adds `tracing` with no default features |
 
 Building `xpath` with neither `std` nor `libm` is a compile error with
@@ -793,9 +804,9 @@ functions that `core` does not provide.
 ### `no_std` is checked, not claimed
 
 `scripts/check-no-std.sh` runs in CI and builds **every** feature
-combination with `std` off — none, `libm`, and `xpath,libm` — against
-**every** bare-metal target: `thumbv7em-none-eabihf`,
-`riscv32imac-unknown-none-elf` and `aarch64-unknown-none`. Nine builds.
+combination with `std` off: none, `libm`, `xpath,libm`, and each with
+`tracing`, against **every** bare-metal target: `thumbv7em-none-eabihf`,
+`riscv32imac-unknown-none-elf` and `aarch64-unknown-none`. Eighteen builds.
 
 It also greps for `std::` that is not behind `#[cfg(feature = "std")]`,
 which the builds cannot catch on their own: a std-only call in a
@@ -913,9 +924,9 @@ assert_eq!(doc.text(doc.root()), "hi");
 ```
 
 UTF-8, UTF-16 (both byte orders, with or without a BOM) and
-ISO-8859-1 are decoded. A BOM overrides a declaration that disagrees
-with it. UTF-8 input is borrowed rather than copied, so the common
-case costs nothing.
+ISO-8859-1 are decoded. A BOM that contradicts a supported declared
+encoding is rejected. UTF-8 decoding borrows the input; constructing
+the document copies its normalized text into owned storage.
 
 Two failures that look alike are kept apart, because they are not the
 same problem:
@@ -1006,16 +1017,10 @@ trades time for memory. If throughput is what you mean by streaming,
 Both numbers are published because either alone misleads: a pass rate
 can be raised by skipping the hard tests.
 
-One failure remains, and it is not about external content at all:
-it needs **type-aware attribute-value normalisation**, where a
-tokenized `ATTLIST` type is stripped and collapsed and a `CDATA` one
-is not. Since the parser performs no I/O by construction, closing
-them means the caller supplying that content, not oxml fetching it.
-
-Entity replacement text being parsed as markup rather than substituted
-as characters was the previous leader and accounted for 13; that is
-done. Every remaining failure is the parser being too *permissive* —
-there is no document in the suite it wrongly rejects.
+There are no failures among the 2,557 decided cases. The 28 unsupported
+cases require namespace processing to be disabled (14), Namespaces 1.1
+coverage outside the harness's scoring scope (8), or unsupported
+encodings (6). Type-aware attribute normalization is implemented.
 
 ### Why does it not fetch external entities?
 
@@ -1024,8 +1029,8 @@ cannot be made to leak a file. There is no option to enable it, which is
 the difference between safe and *safe if you remember to set the flag*.
 
 The cost is real and is stated rather than hidden: an error that lives
-inside an external entity cannot be detected, and those account for most
-of the remaining conformance failures. The specification does not
+inside external content not supplied by the caller cannot be detected.
+The specification does not
 require a non-validating parser to read the external subset.
 
 ### Does it expand entities at all?
@@ -1065,7 +1070,8 @@ fails with one clear message rather than a dozen missing-method errors.
 
 ### Is `forbid(unsafe_code)` just marketing?
 
-It is CI-enforced, and it prevents memory-unsafety. It does **not**
+It is CI-enforced and forbids unsafe code in this crate. Dependencies
+and the Rust runtime remain part of the trust boundary. It does **not**
 prevent a parser exhausting memory or spending ten minutes in a
 quadratic loop — two HIGH-severity 2026 advisories against another Rust
 XML crate were exactly that, in entirely safe code. `Limits` exists for
@@ -1110,8 +1116,10 @@ Yes, since 0.0.8. `Document::empty()` and the `Builder` create one;
 `append_element`, `append_text`, `set_attribute`, `declare_namespace`,
 `insert_at`, `reparent`, `detach` and `remove` edit one; `to_xml` and
 `write_xml_to` serialise it, and parsing the output gives the same tree
-back. Names and text are validated on the way in, so the API cannot
-produce a document the parser would reject. See the
+back. Names, namespace URIs and text placement are validated on the
+way in. An incomplete document without a root element, or a combination
+no XML version can write (a control character beside a comment holding
+U+0085), is refused by `try_to_xml`. See the
 [`build_a_document`](https://github.com/sebastienrousseau/oxml/blob/main/crates/oxml/examples/build_a_document.rs)
 example.
 
@@ -1174,8 +1182,9 @@ agree on, and the disagreement surfaces later as a bug somewhere else.
 
 ### Is it thread-safe?
 
-`Document` is `Send` and `Sync`; it is immutable after parsing, so any
-number of threads can query one. `XPath` is likewise `Send` and `Sync`,
+`Document` is `Send` and `Sync`; shared references support concurrent
+queries, while mutation requires an exclusive reference.
+`XPath` is likewise `Send` and `Sync`,
 which is what makes compile-once-evaluate-many work across a thread
 pool.
 
@@ -1198,7 +1207,7 @@ vulnerability.
 ## Development
 
 ```bash
-cargo test --workspace --all-features   # 484 tests, plus 30 doctests
+cargo test --workspace --all-features   # 668 tests, plus 35 doctests
 cargo test --no-default-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check
@@ -1221,8 +1230,9 @@ In summary:
 - **Entity expansion is bounded per document**, not per reference. A
   per-reference budget still lets a quadratic blowup through: a
   thousand small expansions cost a thousand times the budget.
-- **`#![forbid(unsafe_code)]`** rules out memory-corruption bugs, and
-  CI checks the attribute is still there.
+- **`#![forbid(unsafe_code)]`** forbids unsafe code in this crate, and
+  CI checks the attribute is still there. Dependencies and the Rust
+  runtime remain part of the memory-safety trust boundary.
 - **Recursion is bounded** by `Limits::max_depth`, because a stack
   overflow aborts the process rather than unwinding and no caller can
   catch it.

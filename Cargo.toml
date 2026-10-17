@@ -14,6 +14,7 @@ exclude = ["fuzz"]
 #   - `oxml-mcp`  → https://github.com/sebastienrousseau/oxml-mcp
 #   - `oxml-lsp`  → https://github.com/sebastienrousseau/oxml-lsp
 #   - `xmlschema` → https://github.com/sebastienrousseau/xmlschema
+#   - `oxml-json` → https://github.com/sebastienrousseau/oxml-json
 #
 # `xmlschema` is the XSD member: it already exists on crates.io under a
 # name that means exactly that, so it keeps its name and becomes the
@@ -21,11 +22,10 @@ exclude = ["fuzz"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.86.0"
+rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
 authors = ["Sebastien Rousseau <sebastian.rousseau@gmail.com>"]
 repository = "https://github.com/sebastienrousseau/oxml"
-homepage = "https://github.com/sebastienrousseau/oxml"
 
 [workspace.lints.rust]
 missing_copy_implementations = "warn"

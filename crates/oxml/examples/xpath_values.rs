@@ -9,7 +9,7 @@
 //! cargo run --example xpath_values
 //! ```
 
-use oxml::xpath::{Axis, BinaryOp, EvalContext, Func, Value};
+use oxml::xpath::{Axis, BinaryOp, EvalContext, EvalLimits, Func, Value};
 use oxml::{ExpandedName, Limits, XPath, parse};
 
 const DOC: &str = r#"<?xml version="1.0"?>
@@ -22,6 +22,11 @@ const DOC: &str = r#"<?xml version="1.0"?>
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let doc = parse(DOC)?;
+    let bounded = EvalContext::new().with_limits(EvalLimits::default());
+    assert_eq!(
+        XPath::compile("count(//item)")?.evaluate_with(&doc, &bounded)?,
+        Value::Number(3.0)
+    );
 
     // An expression compiles once and is independent of any document,
     // so a server can compile at startup and evaluate per request.

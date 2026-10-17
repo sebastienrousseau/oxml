@@ -9,6 +9,7 @@
 //! tree is built directly as the scan proceeds.
 
 use alloc::borrow::{Cow, ToOwned};
+use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -16,6 +17,10 @@ use alloc::vec::Vec;
 use crate::error::{Error, ErrorKind, Result};
 use crate::limits::Limits;
 use crate::tree::{Chars, Document, ExpandedName, NameId, NodeData, NodeId};
+use crate::xml::is_xml_char_for;
+pub(crate) use crate::xml::{
+    Version, is_literal_char_for, is_name_char, is_name_start,
+};
 
 /// Namespace bindings in scope, as a stack of (prefix, uri) frames.
 ///
@@ -225,7 +230,9 @@ pub(crate) struct Parser<'a> {
     pub(crate) input: &'a str,
     pub(crate) bytes: &'a [u8],
     pub(crate) pos: usize,
-    pub(crate) doc: Document,
+    /// Boxed so the streaming reader can lend it to a parser per event
+    /// by moving a pointer.
+    pub(crate) doc: Box<Document>,
     pub(crate) ns: Namespaces,
     /// How many elements are currently open. Bounded by
     /// [`Limits::max_depth`] so the recursion cannot exhaust the stack.
@@ -294,8 +301,8 @@ pub fn parse(input: &str) -> Result<Document> {
 
 /// Parse an XML document from bytes.
 ///
-/// Prefer [`parse`] when you already have a `&str`: it borrows from the
-/// input, while decoding a non-UTF-8 encoding must allocate.
+/// Prefer [`parse`] when you already have a `&str`: it avoids encoding
+/// detection and transcoding. Both entry points return an owned document.
 ///
 /// # Errors
 ///
@@ -309,16 +316,18 @@ pub fn parse_bytes(input: &[u8]) -> Result<Document> {
 /// under explicit resource bounds.
 ///
 /// A byte-order mark wins, then the `encoding` pseudo-attribute of the
-/// XML declaration, then UTF-8. UTF-8 input is not transcoded, so the
-/// zero-copy path is preserved for the common case.
+/// XML declaration, then UTF-8. UTF-8 decoding borrows the source;
+/// constructing the document still copies its normalized text.
 ///
 /// # Errors
 ///
 /// As [`parse_with`], and additionally if the bytes are not valid in
 /// their declared encoding or that encoding is not supported.
 pub fn parse_bytes_with(input: &[u8], limits: Limits) -> Result<Document> {
-    let text = crate::encoding::decode(input)?;
-    parse_with(&text, limits)
+    limits.check_input(input.len())?;
+    let text =
+        crate::encoding::decode_bounded(input, limits.max_document_bytes)?;
+    parse_decoded(&text, limits, &crate::external::NoExternal)
 }
 
 /// Parse an XML document under explicit resource bounds.
@@ -353,6 +362,16 @@ pub fn parse_with_external(
     limits: Limits,
     external: &dyn crate::external::ExternalSource,
 ) -> Result<Document> {
+    limits.check_input(input.len())?;
+    parse_decoded(input, limits, external)
+}
+
+fn parse_decoded(
+    input: &str,
+    limits: Limits,
+    external: &dyn crate::external::ExternalSource,
+) -> Result<Document> {
+    limits.check_document(input.len(), 0)?;
     #[cfg(feature = "tracing")]
     let _span =
         tracing::trace_span!("oxml.parse", input_len = input.len()).entered();
@@ -400,8 +419,9 @@ pub(crate) fn prepare(
     input: &str,
     limits: Limits,
 ) -> Result<(String, Version)> {
+    limits.check_input(input.len())?;
+    limits.check_document(input.len(), 0)?;
     let version = declared_version(input)?;
-    let _ = limits;
     let text = normalize_line_endings(input, version).into_owned();
     check_prolog_shape(&text)?;
     check_characters(&text, version, 0)?;
@@ -509,8 +529,14 @@ pub(crate) fn check_characters(
 
 /// Whitespace before an XML declaration is a malformed document, not
 /// `Misc` appearing early.
+///
+/// Whitespace is XML's `S`, not Rust's: `trim_start` also took a form
+/// feed, so ` \x0c<?xml ...?>` was a misplaced declaration in memory
+/// and an illegal character to the streaming reader, whose prelude
+/// decides there is no declaration once the bytes after the leading
+/// `S` stop matching `<?xml`.
 pub(crate) fn check_prolog_shape(input: &str) -> Result<()> {
-    let trimmed = input.trim_start();
+    let trimmed = input.trim_start_matches([' ', '\t', '\r', '\n']);
     if trimmed.len() != input.len() && trimmed.starts_with("<?xml") {
         let after = &trimmed["<?xml".len()..];
         // `<?xmlfoo?>` is a processing instruction with a reserved
@@ -667,20 +693,15 @@ fn parse_normalized(
     version: Version,
     external: &dyn crate::external::ExternalSource,
 ) -> Result<Document> {
+    limits.check_nodes(0, 1, 0)?;
     // `document ::= prolog element Misc*` with
     // `prolog ::= XMLDecl? Misc*` -- the declaration comes first or not
     // at all. Whitespace before it is not `Misc` appearing early, it is
     // a malformed document, and skipping leading whitespace before
-    // looking for `<?xml` accepted it.
-    let trimmed = input.trim_start();
-    if trimmed.len() != input.len() && trimmed.starts_with("<?xml") {
-        let after = &trimmed["<?xml".len()..];
-        // `<?xmlfoo?>` is a processing instruction with a reserved
-        // target, reported elsewhere; only a real declaration counts.
-        if after.starts_with([' ', '\t', '\r', '\n']) {
-            return Err(Error::new(ErrorKind::MalformedDeclaration, 0));
-        }
-    }
+    // looking for `<?xml` accepted it. The check is the one `prepare`
+    // makes for the streaming reader: this copy kept trimming Rust's
+    // whitespace after that one moved to XML's.
+    check_prolog_shape(input)?;
     // Checked once over the whole input rather than at each construct.
     // The `Char` production applies everywhere — content, attribute
     // values, comments, even the DTD — so a per-construct check would
@@ -702,7 +723,7 @@ fn parse_normalized(
         // processing instruction begins with `<`, and text nodes are
         // bounded by them. Counting runs at memory speed; the
         // reallocate-and-copy it avoids does not.
-        doc: Document::with_capacity(arena_capacity(input, &limits)),
+        doc: Box::new(Document::with_capacity(arena_capacity(input, &limits))),
         name_index: alloc::collections::BTreeMap::new(),
         external,
         ns: Namespaces::default(),
@@ -716,10 +737,16 @@ fn parse_normalized(
         entity_cache: BTreeSet::new(),
     };
     p.parse_document()?;
-    Ok(p.doc)
+    Ok(*p.doc)
 }
 
 type ResolvedAttributes = (Vec<(NameId, Chars)>, Vec<String>);
+
+enum ChildStep {
+    Element,
+    Continue,
+    Done,
+}
 
 impl<'a> Parser<'a> {
     fn parse_document(&mut self) -> Result<()> {
@@ -827,73 +854,11 @@ impl<'a> Parser<'a> {
                 // subset takes precedence: "the first declaration
                 // binds", and `or_insert` in the entity map already
                 // implements that.
-                if let Some((system, public)) = dtd.external_subset.clone() {
-                    if let Some(content) =
+                if let Some((system, public)) = dtd.external_subset.clone()
+                    && let Some(content) =
                         self.external.fetch(&system, public.as_deref())
-                    {
-                        let version = entity_version(content, self.version);
-                        let normalized =
-                            normalize_line_endings(content, version);
-                        check_text_decl_position(&normalized, self.pos)?;
-                        check_text_decl(&normalized, self.version, self.pos)?;
-                        let body = strip_text_decl(&normalized);
-                        // Judged by **both** versions, and it has to
-                        // be both.
-                        //
-                        // The subset's own version rules it: a DTD
-                        // declaring 1.0 may not contain characters only
-                        // 1.1 allows, which is what carrying a version
-                        // per entity is for. But the including
-                        // document's version rules it too. XML 1.1
-                        // section 4.3.4: a 1.0 external DTD may hold
-                        // `#x7F`, legal in 1.0, and pulling it into a
-                        // document declaring 1.1 puts a character there
-                        // that 1.1 requires to be escaped. Checking
-                        // only the entity's version accepted seven
-                        // documents the suite calls not well-formed.
-                        if let Some((_, c)) =
-                            body.char_indices().find(|(_, c)| {
-                                !is_literal_char_for(*c, version)
-                                    || !is_literal_char_for(*c, self.version)
-                            })
-                        {
-                            return Err(Error::new(
-                                ErrorKind::IllegalCharacter(c),
-                                self.pos,
-                            ));
-                        }
-                        let mut sub = crate::dtd::DtdParser::with_limits(
-                            body,
-                            0,
-                            &self.limits,
-                        )
-                        .with_external(self.external, version);
-                        // Which names arrive from out here, so that
-                        // `standalone="yes"` can refuse them. Taken as
-                        // a before-and-after rather than threaded
-                        // through the DTD parser: the boundary is
-                        // exactly this call.
-                        let before: alloc::collections::BTreeSet<String> =
-                            dtd.general.keys().cloned().collect();
-                        if let Err((offset, reason)) =
-                            sub.parse_external_subset(&mut dtd)
-                        {
-                            let _ = offset;
-                            return Err(Error::new(
-                                ErrorKind::MalformedDtd(reason),
-                                self.pos,
-                            ));
-                        }
-                        dtd.declared_externally = dtd
-                            .general
-                            .keys()
-                            .filter(|k| !before.contains(*k))
-                            .cloned()
-                            .collect();
-                        // The declarations are now known, so an entity
-                        // that is still missing really is undeclared.
-                        dtd.incomplete = false;
-                    }
+                {
+                    self.read_external_subset(&mut dtd, content)?;
                 }
                 // An external entity is checked when it is
                 // *referenced*, not when it is declared. A processor
@@ -908,6 +873,80 @@ impl<'a> Parser<'a> {
                 Err(Error::new(ErrorKind::MalformedDtd(reason), offset))
             }
         }
+    }
+
+    /// Read the external DTD subset `content` into `dtd`, after the
+    /// internal subset, so the internal declarations keep precedence.
+    fn read_external_subset(
+        &self,
+        dtd: &mut crate::dtd::Dtd,
+        content: &str,
+    ) -> Result<()> {
+        self.limits.check_document(content.len(), self.pos)?;
+        if self
+            .limits
+            .max_dtd_bytes
+            .is_some_and(|max| content.len() > max)
+        {
+            return Err(Error::new(ErrorKind::DtdTooLarge, self.pos));
+        }
+        let version = entity_version(content, self.version);
+        let normalized = normalize_line_endings(content, version);
+        check_text_decl_position(&normalized, self.pos)?;
+        check_text_decl(&normalized, self.version, self.pos)?;
+        let body = strip_text_decl(&normalized);
+        // Judged by **both** versions, and it has to
+        // be both.
+        //
+        // The subset's own version rules it: a DTD
+        // declaring 1.0 may not contain characters only
+        // 1.1 allows, which is what carrying a version
+        // per entity is for. But the including
+        // document's version rules it too. XML 1.1
+        // section 4.3.4: a 1.0 external DTD may hold
+        // `#x7F`, legal in 1.0, and pulling it into a
+        // document declaring 1.1 puts a character there
+        // that 1.1 requires to be escaped. Checking
+        // only the entity's version accepted seven
+        // documents the suite calls not well-formed.
+        if let Some((_, c)) = body.char_indices().find(|(_, c)| {
+            !is_literal_char_for(*c, version)
+                || !is_literal_char_for(*c, self.version)
+        }) {
+            return Err(Error::new(ErrorKind::IllegalCharacter(c), self.pos));
+        }
+        self.read_subset_declarations(dtd, body, version)
+    }
+
+    fn read_subset_declarations(
+        &self,
+        dtd: &mut crate::dtd::Dtd,
+        body: &str,
+        version: Version,
+    ) -> Result<()> {
+        let mut sub = crate::dtd::DtdParser::with_limits(body, 0, &self.limits)
+            .with_external(self.external, version);
+        // Which names arrive from out here, so that
+        // `standalone="yes"` can refuse them. Taken as
+        // a before-and-after rather than threaded
+        // through the DTD parser: the boundary is
+        // exactly this call.
+        let before: alloc::collections::BTreeSet<String> =
+            dtd.general.keys().cloned().collect();
+        if let Err((offset, reason)) = sub.parse_external_subset(dtd) {
+            let _ = offset;
+            return Err(Error::new(ErrorKind::MalformedDtd(reason), self.pos));
+        }
+        dtd.declared_externally = dtd
+            .general
+            .keys()
+            .filter(|k| !before.contains(*k))
+            .cloned()
+            .collect();
+        // The declarations are now known, so an entity
+        // that is still missing really is undeclared.
+        dtd.incomplete = false;
+        Ok(())
     }
 
     fn parse_element(&mut self, parent: NodeId) -> Result<()> {
@@ -1040,6 +1079,11 @@ impl<'a> Parser<'a> {
         let (resolved, id_values) =
             self.resolve_attributes(qname, raw_attrs, tag_start)?;
         let name_id = self.intern_qname(qname, true, tag_start)?;
+        let additional = 1
+            + resolved.len()
+            + declared.len()
+            + usize::from(parent == self.doc.root());
+        self.check_nodes(additional)?;
         let node = self.doc.push(
             NodeData::Element {
                 name: name_id,
@@ -1257,37 +1301,62 @@ impl<'a> Parser<'a> {
         let mark = self.doc.scratch_mark();
         let mut text = Run::default();
         loop {
-            // Checked once per child rather than at each `push`: every
-            // node this parser creates is created from inside this loop
-            // (directly, or by the recursive `parse_element` below), so
-            // one check here bounds the whole arena without threading a
-            // `Result` through the tree API.
-            if self.limits.max_nodes.is_some_and(|m| self.doc.len() > m) {
-                return Err(Error::new(ErrorKind::TooManyNodes, self.pos));
-            }
-            if self.pos >= self.bytes.len() {
-                return Err(Error::new(ErrorKind::UnexpectedEof, self.pos));
-            }
-            if self.peek_is(b'<') {
-                if self.starts_with("</") {
-                    self.flush_text(&mut text, node)?;
-                    return self.parse_end_tag(node, open_qname, mark);
-                } else if self.starts_with("<!--") {
-                    self.flush_text(&mut text, node)?;
-                    self.push_comment(node)?;
-                } else if self.starts_with("<![CDATA[") {
-                    self.parse_cdata(&mut text)?;
-                } else if self.starts_with("<?") {
-                    self.flush_text(&mut text, node)?;
-                    self.push_pi(node)?;
-                } else {
-                    self.flush_text(&mut text, node)?;
-                    self.parse_element(node)?;
-                }
-            } else {
-                self.parse_text_run(&mut text)?;
+            match self.child_step(node, open_qname, mark, &mut text)? {
+                ChildStep::Element => self.parse_element(node)?,
+                ChildStep::Continue => {}
+                ChildStep::Done => return Ok(()),
             }
         }
+    }
+
+    /// This frame returns before descending into a child element.
+    fn child_step(
+        &mut self,
+        node: NodeId,
+        open_qname: &str,
+        mark: usize,
+        text: &mut Run,
+    ) -> Result<ChildStep> {
+        if self.read_text_piece(text)? {
+            return Ok(ChildStep::Continue);
+        }
+        self.flush_text(text, node)?;
+        if self.starts_with("</") {
+            self.parse_end_tag(node, open_qname, mark)?;
+            return Ok(ChildStep::Done);
+        }
+        Ok(if self.push_misc(node)? {
+            ChildStep::Continue
+        } else {
+            ChildStep::Element
+        })
+    }
+
+    fn read_text_piece(&mut self, text: &mut Run) -> Result<bool> {
+        if self.pos >= self.bytes.len() {
+            return Err(Error::new(ErrorKind::UnexpectedEof, self.pos));
+        }
+        if !self.peek_is(b'<') {
+            self.parse_text_run(text)?;
+            return Ok(true);
+        }
+        if self.starts_with("<![CDATA[") {
+            self.parse_cdata(text)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn push_misc(&mut self, node: NodeId) -> Result<bool> {
+        if self.starts_with("<!--") {
+            self.push_comment(node)?;
+            return Ok(true);
+        }
+        if self.starts_with("<?") {
+            self.push_pi(node)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// `</name>`: it must match the open tag, and it closes `node`, so
@@ -1324,6 +1393,7 @@ impl<'a> Parser<'a> {
     /// Scan a comment at the cursor and attach it to `parent`, with
     /// the range it came from.
     fn push_comment(&mut self, parent: NodeId) -> Result<()> {
+        self.check_nodes(1)?;
         let at = self.pos;
         let c = self.parse_comment()?;
         let id = self.doc.push(NodeData::Comment(c), parent);
@@ -1334,6 +1404,7 @@ impl<'a> Parser<'a> {
     /// Scan a processing instruction at the cursor and attach it to
     /// `parent`, with the range it came from.
     fn push_pi(&mut self, parent: NodeId) -> Result<()> {
+        self.check_nodes(1)?;
         let at = self.pos;
         let (target, data) = self.parse_pi()?;
         let id = self
@@ -1345,6 +1416,7 @@ impl<'a> Parser<'a> {
 
     fn flush_text(&mut self, text: &mut Run, node: NodeId) -> Result<()> {
         if !text.is_empty() {
+            self.check_nodes(1)?;
             let run = core::mem::take(text);
             if self.limits.max_text_length.is_some_and(|m| run.len() > m) {
                 return Err(Error::new(ErrorKind::TextTooLong, self.pos));
@@ -1361,6 +1433,11 @@ impl<'a> Parser<'a> {
             self.doc.set_span(id, run.start, self.pos);
         }
         Ok(())
+    }
+
+    fn check_nodes(&self, additional: usize) -> Result<()> {
+        self.limits
+            .check_nodes(self.doc.len(), additional, self.pos)
     }
 
     #[inline]
@@ -1394,60 +1471,79 @@ impl<'a> Parser<'a> {
             }
             match self.bytes[self.pos] {
                 b'<' => break,
-                b'&' => {
-                    let s = self.pos;
-                    self.pos += 1;
-                    let end =
-                        self.input[self.pos..].find(';').ok_or_else(|| {
-                            Error::new(ErrorKind::Unterminated("entity"), s)
-                        })?;
-                    let ent = &self.input[self.pos..self.pos + end];
-                    // Element content, not an attribute value: section
-                    // 3.3.3 does not apply, and a newline in content is
-                    // content.
-                    let expanded = self.expand_entity(ent, s, false)?;
-                    // The one thing in a text run the input does not
-                    // hold verbatim: this is where a run stops being a
-                    // slice and starts being a string.
-                    out.push_owned(&expanded, self.input);
-                    self.pos += end + 1;
-                }
-                _ => {
-                    let start = self.pos;
-                    while self.pos + 8 <= self.bytes.len() {
-                        let Ok(chunk) =
-                            self.bytes[self.pos..self.pos + 8].try_into()
-                        else {
-                            break;
-                        };
-                        let v = u64::from_ne_bytes(chunk);
-                        if Self::has_text_delimiter(v) {
-                            break;
-                        }
-                        self.pos += 8;
-                    }
-                    while self.pos < self.bytes.len()
-                        && self.bytes[self.pos] != b'<'
-                        && self.bytes[self.pos] != b'&'
-                    {
-                        self.pos += 1;
-                    }
-                    // The check at the top of the loop only sees the
-                    // first byte of a run. Everything after it was
-                    // consumed here without being looked at, so
-                    // `]]]>`, `abc]]>def` and the text left over after
-                    // a nested CDATA section all passed.
-                    let run = &self.input[start..self.pos];
-                    if let Some(at) = run.find("]]>") {
-                        return Err(Error::new(
-                            ErrorKind::IllegalCdataEnd,
-                            start + at,
-                        ));
-                    }
-                    out.push_slice(start, run, self.input);
-                }
+                b'&' => self.text_reference(out)?,
+                _ => self.text_chars(out)?,
             }
         }
+        Ok(())
+    }
+
+    /// The length of the reference name that starts at `self.pos`,
+    /// just after its `&`: up to the `;` that ends it, which must come
+    /// before the next `<` and before `stop`, the quote that closes an
+    /// attribute value. `None` when it does not.
+    ///
+    /// Searching the rest of the input found a `;` past the markup or
+    /// the quote that ends the text or the value, so the reader that
+    /// holds the whole document reported an unknown entity whose name
+    /// spanned tags, where the streaming reader, which holds one
+    /// construct, reported the reference unterminated.
+    fn reference_len(&self, stop: u8) -> Option<usize> {
+        let rest = &self.bytes[self.pos..];
+        rest.iter()
+            .position(|&b| matches!(b, b';' | b'<') || b == stop)
+            .filter(|&i| rest[i] == b';')
+    }
+
+    /// A reference in character data, at `&`, expanded into `out`.
+    fn text_reference(&mut self, out: &mut Run) -> Result<()> {
+        let s = self.pos;
+        self.pos += 1;
+        let end = self
+            .reference_len(b'<')
+            .ok_or_else(|| Error::new(ErrorKind::Unterminated("entity"), s))?;
+        let ent = &self.input[self.pos..self.pos + end];
+        // Element content, not an attribute value: section 3.3.3 does
+        // not apply, and a newline in content is content.
+        let expanded = self.expand_entity(ent, s, false)?;
+        // The one thing in a text run the input does not hold
+        // verbatim: this is where a run stops being a slice and starts
+        // being a string.
+        out.push_owned(&expanded, self.input);
+        self.pos += end + 1;
+        Ok(())
+    }
+
+    /// Literal character data up to the next `<` or `&`, joined to
+    /// `out` as a slice of the input.
+    fn text_chars(&mut self, out: &mut Run) -> Result<()> {
+        let start = self.pos;
+        while self.pos + 8 <= self.bytes.len() {
+            let Ok(chunk) = self.bytes[self.pos..self.pos + 8].try_into()
+            else {
+                break;
+            };
+            let v = u64::from_ne_bytes(chunk);
+            if Self::has_text_delimiter(v) {
+                break;
+            }
+            self.pos += 8;
+        }
+        while self.pos < self.bytes.len()
+            && self.bytes[self.pos] != b'<'
+            && self.bytes[self.pos] != b'&'
+        {
+            self.pos += 1;
+        }
+        // The check at the top of the run's loop only sees the first
+        // byte of a run. Everything after it was consumed here without
+        // being looked at, so `]]]>`, `abc]]>def` and the text left
+        // over after a nested CDATA section all passed.
+        let run = &self.input[start..self.pos];
+        if let Some(at) = run.find("]]>") {
+            return Err(Error::new(ErrorKind::IllegalCdataEnd, start + at));
+        }
+        out.push_slice(start, run, self.input);
         Ok(())
     }
 
@@ -1632,7 +1728,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             // Thrown away: only whether it parses matters, so the
             // ranges it records point nowhere and are never read.
-            doc: Document::with_capacity(0),
+            doc: Box::new(Document::with_capacity(0)),
             ns: core::mem::take(&mut self.ns),
             depth: self.depth,
             limits: self.limits,
@@ -1849,86 +1945,98 @@ impl<'a> Parser<'a> {
     /// from markup.
     fn parse_attribute_value(&mut self) -> Result<Run> {
         let start = self.pos;
-        if self.pos >= self.bytes.len() {
-            return Err(Error::new(ErrorKind::UnexpectedEof, start));
-        }
-        let quote = self.bytes[self.pos];
-        if quote != b'"' && quote != b'\'' {
-            return Err(Error::new(ErrorKind::UnquotedAttributeValue, start));
-        }
-        self.pos += 1;
+        let quote = self.attribute_quote()?;
         let mut out = Run::default();
         loop {
-            if self.pos >= self.bytes.len() {
-                return Err(Error::new(
-                    ErrorKind::Unterminated("attribute value"),
-                    start,
-                ));
-            }
-            match self.bytes[self.pos] {
-                b if b == quote => {
+            match self.bytes.get(self.pos).copied() {
+                None => {
+                    return Err(Error::new(
+                        ErrorKind::Unterminated("attribute value"),
+                        start,
+                    ));
+                }
+                Some(b) if b == quote => {
                     self.pos += 1;
                     return Ok(out);
                 }
-                b'<' => {
+                Some(b'<') => {
                     return Err(Error::new(
                         ErrorKind::IllegalCharacter('<'),
                         self.pos,
                     ));
                 }
-                b'&' => {
-                    let s = self.pos;
-                    self.pos += 1;
-                    let end =
-                        self.input[self.pos..].find(';').ok_or_else(|| {
-                            Error::new(ErrorKind::Unterminated("entity"), s)
-                        })?;
-                    let ent = &self.input[self.pos..self.pos + end];
-                    // Normalisation happens inside the expansion, so
-                    // that a character reference within an entity's
-                    // replacement text stays exempt.
-                    let expanded = self.expand_entity(ent, s, true)?;
-                    out.push_owned(&expanded, self.input);
-                    self.pos += end + 1;
-                }
-                _ => {
-                    // Stopping at `<` as well lets the arm above report
-                    // it. Without this the run swallowed it, so
-                    // `a="<x"` was rejected and `a="1 < 2"` was not.
-                    let s = self.pos;
-                    while self.pos + 8 <= self.bytes.len() {
-                        let Ok(chunk) =
-                            self.bytes[self.pos..self.pos + 8].try_into()
-                        else {
-                            break;
-                        };
-                        let v = u64::from_ne_bytes(chunk);
-                        if Self::has_attr_delimiter(v, quote) {
-                            break;
-                        }
-                        self.pos += 8;
-                    }
-                    while self.pos < self.bytes.len()
-                        && self.bytes[self.pos] != quote
-                        && self.bytes[self.pos] != b'&'
-                        && self.bytes[self.pos] != b'<'
-                    {
-                        self.pos += 1;
-                    }
-                    // Normalisation only rewrites a value that
-                    // contains a tab or a line break, which almost
-                    // none do. When it would change nothing, the value
-                    // is a slice of the input and costs nothing.
-                    let raw = &self.input[s..self.pos];
-                    if raw.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\r')) {
-                        let mut normalized = String::new();
-                        push_attribute_normalized(&mut normalized, raw);
-                        out.push_owned(&normalized, self.input);
-                    } else {
-                        out.push_slice(s, raw, self.input);
-                    }
-                }
+                Some(b'&') => self.value_reference(quote, &mut out)?,
+                Some(_) => self.value_chars(quote, &mut out),
             }
+        }
+    }
+
+    /// The quote that opens an attribute value, consumed.
+    fn attribute_quote(&mut self) -> Result<u8> {
+        match self.bytes.get(self.pos).copied() {
+            None => Err(Error::new(ErrorKind::UnexpectedEof, self.pos)),
+            Some(quote @ (b'"' | b'\'')) => {
+                self.pos += 1;
+                Ok(quote)
+            }
+            Some(_) => {
+                Err(Error::new(ErrorKind::UnquotedAttributeValue, self.pos))
+            }
+        }
+    }
+
+    /// A reference in an attribute value, at `&`, expanded into `out`.
+    fn value_reference(&mut self, quote: u8, out: &mut Run) -> Result<()> {
+        let s = self.pos;
+        self.pos += 1;
+        let end = self
+            .reference_len(quote)
+            .ok_or_else(|| Error::new(ErrorKind::Unterminated("entity"), s))?;
+        let ent = &self.input[self.pos..self.pos + end];
+        // Normalisation happens inside the expansion, so that a
+        // character reference within an entity's replacement text
+        // stays exempt.
+        let expanded = self.expand_entity(ent, s, true)?;
+        out.push_owned(&expanded, self.input);
+        self.pos += end + 1;
+        Ok(())
+    }
+
+    /// Literal characters of an attribute value up to its closing
+    /// `quote`, a `&` or a `<`, joined to `out` normalised.
+    fn value_chars(&mut self, quote: u8, out: &mut Run) {
+        // Stopping at `<` as well lets the caller report it. Without
+        // this the run swallowed it, so `a="<x"` was rejected and
+        // `a="1 < 2"` was not.
+        let s = self.pos;
+        while self.pos + 8 <= self.bytes.len() {
+            let Ok(chunk) = self.bytes[self.pos..self.pos + 8].try_into()
+            else {
+                break;
+            };
+            let v = u64::from_ne_bytes(chunk);
+            if Self::has_attr_delimiter(v, quote) {
+                break;
+            }
+            self.pos += 8;
+        }
+        while self.pos < self.bytes.len()
+            && self.bytes[self.pos] != quote
+            && self.bytes[self.pos] != b'&'
+            && self.bytes[self.pos] != b'<'
+        {
+            self.pos += 1;
+        }
+        // Normalisation only rewrites a value that contains a tab or a
+        // line break, which almost none do. When it would change
+        // nothing, the value is a slice of the input and costs nothing.
+        let raw = &self.input[s..self.pos];
+        if raw.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\r')) {
+            let mut normalized = String::new();
+            push_attribute_normalized(&mut normalized, raw);
+            out.push_owned(&normalized, self.input);
+        } else {
+            out.push_slice(s, raw, self.input);
         }
     }
 
@@ -2158,144 +2266,34 @@ impl<'a> Parser<'a> {
     /// anywhere in it is exempt. Normalising the finished expansion
     /// instead would lose that distinction, because by then `&#xA;`
     /// and a literal newline are the same character.
-    #[allow(clippy::too_many_lines)]
     fn expand_entity(
         &mut self,
         ent: &str,
         offset: usize,
         in_attribute: bool,
     ) -> Result<String> {
-        if let Some(direct) = decode_predefined(ent) {
-            // A character *reference* may not name a character the
-            // `Char` production forbids. `&#0;` is illegal in both 1.0
-            // and 1.1; the C0 controls are legal as references in 1.1
-            // only. Decoding without this check accepted 65 documents
-            // that are not well-formed.
-            if let Some(bad) =
-                direct.chars().find(|c| !is_xml_char_for(*c, self.version))
-            {
-                return Err(Error::new(
-                    ErrorKind::IllegalCharacter(bad),
-                    offset,
-                ));
-            }
+        if let Some(direct) = self.predefined_reference(ent, offset)? {
             return Ok(direct);
         }
-        let Some(dtd) = self.dtd.as_ref() else {
-            return Err(Error::new(
-                ErrorKind::UnknownEntity(ent.to_owned()),
-                offset,
-            ));
-        };
-        // `WFC: Entity Declared`. With `standalone="yes"` the document
-        // has promised it depends on nothing outside its internal
-        // subset, so referencing an entity declared out there
-        // contradicts the promise -- even though the declaration was
-        // found and would otherwise resolve.
-        if self.standalone && dtd.declared_externally.contains(ent) {
-            return Err(Error::new(
-                ErrorKind::ForbiddenEntityReference(ent.to_owned()),
-                offset,
-            ));
-        }
+        let dtd = self.entity_declarations(ent, offset)?;
         match dtd.entity(ent) {
             Some(crate::dtd::EntityValue::Internal(text)) => {
                 let text = text.clone();
-                // Included, not substituted: the replacement text of a
-                // declared entity is markup where it lands.
-                let replacement = self.replacement_text(&text, offset)?;
-                if in_attribute {
-                    Self::check_entity_in_attribute(&replacement, offset)?;
-                } else {
-                    let key = (ent.to_owned(), self.ns.scope_id());
-                    if !self.entity_cache.contains(&key) {
-                        self.check_entity_as_content(&replacement, offset)?;
-                        let _ = self.entity_cache.insert(key);
-                    }
-                }
-                let mut budget = self.entity_budget;
-                let out = self.expand_text(
-                    &text,
-                    offset,
-                    1,
-                    &mut budget,
-                    in_attribute,
-                );
-                self.entity_budget = budget;
-                out
+                self.expand_internal_entity(ent, &text, offset, in_attribute)
             }
             // `WFC: No External Entity References`. In content an
             // external parsed entity expands to nothing, because
             // nothing is ever fetched; in an attribute value the
             // reference itself is forbidden.
             Some(crate::dtd::EntityValue::External { system, public }) => {
-                if in_attribute {
-                    return Err(Error::new(
-                        ErrorKind::ForbiddenEntityReference(ent.to_owned()),
-                        offset,
-                    ));
-                }
-                // Whatever the caller made available, minus its text
-                // declaration, which is markup about the entity rather
-                // than part of it. Without a source this is `None` and
-                // the reference expands to nothing, as before.
                 let (system, public) = (system.clone(), public.clone());
-                match self.external.fetch(&system, public.as_deref()) {
-                    Some(content) => {
-                        // Each external parsed entity has its own
-                        // version and is normalised independently. An
-                        // entity declaring 1.1 may use U+2028 as
-                        // whitespace -- including inside its own text
-                        // declaration, which is where this first showed
-                        // up: the declaration was reported malformed
-                        // because the separator had not been
-                        // normalised yet.
-                        let entity_version =
-                            entity_version(content, self.version);
-                        let normalized =
-                            normalize_line_endings(content, entity_version);
-                        let content: &str = &normalized;
-                        check_text_decl_position(content, offset)?;
-                        check_text_decl(content, self.version, offset)?;
-                        let body = strip_text_decl(content);
-                        // The content is parsed for illegal characters
-                        // the same way the document was; it arrived
-                        // from outside and is no more trusted.
-                        if let Some((at, c)) =
-                            body.char_indices().find(|(_, c)| {
-                                !is_literal_char_for(*c, self.version)
-                            })
-                        {
-                            let _ = at;
-                            return Err(Error::new(
-                                ErrorKind::IllegalCharacter(c),
-                                offset,
-                            ));
-                        }
-                        // An external parsed entity is *included*
-                        // exactly as an internal one is, so its
-                        // replacement text is content and not
-                        // characters. Checking only internal entities
-                        // left `<root&#x85;/>` -- NEL, whitespace in
-                        // 1.1 and not in 1.0 -- accepted inside a 1.0
-                        // document, because nothing ever read the
-                        // replacement text as a tag.
-                        if !in_attribute {
-                            self.check_entity_as_content(body, offset)?;
-                        }
-                        let mut budget = self.entity_budget;
-                        let out = self.expand_text(
-                            body,
-                            offset,
-                            1,
-                            &mut budget,
-                            false,
-                        );
-                        self.entity_budget = budget;
-                        out
-                    }
-                    None => Ok(String::new()),
-                }
+                self.expand_external_entity(
+                    ent,
+                    &system,
+                    public.as_deref(),
+                    offset,
+                    in_attribute,
+                )
             }
             // `WFC: Parsed Entity`. An unparsed entity may not be
             // referenced anywhere -- it is not text and has no
@@ -2314,12 +2312,157 @@ impl<'a> Parser<'a> {
             // entity that is not declared inside it is undeclared --
             // whether or not an external subset exists and whether or
             // not it could be read.
-            None if dtd.incomplete && !self.standalone => Ok(String::new()),
-            None => Err(Error::new(
-                ErrorKind::UnknownEntity(ent.to_owned()),
-                offset,
-            )),
+            None => self.unresolved_entity(ent, offset, dtd.incomplete),
         }
+    }
+
+    fn entity_declarations(
+        &self,
+        ent: &str,
+        offset: usize,
+    ) -> Result<&crate::dtd::Dtd> {
+        let dtd = self.dtd.as_ref().ok_or_else(|| {
+            Error::new(ErrorKind::UnknownEntity(ent.to_owned()), offset)
+        })?;
+        // `WFC: Entity Declared`. With `standalone="yes"` the document
+        // has promised it depends on nothing outside its internal
+        // subset, so referencing an entity declared out there
+        // contradicts the promise even when its declaration was found.
+        if self.standalone && dtd.declared_externally.contains(ent) {
+            return Err(Error::new(
+                ErrorKind::ForbiddenEntityReference(ent.to_owned()),
+                offset,
+            ));
+        }
+        Ok(dtd)
+    }
+
+    fn unresolved_entity(
+        &self,
+        ent: &str,
+        offset: usize,
+        incomplete: bool,
+    ) -> Result<String> {
+        if incomplete && !self.standalone {
+            return Ok(String::new());
+        }
+        Err(Error::new(ErrorKind::UnknownEntity(ent.to_owned()), offset))
+    }
+
+    fn predefined_reference(
+        &self,
+        ent: &str,
+        offset: usize,
+    ) -> Result<Option<String>> {
+        let Some(direct) = decode_predefined(ent) else {
+            return Ok(None);
+        };
+        // A character *reference* may not name a character the
+        // `Char` production forbids. `&#0;` is illegal in both 1.0
+        // and 1.1; the C0 controls are legal as references in 1.1
+        // only. Decoding without this check accepted 65 documents
+        // that are not well-formed.
+        if let Some(bad) =
+            direct.chars().find(|c| !is_xml_char_for(*c, self.version))
+        {
+            return Err(Error::new(ErrorKind::IllegalCharacter(bad), offset));
+        }
+        Ok(Some(direct))
+    }
+
+    fn expand_internal_entity(
+        &mut self,
+        ent: &str,
+        text: &str,
+        offset: usize,
+        in_attribute: bool,
+    ) -> Result<String> {
+        // Included, not substituted: the replacement text of a
+        // declared entity is markup where it lands.
+        let replacement = self.replacement_text(text, offset)?;
+        if in_attribute {
+            Self::check_entity_in_attribute(&replacement, offset)?;
+        } else {
+            let key = (ent.to_owned(), self.ns.scope_id());
+            if !self.entity_cache.contains(&key) {
+                self.check_entity_as_content(&replacement, offset)?;
+                let _ = self.entity_cache.insert(key);
+            }
+        }
+        let mut budget = self.entity_budget;
+        let out = self.expand_text(text, offset, 1, &mut budget, in_attribute);
+        self.entity_budget = budget;
+        out
+    }
+
+    fn expand_external_entity(
+        &mut self,
+        ent: &str,
+        system: &str,
+        public: Option<&str>,
+        offset: usize,
+        in_attribute: bool,
+    ) -> Result<String> {
+        if in_attribute {
+            return Err(Error::new(
+                ErrorKind::ForbiddenEntityReference(ent.to_owned()),
+                offset,
+            ));
+        }
+        // Whatever the caller made available, minus its text
+        // declaration, which is markup about the entity rather
+        // than part of it. Without a source this is `None` and
+        // the reference expands to nothing, as before.
+
+        match self.external.fetch(system, public) {
+            Some(content) => self.expand_external_content(content, offset),
+            None => Ok(String::new()),
+        }
+    }
+
+    fn expand_external_content(
+        &mut self,
+        content: &str,
+        offset: usize,
+    ) -> Result<String> {
+        self.limits.check_document(content.len(), offset)?;
+        // Each external parsed entity has its own
+        // version and is normalised independently. An
+        // entity declaring 1.1 may use U+2028 as
+        // whitespace -- including inside its own text
+        // declaration, which is where this first showed
+        // up: the declaration was reported malformed
+        // because the separator had not been
+        // normalised yet.
+        let entity_version = entity_version(content, self.version);
+        let normalized = normalize_line_endings(content, entity_version);
+        let content: &str = &normalized;
+        check_text_decl_position(content, offset)?;
+        check_text_decl(content, self.version, offset)?;
+        let body = strip_text_decl(content);
+        // The content is parsed for illegal characters
+        // the same way the document was; it arrived
+        // from outside and is no more trusted.
+        if let Some((at, c)) = body
+            .char_indices()
+            .find(|(_, c)| !is_literal_char_for(*c, self.version))
+        {
+            let _ = at;
+            return Err(Error::new(ErrorKind::IllegalCharacter(c), offset));
+        }
+        // An external parsed entity is *included*
+        // exactly as an internal one is, so its
+        // replacement text is content and not
+        // characters. Checking only internal entities
+        // left `<root&#x85;/>` -- NEL, whitespace in
+        // 1.1 and not in 1.0 -- accepted inside a 1.0
+        // document, because nothing ever read the
+        // replacement text as a tag.
+        self.check_entity_as_content(body, offset)?;
+        let mut budget = self.entity_budget;
+        let out = self.expand_text(body, offset, 1, &mut budget, false);
+        self.entity_budget = budget;
+        out
     }
 
     /// Expand entity references inside replacement text.
@@ -2510,15 +2653,6 @@ fn decode_predefined(ent: &str) -> Option<String> {
         }
     };
     Some(out)
-}
-
-/// The XML version a document declares.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Version {
-    /// XML 1.0, the default when no declaration says otherwise.
-    V10,
-    /// XML 1.1.
-    V11,
 }
 
 /// Check the structure of an XML declaration.
@@ -2867,91 +3001,4 @@ pub(crate) fn declared_version(input: &str) -> Result<Version> {
         v if v.starts_with("1.") => Ok(Version::V10),
         _ => Err(Error::new(ErrorKind::UnsupportedVersion, 0)),
     }
-}
-
-/// `Char`, for the version in force — the rule for a character
-/// arriving via a **reference**.
-///
-/// XML 1.1 widens the production to admit the C0 and C1 controls.
-#[must_use]
-const fn is_xml_char_for(c: char, version: Version) -> bool {
-    match version {
-        Version::V10 => is_xml_char(c),
-        Version::V11 => matches!(c,
-            '\u{1}'..='\u{D7FF}'
-            | '\u{E000}'..='\u{FFFD}'
-            | '\u{10000}'..='\u{10FFFF}'
-        ),
-    }
-}
-
-/// `RestrictedChar`, XML 1.1 production 2a.
-///
-/// ```text
-/// RestrictedChar ::= [#x1-#x8] | [#xB-#xC] | [#xE-#x1F]
-///                  | [#x7F-#x84] | [#x86-#x9F]
-/// ```
-#[must_use]
-const fn is_restricted_char(c: char) -> bool {
-    matches!(c,
-        '\u{1}'..='\u{8}' | '\u{B}'..='\u{C}' | '\u{E}'..='\u{1F}'
-        | '\u{7F}'..='\u{84}' | '\u{86}'..='\u{9F}'
-    )
-}
-
-/// Whether `c` may appear **literally** in the document text.
-///
-/// This is deliberately stricter than [`is_xml_char_for`]. XML 1.1
-/// admits the C0 and C1 controls into `Char`, but production 2a
-/// forbids them appearing literally: they must be written as character
-/// references. Conflating the two rules accepts 63 documents the suite
-/// marks not-well-formed — a control character pasted into a comment or
-/// into content is exactly the case this separates.
-#[must_use]
-pub(crate) const fn is_literal_char_for(c: char, version: Version) -> bool {
-    match version {
-        Version::V10 => is_xml_char(c),
-        Version::V11 => is_xml_char_for(c, version) && !is_restricted_char(c),
-    }
-}
-
-/// Whether `c` matches XML 1.0 production 2, `Char`.
-///
-/// ```text
-/// Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD]
-///        | [#x10000-#x10FFFF]
-/// ```
-///
-/// Most C0 control characters are **not** legal anywhere in an XML
-/// document — not in content, not in an attribute value, not even
-/// inside a comment. A parser that accepts them is accepting documents
-/// that are not well-formed, and this accounted for 77 failures against
-/// the W3C suite.
-///
-/// Surrogates cannot appear: Rust's `char` cannot hold one. `#xFFFE`
-/// and `#xFFFF` can, and are excluded.
-#[must_use]
-pub(crate) const fn is_xml_char(c: char) -> bool {
-    matches!(c,
-        '\u{9}' | '\u{A}' | '\u{D}'
-        | '\u{20}'..='\u{D7FF}'
-        | '\u{E000}'..='\u{FFFD}'
-        | '\u{10000}'..='\u{10FFFF}'
-    )
-}
-
-pub(crate) fn is_name_start(c: char) -> bool {
-    matches!(c, 'A'..='Z' | 'a'..='z' | '_' | ':')
-        || matches!(c as u32,
-            0xC0..=0xD6 | 0xD8..=0xF6 | 0xF8..=0x2FF
-            | 0x370..=0x37D | 0x37F..=0x1FFF | 0x200C..=0x200D
-            | 0x2070..=0x218F | 0x2C00..=0x2FEF | 0x3001..=0xD7FF
-            | 0xF900..=0xFDCF | 0xFDF0..=0xFFFD | 0x10000..=0xEFFFF)
-}
-
-pub(crate) fn is_name_char(c: char) -> bool {
-    is_name_start(c)
-        || matches!(c, '-' | '.' | '0'..='9')
-        || c as u32 == 0xB7
-        || matches!(c as u32, 0x300..=0x36F | 0x203F..=0x2040)
 }

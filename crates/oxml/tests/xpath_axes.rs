@@ -8,6 +8,8 @@
 //! returns the right ones, so each is pinned against a document whose
 //! shape makes the difference visible.
 
+#![cfg(feature = "xpath")]
+
 use oxml::{XPath, parse};
 
 const DOC: &str = "\

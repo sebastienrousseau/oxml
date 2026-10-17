@@ -21,7 +21,7 @@ use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::encoding::{Encoding, is_legal_encoding_name};
+use crate::encoding::{Encoding, check_bom_agrees, declared_encoding};
 use crate::error::{Error, ErrorKind, Result};
 use crate::parser::{
     Version, check_prolog_shape, declared_standalone, declared_version,
@@ -86,9 +86,13 @@ impl Prelude {
         let Some(decl) = declaration(&head, eof) else {
             return Ok(None);
         };
+        // `decode` decides the encoding before `prepare` reads the
+        // version, so a declaration wrong about both is refused for
+        // its encoding, here as there.
+        let encoding = choose_encoding(body, decl, sniffed)?;
+        check_utf8_declaration(body, decl, encoding)?;
         let version = declared_version(decl)?;
         check_prolog_shape(&head)?;
-        let encoding = choose_encoding(decl, sniffed)?;
         let standalone =
             declared_standalone(&normalize_line_endings(decl, version));
         Ok(Some(Decision {
@@ -177,7 +181,7 @@ fn head_text(body: &[u8], encoding: Option<Encoding>) -> Cow<'_, str> {
 }
 
 fn utf16_head(body: &[u8], big_endian: bool) -> String {
-    let units = body.chunks_exact(2).map(|pair| {
+    let units = body.as_chunks::<2>().0.iter().map(|pair| {
         let pair = [pair[0], pair[1]];
         if big_endian {
             u16::from_be_bytes(pair)
@@ -195,7 +199,10 @@ fn utf16_head(body: &[u8], big_endian: bool) -> String {
 ///
 /// Only a `<?xml` followed by whitespace is a declaration, as the
 /// tree parser's `xml_declaration` has it: `<?xml-stylesheet?>` at
-/// offset 0 is a processing instruction.
+/// offset 0 is a processing instruction. Nor is one that the input
+/// never closes with `?>`: `encoding::decode` and `xml_declaration`
+/// both read no version or encoding from it, and taking the whole
+/// input as its text found an `encoding` they never saw.
 fn declaration(head: &str, eof: bool) -> Option<&str> {
     let trimmed = head.trim_start_matches(WS);
     if trimmed.len() < 6 && !eof {
@@ -209,71 +216,65 @@ fn declaration(head: &str, eof: bool) -> Option<&str> {
     }
     match head.find("?>") {
         Some(end) => Some(&head[..end + 2]),
-        None if eof => Some(head),
+        None if eof => Some(""),
         None => None,
     }
 }
 
-/// Which decoder to use, from the mark and the declaration together.
-fn choose_encoding(decl: &str, sniffed: Sniffed) -> Result<Encoding> {
-    // UTF-16 told from the shape of its first bytes rather than from a
-    // mark: the declaration is not consulted, as `decode` does not.
-    if let (Some(encoding), false) = (sniffed.encoding, sniffed.from_mark) {
-        return Ok(encoding);
+/// Refuse a UTF-8 declaration whose bytes are not UTF-8, at the first
+/// byte that is not, as `decode` refuses it.
+///
+/// The head text takes such a byte as Latin-1 so that the `?>` past
+/// it can be found, which is right for finding the declaration and
+/// wrong for reading it: a version read from those characters was
+/// refused as unsupported, where every other reader stops at the byte.
+fn check_utf8_declaration(
+    body: &[u8],
+    decl: &str,
+    encoding: Encoding,
+) -> Result<()> {
+    if encoding != Encoding::Utf8 || decl.is_empty() {
+        return Ok(());
     }
-    let declared = declared_encoding(decl)?;
-    match (sniffed.encoding, declared) {
-        // A mark and a declaration that disagree make the document
-        // malformed: the mark wins silently in no conforming parser.
-        (Some(marked), Some(declared)) if !agree(marked, declared) => {
-            Err(Error::new(ErrorKind::MalformedEncoding, 0))
-        }
-        (Some(marked), _) => Ok(marked),
-        (None, declared) => Ok(declared.unwrap_or(Encoding::Utf8)),
-    }
+    let end = body
+        .windows(2)
+        .position(|w| w == b"?>")
+        .map_or(body.len(), |i| i + 2);
+    core::str::from_utf8(&body[..end])
+        .map(|_| ())
+        .map_err(|e| Error::new(ErrorKind::MalformedEncoding, e.valid_up_to()))
 }
 
-/// Whether a declared encoding is in the family a mark announced.
-/// `UTF-16` and `UTF-16LE` both agree with a little-endian mark: the
-/// mark settles a byte order the name leaves open.
-fn agree(marked: Encoding, declared: Encoding) -> bool {
-    match marked {
-        Encoding::Utf8 => declared == Encoding::Utf8,
-        Encoding::Utf16Be | Encoding::Utf16Le => {
-            matches!(declared, Encoding::Utf16Be | Encoding::Utf16Le)
+/// Which decoder to use, from the mark and the declaration together,
+/// decided as [`crate::encoding::decode`] decides it and by the same
+/// functions.
+///
+/// The declaration is read from `body`'s bytes, so an error in it is
+/// reported at a byte offset. Reading it from the head text moved the
+/// offset by one for every byte before it that was not UTF-8.
+fn choose_encoding(
+    body: &[u8],
+    decl: &str,
+    sniffed: Sniffed,
+) -> Result<Encoding> {
+    match (sniffed.encoding, sniffed.from_mark) {
+        // UTF-16 told from the shape of its first bytes rather than
+        // from a mark: the declaration is not consulted.
+        (Some(shape), false) => Ok(shape),
+        // A UTF-8 mark: a declaration may confirm it, and an encoding
+        // name it cannot accept is still refused.
+        (Some(Encoding::Utf8), true) => {
+            check_bom_agrees(body, Encoding::Utf8)?;
+            Ok(declared_encoding(body)?.unwrap_or(Encoding::Utf8))
         }
-        Encoding::Latin1 => false,
+        // A UTF-16 mark settles it; the declaration may only fail to
+        // contradict it. `decl` is already decoded from UTF-16.
+        (Some(marked), true) => {
+            check_bom_agrees(decl.as_bytes(), marked)?;
+            Ok(marked)
+        }
+        (None, _) => Ok(declared_encoding(body)?.unwrap_or(Encoding::Utf8)),
     }
-}
-
-/// The `encoding` pseudo-attribute of a declaration, as
-/// `encoding::decode` reads it: an illegal name is malformed, a legal
-/// name this crate cannot decode is unsupported, and either is
-/// reported at the pseudo-attribute.
-fn declared_encoding(decl: &str) -> Result<Option<Encoding>> {
-    let Some(at) = decl.find("encoding") else {
-        return Ok(None);
-    };
-    let rest = decl[at + "encoding".len()..].trim_start_matches(WS);
-    let Some(rest) = rest.strip_prefix('=') else {
-        return Ok(None);
-    };
-    let rest = rest.trim_start_matches(WS);
-    let Some(quote) = rest.chars().next().filter(|c| matches!(c, '"' | '\''))
-    else {
-        return Ok(None);
-    };
-    let body = &rest[1..];
-    let Some(close) = body.find(quote) else {
-        return Ok(None);
-    };
-    let name = &body[..close];
-    if !is_legal_encoding_name(name) {
-        return Err(Error::new(ErrorKind::MalformedEncoding, at));
-    }
-    Encoding::from_name(name)
-        .map(Some)
-        .ok_or_else(|| Error::new(ErrorKind::UnsupportedEncoding, at))
 }
 
 #[cfg(test)]

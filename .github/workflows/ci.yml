@@ -45,7 +45,7 @@ jobs:
       - name: Test without default features
         # The crate is `no_std`-capable and XPath is optional; if this
         # is not built, both claims rot silently.
-        run: cargo test --no-default-features --locked
+        run: cargo test -p oxml --no-default-features --locked
 
   dco:
     name: DCO sign-off
@@ -94,16 +94,16 @@ jobs:
     # otherwise pin this job to the release toolchain, where
     # `cargo llvm-cov --branch` does not build.
     env:
-      RUSTUP_TOOLCHAIN: nightly
+      RUSTUP_TOOLCHAIN: nightly-2026-10-13
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-10-13
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@b1dc9d84e209ed242bc6ca434b9d0b64be656fa4 # v2.87.26
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # cargo-llvm-cov has --fail-under-lines but no branch equivalent,
       # so the floor is enforced by reading the summary. Branch
@@ -134,6 +134,10 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Format
         run: cargo fmt --all --check
+      - name: Format fuzz targets
+        run: cargo fmt --manifest-path fuzz/Cargo.toml --check
+      - name: Release input contracts
+        run: python3 scripts/test-release-highlights.py
       - name: Clippy
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Docs
@@ -155,6 +159,11 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: The MSRV toolchain is the one in use
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+          WANT: ${{ steps.msrv.outputs.version }}
+        run: rustc --version | grep -F "rustc ${WANT} "
       - name: Build at the declared MSRV
         # `rust-toolchain.toml` pins 1.98.0 and would override the MSRV
         # toolchain this job just installed, quietly turning the check
@@ -214,12 +223,21 @@ jobs:
         with:
           toolchain: 1.98.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # Each example runs with the features its `required-features`
+      # names, read from Cargo metadata so the list cannot drift from
+      # Cargo.toml. A bare `cargo run --example` refuses any example
+      # that needs a non-default feature, such as `async` or `tracing`.
       - name: Every example must run
         run: |
+          meta="$(cargo metadata --no-deps --format-version 1 --locked)"
           for f in crates/oxml/examples/*.rs; do
             name=$(basename "$f" .rs)
-            echo "--- $name ---"
-            cargo run --example "$name"
+            feats="$(jq -r --arg n "$name" '.packages[]
+              | select(.name == "oxml") | .targets[]
+              | select(.kind == ["example"] and .name == $n)
+              | (."required-features" // []) | join(",")' <<< "$meta")"
+            echo "--- $name (features: ${feats:-default}) ---"
+            cargo run --locked -p oxml --example "$name" --features "$feats"
           done
 
   coverage:
@@ -231,9 +249,9 @@ jobs:
         with:
           toolchain: 1.98.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@b1dc9d84e209ed242bc6ca434b9d0b64be656fa4 # v2.87.26
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Cache the conformance suite
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -268,9 +286,9 @@ jobs:
         with:
           toolchain: 1.98.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@b1dc9d84e209ed242bc6ca434b9d0b64be656fa4 # v2.87.26
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-llvm-cov
+          tool: cargo-llvm-cov@0.9.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # The README says the examples cover the public API. Left to
       # itself that claim decays quietly -- a function added in one
@@ -385,7 +403,7 @@ jobs:
             echo "::error::xpath without std or libm should not compile"
             exit 1
           fi
-          grep -q 'requires feature `libm`' err.txt || {
+          grep -q "requires feature \`libm\`" err.txt || {
             echo "::error::failed, but not with the guard message:"
             cat err.txt
             exit 1
@@ -400,9 +418,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: 1.98.0
-      - uses: taiki-e/install-action@b1dc9d84e209ed242bc6ca434b9d0b64be656fa4 # v2.87.26
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
-          tool: cargo-hack
+          tool: cargo-hack@0.6.45
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Every combination, so a new feature cannot rot a configuration
       # nobody builds by hand.
@@ -438,7 +456,7 @@ jobs:
     # As for Miri: cargo-fuzz needs nightly, and the pin would otherwise
     # replace it.
     env:
-      RUSTUP_TOOLCHAIN: nightly
+      RUSTUP_TOOLCHAIN: nightly-2026-10-13
     strategy:
       fail-fast: false
       matrix:
@@ -447,7 +465,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-10-13
       # `cargo install` rather than a prebuilt: the prebuilt landed
       # somewhere `cargo fuzz` could not find it under the pinned
       # toolchain, giving `error: no such command: fuzz`. Installing
@@ -477,6 +495,13 @@ jobs:
             xpath_eval)    : ;;   # structure-aware; generates its own input
             *)             cp fuzz/seeds/parse/* fuzz/corpus/${{ matrix.target }}/ ;;
           esac
+          # A target's own seeds, the inputs it has failed on among
+          # them, go in on every run: the restored corpus may predate
+          # them, and libFuzzer runs every corpus input before it
+          # mutates, so each is replayed first.
+          if [ "${{ matrix.target }}" != xpath_compile ] && [ -d "fuzz/seeds/${{ matrix.target }}" ]; then
+            cp "fuzz/seeds/${{ matrix.target }}"/* "fuzz/corpus/${{ matrix.target }}/"
+          fi
       - name: Fuzz for 300s
         run: >
           cargo fuzz run ${{ matrix.target }} --
@@ -497,21 +522,20 @@ jobs:
     # so pinning it to 1.98.0 hid the nightly Miri needs. `RUSTUP_TOOLCHAIN`
     # is the one thing that outranks the file.
     env:
-      RUSTUP_TOOLCHAIN: nightly
+      RUSTUP_TOOLCHAIN: nightly-2026-10-13
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
-          toolchain: nightly
+          toolchain: nightly-2026-10-13
           components: miri
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      # This crate is `#![forbid(unsafe_code)]`, so Miri will not find
-      # undefined behaviour — safe Rust cannot express it. It is kept
-      # for three things it *does* catch: arithmetic overflow under
-      # debug semantics, out-of-bounds indexing, and any UB introduced
-      # by a future dependency or a lifted `forbid`. It has already
-      # earned its place here by catching a float-precision divergence
-      # between backends that the test suite could not see.
+      # The parser forbids unsafe code; dependencies and the standard
+      # library remain part of its memory-safety trust boundary. Miri
+      # checks executed dependency code as well as our overflow and
+      # indexing behavior. It caught a float-backend divergence and an
+      # ARM64 constant-load borrow violation in sha2 0.11.0; the tooling
+      # dependency is pinned to the upstream 0.11.1 correction.
       #
       # The integration tests are excluded: Miri is 50-200x slower and
       # the depth tests parse 100,000-element documents, which would

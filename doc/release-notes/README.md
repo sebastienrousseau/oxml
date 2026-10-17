@@ -5,12 +5,13 @@
 Per-version notes. The [CHANGELOG](../../CHANGELOG.md) lists what
 changed; these say what it means for you.
 
-The suite ships one version number across all six crates, moving in
+The suite ships one version number across all seven crates, moving in
 steps of 0.0.1 — see
 [MSRV-AND-DEPRECATION.md](../MSRV-AND-DEPRECATION.md).
 
 | Version | Notes |
 |---|---|
+| 0.0.11 | [notes](0.0.11.md), [readiness assessment](0.0.11-readiness.md) |
 | 0.0.10 | [notes](0.0.10.md) |
 | 0.0.5 | [notes](0.0.5.md) |
 | 0.0.4 | [notes](0.0.4.md) |

@@ -113,6 +113,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("a paragraph");
     println!("  {:?}", doc.text(section));
 
+    // `range` maps a parsed node back to the bytes it came from, which
+    // is what an editor or a linter needs to point at it.
+    if let Some(span) = doc.range(section) {
+        println!("  source bytes {span:?}: {:?}", &DOC[span.clone()]);
+    }
+
     // An id past the end of the arena is `None` rather than a panic.
     let past_end = doc.descendants().last().expect("a last node");
     println!("\nlast node index: {}", past_end.index());

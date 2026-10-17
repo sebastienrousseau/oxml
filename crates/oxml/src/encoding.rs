@@ -3,25 +3,24 @@
 
 //! Turning bytes into the `&str` the parser wants.
 //!
-//! [`crate::parse`] takes `&str` and borrows from it. That is the fast
-//! path and stays exactly as it was. This module adds a byte-oriented
+//! [`crate::parse`] takes `&str` and copies normalized text into its
+//! owned document. This module adds a byte-oriented
 //! entry point for the cases `&str` cannot express: a document in
 //! UTF-16, a document in Latin-1, or a document claiming to be UTF-8
 //! that is not.
 //!
 //! # Why this is not `encoding_rs`
 //!
-//! Only three encodings appear in practice for XML — UTF-8, UTF-16 in
-//! either byte order, and Latin-1 — and each is a few lines. Pulling in
-//! a 300 KB table-driven transcoder for that would cost more than it
-//! buys, and this crate has no dependencies by design. A caller needing
+//! The supported encodings are UTF-8, UTF-16 in either byte order,
+//! and Latin-1. The decoder uses no external dependencies. A caller needing
 //! Shift-JIS can decode themselves and call [`crate::parse`].
 //!
 //! # Interaction with borrowing
 //!
 //! Decoding UTF-16 necessarily allocates: the output is a different
 //! byte sequence from the input, so nothing can borrow from it. UTF-8
-//! input is passed through untouched and keeps the zero-copy path.
+//! input is borrowed by [`decode`]; constructing a [`crate::Document`]
+//! still copies it into the document's owned storage.
 
 use alloc::borrow::Cow;
 use alloc::string::String;
@@ -100,50 +99,81 @@ pub fn is_legal_encoding_name(name: &str) -> bool {
 /// `EncName`, if it names an encoding this crate cannot decode, or if
 /// the bytes are not valid in the encoding they claim.
 pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
-    // A BOM and a declaration that disagree make the document
-    // malformed. Letting the BOM win silently produced a tree from a
-    // document no conforming parser accepts -- and the disagreement is
-    // usually a sign that something upstream re-encoded the bytes
-    // without rewriting the declaration, which is worth surfacing.
-    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        let text = utf16(rest, true)?;
-        check_bom_agrees(&text, Encoding::Utf16Be)?;
-        return Ok(Cow::Owned(text));
-    }
-    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        let text = utf16(rest, false)?;
-        check_bom_agrees(&text, Encoding::Utf16Le)?;
+    decode_bounded(bytes, None)
+}
+
+pub(crate) fn decode_bounded(
+    bytes: &[u8],
+    max: Option<usize>,
+) -> Result<Cow<'_, str>> {
+    if let Some(text) = decode_utf16_marked(bytes, max)? {
         return Ok(Cow::Owned(text));
     }
     // A UTF-8 BOM is permitted and is not part of the document.
-    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        if let Ok(text) = core::str::from_utf8(rest) {
-            check_bom_agrees(text, Encoding::Utf8)?;
+    let bytes = match bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        Some(rest) => {
+            check_bom_agrees(rest, Encoding::Utf8)?;
+            rest
         }
+        None => bytes,
+    };
+    if let Some(big_endian) = utf16_shape(bytes) {
+        return Ok(Cow::Owned(utf16(bytes, big_endian, max)?));
     }
-    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    decode_declared(bytes, max)
+}
 
-    // UTF-16 without a BOM is still detectable: an XML document must
-    // begin with `<`, which in UTF-16 is a NUL-adjacent pair.
-    if bytes.starts_with(&[0x00, 0x3C]) {
-        return Ok(Cow::Owned(utf16(bytes, true)?));
-    }
-    if bytes.starts_with(&[0x3C, 0x00]) {
-        return Ok(Cow::Owned(utf16(bytes, false)?));
-    }
+/// A document behind a UTF-16 byte-order mark, decoded and held to its
+/// declaration; `None` when there is no such mark.
+///
+/// A BOM and a declaration that disagree make the document
+/// malformed. Letting the BOM win silently produced a tree from a
+/// document no conforming parser accepts -- and the disagreement is
+/// usually a sign that something upstream re-encoded the bytes
+/// without rewriting the declaration, which is worth surfacing.
+fn decode_utf16_marked(
+    bytes: &[u8],
+    max: Option<usize>,
+) -> Result<Option<String>> {
+    let (rest, encoding) = match bytes {
+        [0xFE, 0xFF, rest @ ..] => (rest, Encoding::Utf16Be),
+        [0xFF, 0xFE, rest @ ..] => (rest, Encoding::Utf16Le),
+        _ => return Ok(None),
+    };
+    let text = utf16(rest, encoding == Encoding::Utf16Be, max)?;
+    check_bom_agrees(text.as_bytes(), encoding)?;
+    Ok(Some(text))
+}
 
+/// UTF-16 without a BOM is still detectable: an XML document must
+/// begin with `<`, which in UTF-16 is a NUL-adjacent pair. `Some(true)`
+/// for big-endian.
+fn utf16_shape(bytes: &[u8]) -> Option<bool> {
+    match bytes {
+        [0x00, 0x3C, ..] => Some(true),
+        [0x3C, 0x00, ..] => Some(false),
+        _ => None,
+    }
+}
+
+/// Bytes with no mark and no UTF-16 shape, decoded as their
+/// declaration says, or as UTF-8 when it says nothing.
+fn decode_declared(bytes: &[u8], max: Option<usize>) -> Result<Cow<'_, str>> {
     match declared_encoding(bytes)? {
-        Some(Encoding::Latin1) => Ok(Cow::Owned(latin1(bytes))),
-        Some(Encoding::Utf16Be) => Ok(Cow::Owned(utf16(bytes, true)?)),
-        Some(Encoding::Utf16Le) => Ok(Cow::Owned(utf16(bytes, false)?)),
+        Some(Encoding::Latin1) => Ok(Cow::Owned(latin1(bytes, max)?)),
+        Some(Encoding::Utf16Be) => Ok(Cow::Owned(utf16(bytes, true, max)?)),
+        Some(Encoding::Utf16Le) => Ok(Cow::Owned(utf16(bytes, false, max)?)),
         // UTF-8, declared or defaulted: no transcoding, so the parser
         // can still borrow from the caller's buffer.
-        Some(Encoding::Utf8) | None => {
-            core::str::from_utf8(bytes).map(Cow::Borrowed).map_err(|e| {
-                Error::new(ErrorKind::MalformedEncoding, e.valid_up_to())
-            })
-        }
+        Some(Encoding::Utf8) | None => utf8_bounded(bytes, max),
     }
+}
+
+fn utf8_bounded(bytes: &[u8], max: Option<usize>) -> Result<Cow<'_, str>> {
+    check_decoded_size(bytes.len(), max)?;
+    core::str::from_utf8(bytes)
+        .map(Cow::Borrowed)
+        .map_err(|e| Error::new(ErrorKind::MalformedEncoding, e.valid_up_to()))
 }
 
 /// Reject a declaration that contradicts the byte-order mark.
@@ -151,9 +181,15 @@ pub fn decode(bytes: &[u8]) -> Result<Cow<'_, str>> {
 /// A UTF-16 BOM with `encoding="utf-8"`, or a UTF-8 BOM with
 /// `encoding="iso-8859-1"`, cannot both be true. The family has to
 /// match: `UTF-16` and `UTF-16LE` agree with a little-endian mark,
-/// because the mark settles a byte order the name leaves open.
-fn check_bom_agrees(text: &str, from_bom: Encoding) -> Result<()> {
-    let Ok(Some(declared)) = declared_encoding(text.as_bytes()) else {
+/// because the mark settles a byte order the name leaves open. A name
+/// this crate does not know is not a contradiction it can prove.
+///
+/// `head` is the document after the mark, decoded for UTF-16. Only
+/// the declaration is read, so the streaming reader makes the same
+/// check before the rest has arrived. Whether bytes after it are
+/// UTF-8 used to decide whether a UTF-8 mark was checked at all.
+pub(crate) fn check_bom_agrees(head: &[u8], from_bom: Encoding) -> Result<()> {
+    let Ok(Some(declared)) = declared_encoding(head) else {
         return Ok(());
     };
     let compatible = match (from_bom, declared) {
@@ -170,8 +206,9 @@ fn check_bom_agrees(text: &str, from_bom: Encoding) -> Result<()> {
     }
 }
 
-/// The `encoding` pseudo-attribute of the XML declaration, if any.
-fn declared_encoding(bytes: &[u8]) -> Result<Option<Encoding>> {
+/// The `encoding` pseudo-attribute of the XML declaration, if any,
+/// read from bytes and reported at a byte offset.
+pub(crate) fn declared_encoding(bytes: &[u8]) -> Result<Option<Encoding>> {
     // `<?xml` followed by whitespace, as `parser::xml_declaration`
     // requires: a processing instruction whose target starts with
     // `xml` (`<?xml-stylesheet ...?>` at offset 0 is legal and common)
@@ -233,14 +270,11 @@ fn trim_start(mut b: &[u8]) -> &[u8] {
 /// this function decides for itself is a byte count that cannot be a
 /// whole number of code units. Offsets point at the first byte of the
 /// offending unit.
-fn utf16(bytes: &[u8], big_endian: bool) -> Result<String> {
-    if bytes.len() % 2 != 0 {
+fn utf16(bytes: &[u8], big_endian: bool, max: Option<usize>) -> Result<String> {
+    if !bytes.len().is_multiple_of(2) {
         return Err(Error::new(ErrorKind::MalformedEncoding, bytes.len() - 1));
     }
-    #[allow(clippy::chunks_exact_to_as_chunks)]
-    // `as_chunks` is unstable on MSRV
-    let units = bytes.chunks_exact(2).map(|pair| {
-        let pair = [pair[0], pair[1]];
+    let units = bytes.as_chunks::<2>().0.iter().map(|&pair| {
         if big_endian {
             u16::from_be_bytes(pair)
         } else {
@@ -248,7 +282,8 @@ fn utf16(bytes: &[u8], big_endian: bool) -> Result<String> {
         }
     });
 
-    let mut out = String::with_capacity(bytes.len() / 2);
+    let mut out =
+        String::with_capacity((bytes.len() / 2).min(max.unwrap_or(usize::MAX)));
     let mut offset = 0;
     for unit in char::decode_utf16(units) {
         // An unpaired surrogate is not a character in any encoding, and
@@ -256,15 +291,24 @@ fn utf16(bytes: &[u8], big_endian: bool) -> Result<String> {
         let c =
             unit.map_err(|_| Error::new(ErrorKind::MalformedEncoding, offset))?;
         offset += c.len_utf16() * 2;
+        check_decoded_size(out.len().saturating_add(c.len_utf8()), max)?;
         out.push(c);
     }
     Ok(out)
 }
 
 /// Decode ISO-8859-1, where every byte is the code point of the same
-/// value. Cannot fail.
-fn latin1(bytes: &[u8]) -> String {
-    bytes.iter().map(|&b| char::from(b)).collect()
+/// value. Check its UTF-8 size before allocating.
+fn latin1(bytes: &[u8], max: Option<usize>) -> Result<String> {
+    let len = bytes
+        .len()
+        .saturating_add(bytes.iter().filter(|b| **b >= 128).count());
+    check_decoded_size(len, max)?;
+    Ok(bytes.iter().map(|&b| char::from(b)).collect())
+}
+
+fn check_decoded_size(len: usize, max: Option<usize>) -> Result<()> {
+    crate::limits::check_bytes(len, max, ErrorKind::DocumentTooLarge, 0)
 }
 
 #[cfg(test)]
@@ -453,6 +497,21 @@ mod tests {
                 .kind,
             ErrorKind::MalformedEncoding
         );
+    }
+
+    #[test]
+    fn a_utf8_bom_is_checked_whatever_follows_the_declaration() {
+        // Found by the stream_chunked fuzz target. The check read the
+        // declaration only when the whole rest was UTF-8, so a byte
+        // that was not let the contradiction through and the document
+        // was decoded as Latin-1. The streaming reader, which cannot
+        // see that byte when it decides, refused it.
+        let mut bytes = alloc::vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(
+            b"<?xml version='1.0' encoding='iso-8859-1'?><a>\xE9</a>",
+        );
+        let e = decode(&bytes).expect_err("UTF-8 mark, Latin-1 declared");
+        assert_eq!((e.kind, e.offset), (ErrorKind::MalformedEncoding, 0));
     }
 
     #[test]

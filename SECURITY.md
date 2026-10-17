@@ -4,7 +4,8 @@
 
 oxml is pre-1.0. Only the most recent `0.0.x` release receives security
 fixes. The whole suite (oxml, oxml-cli, oxml-wasm, oxml-mcp, oxml-lsp,
-xmlschema) ships at one version, so a fix lands in all of them at once.
+xmlschema, oxml-json) ships at one version, so a fix lands in all of
+them at once.
 
 ## Reporting a vulnerability
 
@@ -32,22 +33,27 @@ through `ExternalSource`. The parser never fetches anything itself.
 
 **Entity expansion.** Internal entities are expanded, as XML requires,
 under a per-document byte budget and a nesting ceiling
-(`Limits::max_entity_expansion`, `Limits::max_entity_depth`). A
-billion-laughs document is rejected in microseconds.
+(`Limits::max_entity_expansion`, `Limits::max_entity_depth`). Parameter
+entities have a separate per-document expansion budget.
 
 **Stack exhaustion.** Nesting depth is bounded by `Limits::max_depth`
 (default 256), chosen against the stack a debug test thread actually
 has. `XPath` expressions are bounded by `Limits::max_xpath_depth` and
-`Limits::max_xpath_operators`.
+`Limits::max_xpath_operators`, plus byte, syntax-node and argument limits.
+DTD nesting is bounded separately by `Limits::max_dtd_depth`.
 
 **Memory and CPU.** Attribute count and size, name length, node count,
 text size, DTD size and parameter-entity expansion are each bounded by
-a field of `Limits`. The defaults accept any document a person would
-write; `Limits::strict()` is for input from the network.
+a field of `Limits`. Default source and decoded document sizes are
+unbounded; `Limits::strict()` caps each at 8 MiB. Untrusted XPath
+evaluation additionally requires `EvalContext::with_limits`; legacy
+evaluation remains unbounded. Host concurrency and stack budgets are
+the caller's responsibility.
 
 **Memory safety.** `#![forbid(unsafe_code)]`, checked by CI, so the
-memory-corruption bugs of C parsers cannot occur here. Safe Rust does
-not mean bounded Rust, which is why the limits above exist.
+crate contains no unsafe blocks. Dependencies and the Rust runtime
+remain part of the trust boundary. Safe Rust does not mean bounded
+Rust, which is why the limits above exist.
 
 ## What is not a vulnerability
 

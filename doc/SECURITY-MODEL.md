@@ -47,9 +47,9 @@ resolution on, which means there is no way to configure the
 vulnerability back in — the difference between a parser that is safe
 and one that is safe *if you remember*.
 
-The trade-off: a document that legitimately depends on an external
-entity silently loses that content. If you need it, fetch it yourself
-and pass a document with the entity already substituted.
+The trade-off: unavailable external content is omitted. Supply
+allowlisted content through `ExternalSource` when it is needed; the
+caller owns permissions, fetching, and any network timeouts.
 
 ## Entity expansion: bounded per document
 
@@ -67,7 +67,7 @@ thousand references to a 100 KB entity stays under any per-reference
 limit and still produces 100 MB. Charging the document means the
 thousandth reference finds the budget already spent.
 
-Two bounds apply:
+The relevant bounds are:
 
 | Bound | What it stops |
 |---|---|
@@ -75,6 +75,7 @@ Two bounds apply:
 | `max_entity_expansion` | Total expanded bytes, across the whole document |
 | `max_pe_expansion` | The same, for parameter entities inside the DTD |
 | `max_dtd_bytes` | The size of the internal and external subset the DTD parser will read |
+| `max_dtd_depth` | Nested content groups and included conditional sections |
 
 ## Stack exhaustion: bounded by depth
 
@@ -101,13 +102,19 @@ document can allocate. For the streaming reader, `max_construct_bytes`
 bounds how much of a single construct is buffered before it can be
 scanned, so an unterminated comment or an endless text run from the
 network fails instead of growing until memory runs out. For `XPath`,
-`max_xpath_depth` and `max_xpath_operators` bound the expression,
+`max_xpath_depth`, `max_xpath_operators`, `max_xpath_bytes`,
+`max_xpath_nodes` and `max_xpath_arguments` bound the expression,
 through `XPath::compile_with_limits`.
 
-**The defaults leave `max_nodes` and `max_text_length` unbounded.**
+**The defaults leave source bytes, decoded bytes, `max_nodes` and
+`max_text_length` unbounded.**
 That is a deliberate choice for the common case — a build tool parsing
 a file it wrote — and the wrong one for a service. `Limits::strict()`
-sets both.
+sets all four. Source and decoded documents are each capped at 8 MiB,
+with source checks before copying and incremental transcoding checks.
+The streaming cap measures complete and incomplete constructs, including
+constructs consumed after EOF. Direct `Core` callers should use small
+feeds: a supplied chunk can contain several constructs awaiting pulls.
 
 Measured cost of the default entity budget: a nine-level billion-laughs
 document is refused in **66 ms** on a release build, because 10 MB of
@@ -119,15 +126,14 @@ refuses the same document in **25 µs**, a factor of about 2,600.
 `#![forbid(unsafe_code)]`, and CI greps for the attribute so that
 removing it shows up in a diff rather than silently.
 
-This rules out memory-corruption bugs categorically. It does not rule
-out logic bugs, panics, or resource exhaustion, and it costs
-throughput: several techniques that make the fastest parsers fast are
-unavailable.
+This forbids unsafe code in this crate. Dependencies and the Rust runtime
+remain part of the memory-safety trust boundary. It does not rule out
+logic bugs, panics or resource exhaustion.
 
 Verification beyond the type system:
 
-- **Seven fuzz targets** (`parse`, `stream`, `tree_walk`, `mutate`,
-  `parse_limits`, `xpath_compile`, `xpath_eval`) with a seeded corpus
+- **Eight fuzz targets** (`parse`, `stream`, `stream_chunked`, `tree_walk`,
+  `mutate`, `parse_limits`, `xpath_compile`, `xpath_eval`) with a seeded corpus
   and an XML dictionary. `stream` checks not only that the event
   reader never panics but that it *agrees* with `parse` — same
   documents accepted, same refused with the same error at the same
@@ -141,10 +147,14 @@ Verification beyond the type system:
 ## What this does not protect you from
 
 - **A caller who raises the limits.** `permissive()` exists.
-- **Algorithmic cost inside XPath.** `max_xpath_depth` and
-  `max_xpath_operators` bound the *expression*, not the size of the
-  node-sets it builds. `//*//*//*` on a large document is expensive and
-  is not refused.
+- **Unbounded XPath evaluation APIs.** Compilation limits bound bytes,
+  syntax units, arguments, operators and depth. Evaluation needs a
+  separate policy: use `EvalContext::with_limits(EvalLimits::default())`
+  with `XPath::evaluate_with` for untrusted queries. Reservations cover
+  traversals, comparisons, intermediate node sets and temporary strings.
+  They use conservative upper bounds, so a query may be refused before
+  using every reserved byte. Existing infallible evaluation remains
+  unbounded for compatibility.
 - **Memory pressure from legitimate documents.** The whole tree is in
   memory. A 500 MB document needs more than 500 MB.
 - **Anything after parsing.** The tree is data you asked for. If a

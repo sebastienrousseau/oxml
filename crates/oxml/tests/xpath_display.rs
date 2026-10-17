@@ -68,9 +68,38 @@ fn operators_are_parenthesised_by_level() {
     assert_eq!(round_trips("-1"), "-1");
     assert_eq!(round_trips("--'3'"), "--'3'");
     assert_eq!(round_trips("---1"), "-1");
+    // A parenthesised negation under a pair keeps its parentheses: the
+    // parser folds a run of `-` to one or two negations, so `---3.5`
+    // would read back as a single one. Found by the xpath_compile
+    // fuzz target.
+    assert_eq!(round_trips("--(-3.5)"), "--(-3.5)");
+    assert_eq!(round_trips("--(--'3')"), "--(--'3')");
+    assert_eq!(round_trips("-(-1)"), "--1");
+    // `-` binds more loosely than `|`, so a negated union operand keeps
+    // its parentheses: `-1.5 | 2` reads back as `-(1.5 | 2)`.
+    assert_eq!(round_trips("(-1.5) | 2"), "((-1.5) | 2)");
+    assert_eq!(round_trips("2 | (-1) | 3"), "(2 | (-1) | 3)");
+    assert_eq!(round_trips("-(1 | 2)"), "-(1 | 2)");
     assert_eq!(round_trips("1 div 2 mod 3"), "(1 div 2 mod 3)");
     assert_eq!(round_trips("1 < 2 <= 3 > 0 >= 0"), "(1 < 2 <= 3 > 0 >= 0)");
     assert_eq!(round_trips("1 = 1 != 0"), "(1 = 1 != 0)");
+}
+
+#[test]
+fn root_operands_keep_their_token_boundaries() {
+    assert_eq!(
+        round_trips("omment*(/)*/*/comment()/*"),
+        "(child::omment * (/) * /child::*/child::comment()/child::*)"
+    );
+    for op in [
+        "or", "and", "=", "!=", "<", "<=", ">", ">=", "+", "-", "*", "div",
+        "mod", "|",
+    ] {
+        for root in ["(/)", "(-/)", "(--/)", "(--(-/))"] {
+            let _ = round_trips(&format!("{root} {op} 2"));
+            let _ = round_trips(&format!("1 {op} {root} {op} /r"));
+        }
+    }
 }
 
 #[test]

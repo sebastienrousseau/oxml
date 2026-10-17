@@ -135,6 +135,12 @@ pub enum ErrorKind {
     ///
     /// [`Limits::max_dtd_bytes`]: crate::Limits::max_dtd_bytes
     DtdTooLarge,
+    /// DTD groups or included sections exceed [`Limits::max_dtd_depth`](crate::Limits::max_dtd_depth).
+    DtdDepthLimitExceeded,
+    /// Source bytes exceed [`Limits::max_input_bytes`](crate::Limits::max_input_bytes).
+    InputTooLarge,
+    /// Decoded bytes exceed [`Limits::max_document_bytes`](crate::Limits::max_document_bytes).
+    DocumentTooLarge,
 }
 
 impl Error {
@@ -214,6 +220,18 @@ const LIMIT_MESSAGES: &[(ErrorKind, &str)] = &[
         "construct exceeds the streaming buffer limit",
     ),
     (ErrorKind::DtdTooLarge, "doctype exceeds the size limit"),
+    (
+        ErrorKind::DtdDepthLimitExceeded,
+        "doctype exceeds the nesting limit",
+    ),
+    (
+        ErrorKind::InputTooLarge,
+        "source exceeds the input byte limit",
+    ),
+    (
+        ErrorKind::DocumentTooLarge,
+        "decoded document exceeds the byte limit",
+    ),
 ];
 
 impl ErrorKind {

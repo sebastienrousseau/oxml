@@ -11,7 +11,7 @@
 //! the serialiser cannot spell.
 
 use oxml::tree::{Document, NodeError, NodeKind};
-use oxml::{NodeId, parse};
+use oxml::{NodeId, SerialiseError, parse};
 
 /// The element with the given local name, wherever it is.
 fn find(d: &Document, local: &str) -> NodeId {
@@ -26,6 +26,51 @@ fn built() -> (Document, NodeId) {
     let root = doc.root();
     let top = doc.append_element(root, None, "top").expect("live");
     (doc, top)
+}
+
+#[test]
+fn invalid_and_reserved_namespace_uris_are_refused() {
+    let (mut doc, top) = built();
+    for uri in ["\0", "http://www.w3.org/2000/xmlns/"] {
+        assert!(doc.append_element(top, Some(uri), "x").is_err());
+        assert!(doc.set_attribute(top, Some(uri), "x", "v").is_err());
+        assert!(doc.declare_namespace(top, Some("p"), uri).is_err());
+    }
+    assert!(
+        doc.set_attribute(top, None, "xmlns", "urn:changed")
+            .is_err()
+    );
+    assert!(
+        doc.declare_namespace(
+            top,
+            Some("p"),
+            "http://www.w3.org/XML/1998/namespace"
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn text_placement_is_checked_before_every_edit() {
+    let (mut doc, top) = built();
+    assert!(doc.append_text(doc.root(), "outside").is_err());
+    assert!(doc.append_text(doc.root(), "\r").is_err());
+    let text = doc.append_text(top, "inside").unwrap();
+    assert!(doc.reparent(text, doc.root()).is_err());
+    assert!(doc.insert_at(doc.root(), 0, text).is_err());
+    assert_eq!(doc.parent(text), Some(top));
+    let space = doc.append_text(doc.root(), " ").unwrap();
+    assert!(doc.set_text(space, "outside").is_err());
+    assert_eq!(doc.text(space), " ");
+    let _ = round_trip(&doc);
+}
+
+#[test]
+fn fallible_serialization_requires_a_root_element() {
+    assert!(Document::empty().try_to_xml().is_err());
+    let (mut doc, top) = built();
+    doc.remove(top).unwrap();
+    assert!(doc.try_to_xml().is_err());
 }
 
 /// Serialise, reparse, and check the text is a fixed point.
@@ -243,6 +288,146 @@ fn text_must_be_xml_characters() {
     let again = round_trip(&doc);
     assert_eq!(again.text(again.root()), "ok \u{1} \u{85}");
     assert!(doc.to_xml().starts_with("<?xml version=\"1.1\"?>"));
+}
+
+#[test]
+fn a_control_character_in_a_namespace_uri_is_written_as_xml_11() {
+    // Found by the mutate fuzz target: `declare_namespace` accepted the
+    // URI, and the serialiser wrote `xmlns:r="&#1;"` with no 1.1
+    // declaration, which no 1.0 parser reads.
+    let (mut doc, top) = built();
+    let _ = doc
+        .declare_namespace(top, Some("r"), "\u{1}")
+        .expect("expressible");
+    assert!(doc.to_xml().starts_with("<?xml version=\"1.1\"?>"));
+    let again = round_trip(&doc);
+    assert_eq!(again.to_xml(), doc.to_xml());
+
+    // The same URI reached through an element's name rather than a
+    // declaration.
+    let mut doc = oxml::tree::Document::empty();
+    let root = doc.root();
+    let _ = doc
+        .append_element(root, Some("urn:\u{1}"), "e")
+        .expect("expressible");
+    assert!(doc.to_xml().starts_with("<?xml version=\"1.1\"?>"));
+    let again = round_trip(&doc);
+    assert_eq!(again.to_xml(), doc.to_xml());
+}
+
+#[test]
+fn a_detached_node_does_not_decide_the_version() {
+    // Found by the mutate fuzz target: a control character in a
+    // detached subtree made the serialiser declare XML 1.1, but the
+    // subtree is not written. Reparsing the output found nothing that
+    // needs 1.1, so the second pass dropped the declaration and the
+    // output was not a fixed point.
+    let (mut doc, top) = built();
+    let gone = doc.append_element(top, None, "gone").expect("live");
+    let _ = doc.append_text(gone, "\u{1}").expect("expressible");
+    doc.set_attribute(gone, None, "k", "\u{1}")
+        .expect("expressible");
+    let _ = doc
+        .declare_namespace(gone, Some("p"), "")
+        .expect("an unbinding");
+    doc.detach(gone).expect("a child can be detached");
+    assert_eq!(doc.to_xml(), "<top/>");
+    let _ = round_trip(&doc);
+
+    // Attached again, the same content needs 1.1.
+    doc.insert_at(top, 0, gone).expect("live");
+    assert!(doc.to_xml().starts_with("<?xml version=\"1.1\"?>"));
+    let _ = round_trip(&doc);
+}
+
+#[test]
+fn a_line_separator_survives_a_version_11_round_trip() {
+    // XML 1.1 reads U+2028 as a line ending and normalises it to a
+    // newline, in character data and attribute values alike. Written
+    // literally into a document that needs 1.1, it came back as `\n`
+    // in text and as a space in an attribute value or a URI.
+    let (mut doc, top) = built();
+    let _ = doc.append_text(top, "a\u{2028}b").expect("live");
+    doc.set_attribute(top, None, "k", "a\u{2028}b")
+        .expect("live");
+    let _ = doc
+        .declare_namespace(top, Some("p"), "urn:\u{2028}")
+        .expect("live");
+    let plain = round_trip(&doc);
+    assert!(!plain.to_xml().starts_with("<?xml"), "1.0 is enough");
+
+    let _ = doc.append_text(top, "\u{1}").expect("expressible");
+    let again = round_trip(&doc);
+    assert!(again.to_xml().starts_with("<?xml version=\"1.1\"?>"));
+    let top = again.root_element().expect("a root element");
+    assert_eq!(again.attribute(top, "k"), Some("a\u{2028}b"));
+}
+
+#[test]
+fn a_carriage_return_is_refused_in_a_comment_or_pi() {
+    // A comment or PI body is written verbatim, and a literal `\r`
+    // reads back as `\n` in every XML version: `<!--a\rb-->` parsed to
+    // a comment holding `a\nb`, so the output was not a fixed point.
+    // Character data can hold one, written as `&#13;`.
+    let (mut doc, top) = built();
+    for bad in ["a\rb", "\r\n", "\r"] {
+        assert_eq!(doc.append_comment(top, bad), Err(NodeError::InvalidText));
+        assert_eq!(doc.append_pi(top, "t", bad), Err(NodeError::InvalidText));
+    }
+    assert!(doc.children(top).is_empty(), "nothing was stored");
+    let _ = doc
+        .append_comment(top, "a\nb")
+        .expect("a newline is literal");
+    let _ = doc
+        .append_text(top, "a\rb")
+        .expect("text takes a reference");
+    let _ = round_trip(&doc);
+}
+
+#[test]
+fn content_no_version_can_hold_is_refused() {
+    // Found by the mutate fuzz target: text holding U+0001 needs XML
+    // 1.1, which reads U+0085 as a line ending, and a comment has no
+    // reference syntax. A comment holding U+0085 beside that text came
+    // back holding `\n`, so to_xml was not a fixed point. No version
+    // holds both, and try_to_xml says so instead.
+    let (mut doc, top) = built();
+    let comment = doc.append_comment(top, "caf\u{85}").expect("legal");
+    assert_eq!(doc.try_to_xml(), Ok(doc.to_xml()), "1.0 holds it alone");
+
+    let _ = doc.append_text(top, "\u{1}").expect("expressible");
+    assert_eq!(
+        doc.try_to_xml(),
+        Err(SerialiseError::VersionConflict {
+            node: comment,
+            character: '\u{85}',
+        })
+    );
+    let once = doc.to_xml();
+    let again = parse(&once).expect("the output parses").to_xml();
+    assert_ne!(again, once, "the refusal is not over-cautious");
+
+    // A restricted C1 character in a PI is refused too: 1.1 rejects it
+    // outright rather than rewriting it.
+    let (mut doc, top) = built();
+    let pi = doc.append_pi(top, "t", "\u{90}").expect("legal in 1.0");
+    let _ = doc
+        .declare_namespace(top, Some("p"), "")
+        .expect("an unbinding needs 1.1");
+    assert_eq!(
+        doc.try_to_xml(),
+        Err(SerialiseError::VersionConflict {
+            node: pi,
+            character: '\u{90}',
+        })
+    );
+    assert!(parse(&doc.to_xml()).is_err(), "the refusal is real");
+
+    // A parsed 1.1 document cannot hold either: the parser has already
+    // normalised U+2028 in a comment.
+    let parsed = parse("<?xml version=\"1.1\"?><r>&#1;<!--a\u{2028}b--></r>")
+        .expect("well-formed 1.1");
+    assert_eq!(parsed.try_to_xml(), Ok(parsed.to_xml()));
 }
 
 // --- namespaces ---------------------------------------------------------

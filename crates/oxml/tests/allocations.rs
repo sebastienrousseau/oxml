@@ -314,6 +314,7 @@ fn reading_events_allocation_cost() {
 /// is reading and drops what it has passed. A document larger than
 /// memory is readable only by the second.
 #[test]
+#[cfg(feature = "std")]
 fn reading_from_a_source_does_not_hold_the_document() {
     use oxml::stream::{Event, Reader};
     use std::io::Cursor;

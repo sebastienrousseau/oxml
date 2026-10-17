@@ -164,8 +164,17 @@ fn format_number(n: f64) -> String {
 pub(crate) fn string_value(doc: &Document, id: NodeId) -> String {
     match doc.kind(id) {
         Some(NodeKind::Attr(a)) => a.value.to_owned(),
-        Some(NodeKind::Comment(t)) => t.to_owned(),
+        Some(NodeKind::Comment(t) | NodeKind::Text(t)) => t.to_owned(),
         Some(NodeKind::ProcessingInstruction { data, .. }) => data.to_owned(),
-        _ => doc.text(id),
+        Some(NodeKind::Namespace { uri, .. }) => uri.to_owned(),
+        _ => {
+            let mut text = String::new();
+            for node in doc.descendants_of(id) {
+                if let Some(NodeKind::Text(t)) = doc.kind(node) {
+                    text.push_str(t);
+                }
+            }
+            text
+        }
     }
 }

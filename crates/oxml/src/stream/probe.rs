@@ -138,6 +138,8 @@ pub(super) struct Probe {
     kind: Option<Kind>,
     /// Bytes before this have been searched and hold no closer.
     scanned_to: usize,
+    /// Cached construct end, including its closing delimiter.
+    end: Option<usize>,
     /// The search may not resume before this, whatever the closer's
     /// overlap: the opener's end, or a `CDATA` body's start.
     floor: usize,
@@ -153,6 +155,7 @@ impl Probe {
             start,
             kind: None,
             scanned_to: start,
+            end: None,
             floor: start,
             quote: None,
             text: TextState::Chars,
@@ -166,6 +169,7 @@ impl Probe {
         self.start -= by;
         self.scanned_to -= by;
         self.floor -= by;
+        self.end = self.end.map(|end| end - by);
     }
 
     /// Whether the construct ends within `text`.
@@ -174,17 +178,28 @@ impl Probe {
     /// scanner refuses it on sight, and the refusal does not depend on
     /// how much of it there is.
     pub(super) fn is_whole(&mut self, text: &str, in_content: bool) -> bool {
+        if self.end.is_some() {
+            return true;
+        }
         let Some(kind) = self.decide(text) else {
             return false;
         };
-        match kind {
+        let whole = match kind {
             Kind::Text if !in_content => true,
             Kind::Text => self.text_end(text),
             Kind::Comment => self.find(text, "-->"),
             Kind::Pi => self.find(text, "?>"),
             Kind::Doctype => self.doctype_end(text),
             Kind::Tag => self.tag_end(text),
+        };
+        if whole {
+            self.end = Some(self.scanned_to);
         }
+        whole
+    }
+
+    pub(super) fn end(&self) -> Option<usize> {
+        self.end
     }
 
     /// The construct's kind, decided on first sight of enough of its
@@ -436,6 +451,7 @@ impl Probe {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::format;
 
     /// Where `is_whole` first says yes when `doc` arrives a byte at a
     /// time, and whether that is where the construct really ends.

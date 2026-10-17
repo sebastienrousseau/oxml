@@ -46,10 +46,7 @@ impl Render<'_> {
         match e {
             Expr::Literal(s) => literal(s, f),
             Expr::Number(n) => number(*n, f),
-            Expr::Negate(inner) => {
-                f.write_char('-')?;
-                self.expr(inner, f)
-            }
+            Expr::Negate(inner) => self.negate(inner, f),
             Expr::Variable(name) => {
                 f.write_char('$')?;
                 self.name(name.namespace.as_deref(), &name.local, f)
@@ -59,12 +56,30 @@ impl Render<'_> {
         }
     }
 
+    /// `-e` or `--e`. The parser reads any run of `-` as one negation
+    /// or a pair of them, so a third one directly beneath a pair is
+    /// parenthesised: `--(-1)`, not `---1`, which reads back as `-1`.
+    fn negate(&self, inner: &Expr, f: &mut Formatter<'_>) -> fmt::Result {
+        let Expr::Negate(operand) = inner else {
+            f.write_char('-')?;
+            return self.expr(inner, f);
+        };
+        f.write_str("--")?;
+        if matches!(**operand, Expr::Negate(_)) {
+            f.write_char('(')?;
+            self.expr(operand, f)?;
+            f.write_char(')')
+        } else {
+            self.expr(operand, f)
+        }
+    }
+
     /// The expressions with sub-expressions.
     fn compound(&self, e: &Expr, f: &mut Formatter<'_>) -> fmt::Result {
         match e {
             Expr::Binary { op, lhs, rhs } => {
                 f.write_char('(')?;
-                self.expr(lhs, f)?;
+                self.operand(*op, lhs, f)?;
                 self.operator(*op, rhs, f)?;
                 f.write_char(')')
             }
@@ -85,7 +100,10 @@ impl Render<'_> {
         f: &mut Formatter<'_>,
     ) -> fmt::Result {
         f.write_char('(')?;
-        self.expr(first, f)?;
+        match rest.first() {
+            Some((op, _)) => self.operand(*op, first, f)?,
+            None => self.expr(first, f)?,
+        }
         for (op, e) in rest {
             self.operator(*op, e, f)?;
         }
@@ -100,7 +118,30 @@ impl Render<'_> {
         f: &mut Formatter<'_>,
     ) -> fmt::Result {
         write!(f, " {} ", op.symbol())?;
-        self.expr(rhs, f)
+        self.operand(op, rhs, f)
+    }
+
+    /// One operand of `op`. A union's operands are path expressions in
+    /// the grammar and `-` binds more loosely than `|`, so a negation
+    /// there is parenthesised: `-1 | 2` would read back as `-(1 | 2)`.
+    /// A bare root path also needs grouping: `/ * 2` selects a wildcard
+    /// step instead of multiplying the root, and `/ or 2` starts a step
+    /// named `or`. Negating the root does not remove that ambiguity.
+    fn operand(
+        &self,
+        op: BinaryOp,
+        e: &Expr,
+        f: &mut Formatter<'_>,
+    ) -> fmt::Result {
+        if (matches!(op, BinaryOp::Union) && matches!(e, Expr::Negate(_)))
+            || ends_with_root_path(e)
+        {
+            f.write_char('(')?;
+            self.expr(e, f)?;
+            f.write_char(')')
+        } else {
+            self.expr(e, f)
+        }
     }
 
     fn call(
@@ -207,6 +248,15 @@ impl Render<'_> {
             None => write!(f, "{{{uri}}}{local}"),
         }
     }
+}
+
+/// Whether an operand's rendering ends in a root slash that could
+/// consume the next operator as a path step.
+fn ends_with_root_path(mut e: &Expr) -> bool {
+    while let Expr::Negate(inner) = e {
+        e = inner;
+    }
+    matches!(e, Expr::Path { absolute: true, steps } if steps.is_empty())
 }
 
 /// `text()`, `comment()`, `processing-instruction()` with or without

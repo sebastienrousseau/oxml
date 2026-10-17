@@ -13,16 +13,20 @@
 
 ## Minimum supported Rust version
 
-**1.86.0.**
+**1.89.0.**
 
 This is a real floor, not an aspiration: CI builds the whole workspace
-on exactly 1.86.0 on every push, and the build fails if anything in the
+on exactly 1.89.0 on every push, and the build fails if anything in the
 crate needs something newer.
 
-It has held up a change more than once. `slice::as_chunks` is stable
-from a later release, and clippy on the CI toolchain suggests it over
-`chunks_exact`; taking that advice breaks the MSRV build, so the lint
-is suppressed with an explanation rather than obeyed.
+It held up a change more than once. `slice::as_chunks` is stable from
+1.88, and clippy on the CI toolchain suggests it over `chunks_exact`;
+at the 1.86.0 floor taking that advice broke the MSRV build, so the
+lint was suppressed with an explanation rather than obeyed. The raise
+to 1.89.0 in 0.0.11 removed the decoder suppression: UTF-16 decoding
+now uses `as_chunks`. Conformance hashing uses RustCrypto SHA-256
+instead of a local implementation. The same raise puts oxml
+on one floor with the maintainer's other Rust crates.
 
 ## How the MSRV is verified
 
@@ -30,7 +34,7 @@ The MSRV job pins the toolchain at the job level:
 
 ```yaml
 env:
-  RUSTUP_TOOLCHAIN: 1.86.0
+  RUSTUP_TOOLCHAIN: 1.89.0
 ```
 
 That is deliberate, and it is there because of a bug. The job installed
@@ -48,10 +52,12 @@ CI otherwise builds and tests on **1.98.0**.
 
 ## When the MSRV will change
 
-A raise is a **minor** version bump, never a patch, and it happens only
-when it buys something specific: a borrow-checker improvement that
-removes a workaround, or a standard-library function that replaces code
-we maintain.
+A raise is a breaking change. Before 0.1.0 it may land in the next
+0.0.x release, following the suite's 0.0.1 increment policy. From
+0.1.0 onward it requires a **minor** version bump, never a patch.
+It happens only when it buys something specific: a borrow-checker
+improvement that removes a workaround, or a standard-library function
+that replaces code we maintain.
 
 It will not be raised because a newer toolchain exists. Raising the
 floor costs every consumer pinned below it, and "the compiler moved on"
@@ -60,10 +66,11 @@ is not a benefit to them.
 ## Versioning
 
 The suite — `oxml`, `xmlschema`, `oxml-cli`, `oxml-mcp`, `oxml-lsp`,
-`oxml-wasm` — ships **one version number across every member**, moving
-in steps of 0.0.1. `0.1.0` comes after `0.0.999`, not after `0.0.9`.
+`oxml-wasm`, `oxml-json` — ships **one version number across every
+member**, moving in steps of 0.0.1. `0.1.0` comes after `0.0.999`, not
+after `0.0.9`.
 
-One number across six crates means a reader never has to work out which
+One number across seven crates means a reader never has to work out which
 combination is expected to work together. The cost is version churn in
 crates that did not change; that is accepted deliberately.
 

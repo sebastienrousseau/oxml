@@ -9,7 +9,10 @@
 
 use super::blocks::BlockEdit;
 use super::mutate::Arena;
-use super::names::{check_prefix, check_text, namespace_of};
+use super::names::{
+    check_namespace, check_namespace_binding, check_prefix, check_text,
+    namespace_of,
+};
 use super::{Document, NodeData, NodeError, NodeId};
 
 impl Document {
@@ -67,6 +70,10 @@ impl Document {
         value: &str,
     ) -> Result<(), NodeError> {
         self.element(element)?;
+        check_namespace(namespace)?;
+        if namespace_of(namespace).is_none() && local == "xmlns" {
+            return Err(NodeError::InvalidName);
+        }
         check_text(value)?;
         if let Some(attr) = self.find_attribute(element, namespace, local) {
             self.replace_attribute_value(attr, value);
@@ -159,7 +166,7 @@ impl Document {
         self.element(element)?;
         let prefix = prefix.unwrap_or("");
         check_prefix(prefix)?;
-        check_text(uri)?;
+        check_namespace_binding(uri)?;
         if let Some(existing) = self.find_namespace_node(element, prefix) {
             self.rebind_namespace(existing, uri);
             return Ok(existing);

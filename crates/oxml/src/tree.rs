@@ -602,10 +602,10 @@ impl Document {
     /// Extend `id`'s recorded range to end at `end`.
     pub(crate) fn set_span_end(&mut self, id: NodeId, end: usize) {
         let Ok(e) = u32::try_from(end) else { return };
-        if let Some(slot) = self.spans.get_mut(id.index as usize) {
-            if *slot != NO_SPAN {
-                slot.1 = e;
-            }
+        if let Some(slot) = self.spans.get_mut(id.index as usize)
+            && *slot != NO_SPAN
+        {
+            slot.1 = e;
         }
     }
 

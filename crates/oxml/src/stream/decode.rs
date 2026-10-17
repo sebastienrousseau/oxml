@@ -42,6 +42,9 @@ pub(super) struct Decoder {
     /// those held back included. Decoding errors are reported against
     /// it, as [`crate::encoding::decode`] reports them.
     source_pos: usize,
+    /// UTF-8 bytes decoded before XML line-ending normalization.
+    decoded_bytes: usize,
+    max_document_bytes: Option<usize>,
     /// Transcoded text on its way to the buffer, reused across chunks.
     scratch: String,
 }
@@ -147,7 +150,11 @@ impl Iterator for Units<'_> {
 }
 
 impl Decoder {
-    pub(super) fn new(encoding: Encoding, version: Version) -> Self {
+    pub(super) fn new(
+        encoding: Encoding,
+        version: Version,
+        max_document_bytes: Option<usize>,
+    ) -> Self {
         Self {
             encoding,
             version,
@@ -157,6 +164,8 @@ impl Decoder {
             high: None,
             pending_cr: false,
             source_pos: 0,
+            decoded_bytes: 0,
+            max_document_bytes,
             scratch: String::new(),
         }
     }
@@ -211,6 +220,17 @@ impl Decoder {
         text: &mut String,
         base: usize,
     ) -> Result<()> {
+        let total = self
+            .decoded_bytes
+            .checked_add(s.len())
+            .ok_or_else(|| Error::new(ErrorKind::DocumentTooLarge, 0))?;
+        crate::limits::check_bytes(
+            total,
+            self.max_document_bytes,
+            ErrorKind::DocumentTooLarge,
+            0,
+        )?;
+        self.decoded_bytes = total;
         let before = text.len();
         self.normalise_into(s, text);
         check_characters(&text[before..], self.version, base + before)
@@ -431,7 +451,7 @@ mod tests {
         encoding: Encoding,
         version: Version,
     ) -> Result<String> {
-        let mut d = Decoder::new(encoding, version);
+        let mut d = Decoder::new(encoding, version, None);
         let mut text = String::new();
         for chunk in bytes.chunks(n) {
             d.push(chunk, &mut text, 0)?;

@@ -17,18 +17,22 @@
 use alloc::borrow::Cow;
 use alloc::string::String;
 use core::fmt::Write;
+#[cfg(feature = "std")]
+use std::io;
 
 use crate::tree::{Document, NameId, NodeId, NodeKind};
 
 mod escape;
 mod options;
 mod scope;
+mod version;
 
 pub use options::{EmptyElement, Indent, Newline, SerialiseOptions};
+pub use version::SerialiseError;
 
 #[cfg(feature = "std")]
 use escape::IoSink;
-use escape::{is_c0_control, write_attribute_value, write_text};
+use escape::{write_attribute_value, write_text};
 use scope::{
     Scope, Written, resolve_qualified, resolve_unqualified,
     write_auto_declarations, write_declaration,
@@ -76,6 +80,14 @@ impl Document {
     ///
     /// Each is a lexical difference over identical content, which is
     /// what makes the guarantee above achievable instead.
+    ///
+    /// # What no version can hold
+    ///
+    /// The mutation API can put a control character, which only XML
+    /// 1.1 can write, beside a comment holding `U+0085`, which only
+    /// XML 1.0 keeps literally. This writes such a document as 1.1,
+    /// and the comment does not read back the same.
+    /// [`Document::try_to_xml`] refuses it instead.
     #[must_use]
     pub fn to_xml(&self) -> String {
         let mut out = String::new();
@@ -83,6 +95,53 @@ impl Document {
         // the generic writer below.
         let _ = self.write_xml(&mut out);
         out
+    }
+
+    /// Write this document as XML, refusing one that no XML version
+    /// can write so that it reads back as itself.
+    ///
+    /// On success the output is exactly [`Document::to_xml`]'s. A
+    /// parsed document always succeeds; see
+    /// [`SerialiseError::VersionConflict`] for what a built one can
+    /// hold that no version expresses.
+    ///
+    /// # Errors
+    ///
+    /// [`SerialiseError::NoRootElement`] when the document has no element.
+    ///
+    /// [`SerialiseError::VersionConflict`] when the document needs XML
+    /// 1.1 and a comment or processing instruction holds a character
+    /// 1.1 does not keep literally.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oxml::{Document, SerialiseError};
+    ///
+    /// let mut doc = Document::empty();
+    /// let top = doc.append_element(doc.root(), None, "r").unwrap();
+    /// let note = doc.append_comment(top, "caf\u{85}").unwrap();
+    /// assert!(doc.try_to_xml().is_ok());
+    ///
+    /// // A control character can only be written in XML 1.1, which
+    /// // reads U+0085 in the comment as a line ending.
+    /// let _ = doc.append_text(top, "\u{1}").unwrap();
+    /// assert_eq!(
+    ///     doc.try_to_xml(),
+    ///     Err(SerialiseError::VersionConflict {
+    ///         node: note,
+    ///         character: '\u{85}',
+    ///     })
+    /// );
+    /// ```
+    pub fn try_to_xml(&self) -> Result<String, SerialiseError> {
+        if self.root_element().is_none() {
+            return Err(SerialiseError::NoRootElement);
+        }
+        match self.version_conflict() {
+            Some(conflict) => Err(conflict),
+            None => Ok(self.to_xml()),
+        }
     }
 
     /// Write this document as XML into any [`core::fmt::Write`].
@@ -106,11 +165,11 @@ impl Document {
     /// The first error the writer returned.
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    pub fn write_xml_to<W: std::io::Write>(
+    pub fn write_xml_to<W: io::Write>(
         &self,
         w: W,
         options: &SerialiseOptions,
-    ) -> std::io::Result<()> {
+    ) -> io::Result<()> {
         let mut sink = IoSink {
             inner: w,
             error: None,
@@ -119,39 +178,10 @@ impl Document {
         match (outcome, sink.error) {
             (_, Some(e)) => Err(e),
             (Err(core::fmt::Error), None) => {
-                Err(std::io::Error::other("formatting failed"))
+                Err(io::Error::other("formatting failed"))
             }
             (Ok(()), None) => sink.inner.flush(),
         }
-    }
-
-    /// Whether any content can only be expressed in XML 1.1.
-    ///
-    /// Two things require it, and the second is not about characters
-    /// at all:
-    ///
-    /// - a C0 control character, which 1.0 forbids outright and 1.1
-    ///   permits as a reference;
-    /// - **unbinding a prefix** with `xmlns:p=""`, which Namespaces 1.1
-    ///   allows and Namespaces 1.0 rejects as a reserved use.
-    ///
-    /// The C1 range `U+007F..U+009F` does **not**: XML 1.0 permits it
-    /// literally and as a reference. Sharing one predicate with
-    /// [`needs_reference`] declared every 1.0 document containing
-    /// `U+0085` as 1.1, which is a different document.
-    ///
-    /// The corpus found the unbinding case after the first was fixed,
-    /// which is the argument for running a property over 1,910 real
-    /// documents rather than over the cases one thinks of.
-    fn needs_xml_11(&self) -> bool {
-        self.nodes().any(|id| match self.kind(id) {
-            Some(NodeKind::Text(t)) => t.chars().any(is_c0_control),
-            Some(NodeKind::Attr(a)) => a.value.chars().any(is_c0_control),
-            Some(NodeKind::Namespace { prefix, uri }) => {
-                !prefix.is_empty() && uri.is_empty()
-            }
-            _ => false,
-        })
     }
 
     /// The document as XML, formatted according to `options`.
@@ -243,6 +273,11 @@ impl Document {
         match self.kind(id) {
             Some(NodeKind::Element { name, .. }) => {
                 self.write_element(id, name, out, options, depth, scope)
+            }
+            // XML's document-level whitespace is not a text node on
+            // reparse, so omit it from the canonical representation.
+            Some(NodeKind::Text(_)) if self.parent(id) == Some(self.root()) => {
+                Ok(())
             }
             Some(NodeKind::Text(t)) => write_text(t, out),
             Some(NodeKind::Comment(c)) => write!(out, "<!--{c}-->"),
@@ -427,10 +462,10 @@ impl Document {
         out: &mut W,
     ) -> core::fmt::Result {
         for &ns in self.namespace_nodes(id) {
-            if let Some(NodeKind::Namespace { prefix, uri }) = self.kind(ns) {
-                if prefix != "xml" {
-                    write_declaration(out, prefix, uri)?;
-                }
+            if let Some(NodeKind::Namespace { prefix, uri }) = self.kind(ns)
+                && prefix != "xml"
+            {
+                write_declaration(out, prefix, uri)?;
             }
         }
         Ok(())

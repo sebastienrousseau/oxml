@@ -136,6 +136,7 @@ fn only_c0_controls_need_an_xml_11_declaration() {
 }
 
 #[test]
+#[cfg(feature = "std")]
 fn write_xml_to_matches_to_xml_byte_for_byte() {
     let doc = oxml::parse(
         "<r xmlns:p=\"urn:p\"><p:a k=\"v &amp; w\">t &lt; u</p:a><!--c--></r>",
@@ -157,6 +158,7 @@ fn write_xml_to_matches_to_xml_byte_for_byte() {
 }
 
 #[test]
+#[cfg(feature = "std")]
 fn write_xml_to_reports_the_writers_error() {
     // `fmt::Error` carries nothing; the I/O error must come back as
     // the I/O error, not as a generic failure.

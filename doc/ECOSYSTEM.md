@@ -2,7 +2,7 @@
 
 # The oxml ecosystem
 
-Six crates, one version number. What each is for, and which one you
+Seven crates, one version number. What each is for, and which one you
 want.
 
 ## Contents
@@ -10,7 +10,7 @@ want.
 - [Which crate do I want?](#which-crate-do-i-want)
 - [The crates](#the-crates)
 - [How they fit together](#how-they-fit-together)
-- [One version across six crates](#one-version-across-six-crates)
+- [One version across seven crates](#one-version-across-seven-crates)
 
 ## Which crate do I want?
 
@@ -22,6 +22,7 @@ want.
 | Parse XML in a browser or a JS runtime | `oxml-wasm` |
 | Give an LLM the ability to query XML documents | `oxml-mcp` |
 | Get diagnostics and completion in an editor | `oxml-lsp` |
+| Parse JSON for the language server | `oxml-json` |
 
 ## The crates
 
@@ -77,6 +78,12 @@ Uses the same byte offsets and line/column reporting the library
 exposes, which is why those are part of the public API rather than a
 formatted string.
 
+### `oxml-json` — JSON support
+
+A JSON value, parser and serialiser used by `oxml-lsp` for its protocol
+messages. It has no runtime dependency on `oxml`, but participates in
+the same release version. The MCP server uses its SDK's JSON stack.
+
 ## How they fit together
 
 ```mermaid
@@ -87,14 +94,17 @@ graph TD
     oxml --> wasm["oxml-wasm<br/>browser / JS"]
     oxml --> mcp["oxml-mcp<br/>LLM tools"]
     oxml --> lsp["oxml-lsp<br/>editors"]
+    xmlschema --> cli
+    xmlschema --> mcp
+    json["oxml-json<br/>JSON support"] --> lsp
 ```
 
-Every arrow is a dependency on `oxml`. `oxml-cli` and `oxml-mcp` also
-depend on `xmlschema` for validation, which is why `xmlschema` is
-published second in a release (see [RELEASING.md](RELEASING.md)); the
-other satellites depend on `oxml` alone.
+Arrows point from a dependency to its consumer. `oxml-cli` and
+`oxml-mcp` also depend on `xmlschema` for validation; `oxml-lsp` needs
+`oxml-json`. Publish each dependency before its consumers (see
+[RELEASING.md](RELEASING.md)).
 
-## One version across six crates
+## One version across seven crates
 
 The suite ships a single version number, moving in steps of 0.0.1.
 `oxml 0.0.4` works with `oxml-cli 0.0.4` and `xmlschema 0.0.4`, and no

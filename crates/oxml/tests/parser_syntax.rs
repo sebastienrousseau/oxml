@@ -9,14 +9,15 @@
 //! paired with the truncated form that must be an error rather than a
 //! silently shortened document.
 
-use oxml::{ErrorKind, NodeKind, XPath, parse};
+use oxml::{ErrorKind, NodeKind, parse};
 
-fn text_of(src: &str, expr: &str) -> String {
+fn text_of(src: &str, attribute: Option<&str>) -> String {
     let doc = parse(src).expect("well-formed");
-    XPath::compile(expr)
-        .expect("valid")
-        .evaluate(&doc)
-        .to_str(&doc)
+    let root = doc.root_element().expect("root");
+    match attribute {
+        Some(name) => doc.attribute(root, name).expect("attribute").to_string(),
+        None => doc.text(root),
+    }
 }
 
 #[test]
@@ -93,19 +94,19 @@ fn an_unterminated_cdata_section_is_rejected() {
 
 #[test]
 fn the_predefined_entities_are_resolved() {
-    assert_eq!(text_of("<a>&lt;&gt;&amp;&quot;&apos;</a>", "/a"), "<>&\"'");
+    assert_eq!(text_of("<a>&lt;&gt;&amp;&quot;&apos;</a>", None), "<>&\"'");
 }
 
 #[test]
 fn numeric_character_references_are_resolved() {
-    assert_eq!(text_of("<a>&#65;&#x42;</a>", "/a"), "AB");
-    assert_eq!(text_of("<a>&#233;&#x4e2d;</a>", "/a"), "é中");
-    assert_eq!(text_of("<a>&#128512;</a>", "/a"), "😀", "beyond the BMP");
+    assert_eq!(text_of("<a>&#65;&#x42;</a>", None), "AB");
+    assert_eq!(text_of("<a>&#233;&#x4e2d;</a>", None), "é中");
+    assert_eq!(text_of("<a>&#128512;</a>", None), "😀", "beyond the BMP");
 }
 
 #[test]
 fn entities_are_resolved_in_attribute_values_too() {
-    assert_eq!(text_of("<a t=\"&lt;&amp;&#65;\"/>", "/a/@t"), "<&A");
+    assert_eq!(text_of("<a t=\"&lt;&amp;&#65;\"/>", Some("t")), "<&A");
 }
 
 #[test]
@@ -138,10 +139,10 @@ fn an_unterminated_end_tag_is_rejected() {
 
 #[test]
 fn both_quote_styles_are_accepted_for_attributes() {
-    assert_eq!(text_of("<a t='single'/>", "/a/@t"), "single");
-    assert_eq!(text_of("<a t=\"double\"/>", "/a/@t"), "double");
+    assert_eq!(text_of("<a t='single'/>", Some("t")), "single");
+    assert_eq!(text_of("<a t=\"double\"/>", Some("t")), "double");
     assert_eq!(
-        text_of("<a t='has \"double\" inside'/>", "/a/@t"),
+        text_of("<a t='has \"double\" inside'/>", Some("t")),
         "has \"double\" inside"
     );
 }

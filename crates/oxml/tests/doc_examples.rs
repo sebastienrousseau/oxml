@@ -228,10 +228,24 @@ fn user_guide_md_line_196() {
     assert_eq!(total.evaluate(&doc).to_str(&doc), "14.49");
 }
 
-/// From `doc/USER-GUIDE.md`, line 210.
+/// From `doc/USER-GUIDE.md`, line 209.
 #[rustfmt::skip]
 #[test]
-fn user_guide_md_line_210() {
+fn user_guide_md_line_209() {
+    use oxml::{Limits, XPath, parse_with};
+    use oxml::xpath::{EvalContext, EvalLimits};
+
+    let limits = Limits::strict();
+    let doc = parse_with("<r><a/><a/></r>", limits).unwrap();
+    let query = XPath::compile_with_limits("count(//a)", &limits).unwrap();
+    let context = EvalContext::new().with_limits(EvalLimits::default());
+    assert_eq!(query.evaluate_with(&doc, &context).unwrap().to_number(&doc), 2.0);
+}
+
+/// From `doc/USER-GUIDE.md`, line 228.
+#[rustfmt::skip]
+#[test]
+fn user_guide_md_line_228() {
     use oxml::{XPath, parse, xpath::Value};
 
     let doc = parse("<r><a/><a/></r>").unwrap();
@@ -241,10 +255,10 @@ fn user_guide_md_line_210() {
     assert!(nodes.to_boolean());              // non-empty
 }
 
-/// From `doc/USER-GUIDE.md`, line 227.
+/// From `doc/USER-GUIDE.md`, line 245.
 #[rustfmt::skip]
 #[test]
-fn user_guide_md_line_227() {
+fn user_guide_md_line_245() {
     use oxml::{XPath, parse};
 
     let doc = parse("<shop><item p='1'>Tea</item><item p='2'>Cocoa</item></shop>").unwrap();
@@ -257,10 +271,10 @@ fn user_guide_md_line_227() {
     assert_eq!(total, 3.0);
 }
 
-/// From `doc/USER-GUIDE.md`, line 245.
+/// From `doc/USER-GUIDE.md`, line 263.
 #[rustfmt::skip]
 #[test]
-fn user_guide_md_line_245() {
+fn user_guide_md_line_263() {
     use oxml::{ErrorKind, parse};
 
     let error = parse("<a></b>").unwrap_err();
@@ -269,10 +283,10 @@ fn user_guide_md_line_245() {
     assert_eq!((line, column), (1, 4));
 }
 
-/// From `doc/USER-GUIDE.md`, line 267.
+/// From `doc/USER-GUIDE.md`, line 285.
 #[rustfmt::skip]
 #[test]
-fn user_guide_md_line_267() {
+fn user_guide_md_line_285() {
     use oxml::{Limits, parse_with};
 
     // Anything from a network.
@@ -285,20 +299,20 @@ fn user_guide_md_line_267() {
     assert!(parse_with("<a><b/></a>", limits).is_ok());
 }
 
-/// From `doc/USER-GUIDE.md`, line 282.
+/// From `doc/USER-GUIDE.md`, line 300.
 #[rustfmt::skip]
 #[test]
-fn user_guide_md_line_282() {
+fn user_guide_md_line_300() {
     use oxml::parse_bytes;
 
     let doc = parse_bytes(b"<?xml version='1.0'?><a>hi</a>").unwrap();
     assert_eq!(doc.text(doc.root()), "hi");
 }
 
-/// From `doc/USER-GUIDE.md`, line 316.
+/// From `doc/USER-GUIDE.md`, line 337.
 #[rustfmt::skip]
 #[test]
-fn user_guide_md_line_316() {
+fn user_guide_md_line_337() {
     use oxml::parse;
 
     let doc = parse("<r><a id='1'/><a id='2'/></r>").unwrap();
@@ -313,10 +327,10 @@ fn user_guide_md_line_316() {
     });
 }
 
-/// From `doc/USER-GUIDE.md`, line 335.
+/// From `doc/USER-GUIDE.md`, line 356.
 #[rustfmt::skip]
 #[test]
-fn user_guide_md_line_335() {
+fn user_guide_md_line_356() {
     use oxml::{XPath, parse};
 
     let doc = parse(r#"<r><a href="one"/><a href="two"/></r>"#).unwrap();
@@ -331,10 +345,10 @@ fn user_guide_md_line_335() {
     assert_eq!(values, ["one", "two"]);
 }
 
-/// From `doc/USER-GUIDE.md`, line 352.
+/// From `doc/USER-GUIDE.md`, line 373.
 #[rustfmt::skip]
 #[test]
-fn user_guide_md_line_352() {
+fn user_guide_md_line_373() {
     use oxml::parse;
 
     let doc = parse("<r><meta/><body>text</body></r>").unwrap();
@@ -344,10 +358,10 @@ fn user_guide_md_line_352() {
     assert_eq!(body.map(|id| doc.text(id)), Some("text".to_string()));
 }
 
-/// From `doc/USER-GUIDE.md`, line 364.
+/// From `doc/USER-GUIDE.md`, line 385.
 #[rustfmt::skip]
 #[test]
-fn user_guide_md_line_364() {
+fn user_guide_md_line_385() {
     use oxml::parse;
 
     fn check(input: &str) -> Result<(), String> {
