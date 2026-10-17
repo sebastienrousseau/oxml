@@ -137,7 +137,9 @@ jobs:
       - name: Format fuzz targets
         run: cargo fmt --manifest-path fuzz/Cargo.toml --check
       - name: Release input contracts
-        run: python3 scripts/test-release-highlights.py
+        run: |
+          python3 scripts/test-release-highlights.py
+          python3 scripts/test-publish-dry-run.py
       - name: Clippy
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Docs
