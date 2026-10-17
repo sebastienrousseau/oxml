@@ -38,6 +38,9 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
   commit before attaching and attesting those exact bytes. Source
   identity uses Cargo's `git.sha1` metadata field; dirty and mismatched
   archives are rejected.
+- **The laptop release helper cannot upload.** `scripts/publish.sh`
+  stops after a locked dry run, keeping publication on the signed-tag
+  Trusted Publishing workflow with artifact attestations.
 
 ### Changed
 
