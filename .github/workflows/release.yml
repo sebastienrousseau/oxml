@@ -97,7 +97,7 @@ jobs:
         id: published
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          if curl -sf -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
+          if curl -sf --connect-timeout 10 --max-time 20 -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
             echo "oxml $tag is already on crates.io; the registry step is skipped"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -134,12 +134,12 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME#v}"
           for i in $(seq 1 30); do
-            if curl -sf -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
+            if curl -sf --connect-timeout 10 --max-time 20 -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
               echo "oxml $tag is live"; exit 0
             fi
             echo "not indexed yet ($i/30)"; sleep 10
           done
-          echo "::error::oxml $tag did not appear within five minutes"
+          echo "::error::oxml $tag did not appear after 30 checks"
           exit 1
 
   release-page:
@@ -161,7 +161,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: 1.98.0
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-cyclonedx@0.5.9
 

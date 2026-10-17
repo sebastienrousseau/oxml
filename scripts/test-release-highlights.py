@@ -28,6 +28,79 @@ def vcs_check_command() -> str:
     raise AssertionError("release workflow has no package source-commit check")
 
 
+def step_command(name: str) -> str:
+    workflow = Path(__file__).resolve().parent.parent / ".github/workflows/release.yml"
+    step = workflow.read_text().split(f"      - name: {name}\n", 1)[1]
+    body = step.split("        run: |\n", 1)[1]
+    lines = []
+    for line in body.splitlines():
+        if line.strip() and not line.startswith("          "):
+            break
+        lines.append(line[10:])
+    return "\n".join(lines)
+
+
+def run_registry_probe(
+    name: str, curl_exit: int
+) -> tuple[subprocess.CompletedProcess[str], list[str], str]:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        calls = root / "calls"
+        output = root / "output"
+        for name_, source in {
+            "curl": '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_CALLS"\n'
+                    'exit "$TEST_CURL_EXIT"\n',
+            "sleep": "#!/bin/sh\nexit 0\n",
+        }.items():
+            tool = root / name_
+            tool.write_text(source)
+            tool.chmod(0o755)
+        result = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", step_command(name)],
+            cwd=root, capture_output=True, text=True, check=False, timeout=10,
+            env={"PATH": str(root) + os.pathsep + os.defpath,
+                 "GITHUB_REF_NAME": "v0.0.11", "GITHUB_OUTPUT": str(output),
+                 "TEST_CALLS": str(calls), "TEST_CURL_EXIT": str(curl_exit)},
+        )
+        return result, calls.read_text().splitlines(), (
+            output.read_text() if output.exists() else ""
+        )
+
+
+class RegistryProbeBounds(unittest.TestCase):
+    def assert_bounded(self, calls: list[str], count: int) -> None:
+        self.assertEqual(len(calls), count)
+        for call in calls:
+            args = call.split()
+            self.assertIn("--connect-timeout", args)
+            self.assertEqual(args[args.index("--connect-timeout") + 1], "10")
+            self.assertIn("--max-time", args)
+            self.assertEqual(args[args.index("--max-time") + 1], "20")
+
+    def test_publication_lookup_preserves_skip_and_retry_behavior(self) -> None:
+        for code, expected in [(0, "skip=true\n"), (28, "skip=false\n")]:
+            with self.subTest(curl_exit=code):
+                result, calls, output = run_registry_probe(
+                    "Is this version already published?", code
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output, expected)
+                self.assert_bounded(calls, 1)
+
+    def test_index_success_stops_after_one_bounded_probe(self) -> None:
+        result, calls, _ = run_registry_probe("Confirm it is on crates.io", 0)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("oxml 0.0.11 is live", result.stdout)
+        self.assert_bounded(calls, 1)
+
+    def test_index_exhaustion_fails_with_an_accurate_attempt_count(self) -> None:
+        result, calls, _ = run_registry_probe("Confirm it is on crates.io", 28)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("did not appear after 30 checks", result.stdout)
+        self.assertNotIn("within five minutes", result.stdout)
+        self.assert_bounded(calls, 30)
+
+
 class ReleaseHighlights(unittest.TestCase):
     def test_heading_and_last_bullet_survive_once(self) -> None:
         expected = "## Highlights ⭐️\n\n* **First**: retained.\n* **Last**: retained."

@@ -119,6 +119,54 @@ fn literals_and_numbers_render_as_the_parser_reads_them() {
 }
 
 #[test]
+fn overflowing_numbers_preserve_tree_and_evaluation() {
+    let doc = oxml::parse("<r><x/><x/></r>").unwrap();
+    for digits in [308, 309, 400] {
+        let number = "9".repeat(digits);
+        if digits > 308 {
+            assert_eq!(round_trips(&number), format!("1{}", "0".repeat(309)));
+        }
+        for expr in [
+            number.clone(),
+            format!("-{number}"),
+            format!("--(-{number})"),
+            format!("1 + {number} + 2"),
+            format!("{number} div {number}"),
+            format!("string({number})"),
+            format!("{number} > 1"),
+            format!("/r/x[position() < {number}]"),
+            format!("(/r/x)[position() < {number}]"),
+        ] {
+            let rendered = round_trips(&expr);
+            let original = XPath::compile(&expr).unwrap().evaluate(&doc);
+            let restored = XPath::compile(&rendered).unwrap().evaluate(&doc);
+            match (&original, &restored) {
+                (
+                    oxml::xpath::Value::Number(a),
+                    oxml::xpath::Value::Number(b),
+                ) => {
+                    assert!(
+                        a.to_bits() == b.to_bits()
+                            || (a.is_nan() && b.is_nan()),
+                        "`{expr}` changed numeric value"
+                    );
+                }
+                _ => assert_eq!(original, restored, "`{expr}` changed value"),
+            }
+        }
+    }
+    for number in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+        let rendered = oxml::xpath::Expr::Number(number).to_string();
+        let restored = XPath::compile(&rendered).unwrap().evaluate(&doc);
+        let restored = restored.to_number(&doc);
+        assert!(
+            number.to_bits() == restored.to_bits()
+                || (number.is_nan() && restored.is_nan())
+        );
+    }
+}
+
+#[test]
 fn node_tests_functions_filters_and_variables_render() {
     assert_eq!(
         round_trips("//text()"),
