@@ -44,6 +44,10 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Changed
 
+- Align unpublished conformance/fuzz packages at 0.0.11 while keeping
+  them non-publishable, and refresh the lockstep readiness assessment.
+- Match example coverage to the exact source file rather than a sibling
+  file with the same suffix; exercise false-pass/failure cases in CI.
 - **Breaking: the MSRV is now Rust 1.89.0** (was 1.86.0), one floor
   shared with the maintainer's other Rust crates.
 - **Exhaustive matches on `EvalError` must handle `LimitExceeded`.**
