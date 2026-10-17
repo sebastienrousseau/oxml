@@ -14,6 +14,10 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Security
 
+- Pin Scorecard execution by verified container digest and disable public
+  results publication. Retain SARIF artifacts, categorize posture findings
+  in GitHub code scanning, and display workflow status instead of a score.
+
 - Permit NCSA only for libfuzzer-sys 0.4.13 in the fuzz workspace;
   retain the root license policy and check both graphs in CI.
 
