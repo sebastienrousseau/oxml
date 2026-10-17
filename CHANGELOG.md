@@ -14,6 +14,9 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Security
 
+- Permit NCSA only for libfuzzer-sys 0.4.13 in the fuzz workspace;
+  retain the root license policy and check both graphs in CI.
+
 - **DTD groups and conditional sections have a nesting limit.**
   `Limits::max_dtd_depth` bounds both; content-model groups use an
   iterative stack instead of recursion proportional to hostile input.

@@ -47,6 +47,7 @@ step() {
 # a `git add -A` will commit it. `.gitignore` does not help once a path
 # is tracked, and CI then cannot create its build directory on top of
 # it -- every build job fails until it is removed.
+step "fuzz license policy" python3 scripts/test-fuzz-license-policy.py
 step "example coverage contract" python3 scripts/test-example-coverage.py
 step "no tracked build dir" bash -c '! git ls-files | grep -qx target'
 step "fmt"            cargo "+$TOOLCHAIN" fmt --all --check
