@@ -302,13 +302,17 @@ fn literal(s: &str, f: &mut Formatter<'_>) -> fmt::Result {
 /// round-trip form, which never uses an exponent, so `0.1` is `0.1`
 /// and not `0.1000000000000000055511151231257827`. The values the
 /// grammar cannot spell are written as the expressions that produce
-/// them.
+/// them, except infinity: an overflowing decimal keeps the number
+/// node intact when reparsed instead of introducing a division node.
 fn number(n: f64, f: &mut Formatter<'_>) -> fmt::Result {
     if n.is_nan() {
         return f.write_str("(0 div 0)");
     }
     if n.is_infinite() {
-        return f.write_str(if n > 0.0 { "(1 div 0)" } else { "(-1 div 0)" });
+        let sign = if n.is_sign_negative() { "-" } else { "" };
+        // 10^309 exceeds f64::MAX. XPath has no exponent syntax, so
+        // spell it in full, with fixed width and no temporary string.
+        return write!(f, "{sign}{:0<310}", "1");
     }
     if n.is_sign_negative() {
         return write!(f, "-{}", -n);

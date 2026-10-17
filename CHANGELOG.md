@@ -94,6 +94,10 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Fixed
 
+- **XPath infinity rendering preserves numeric syntax.** Overflowing
+  decimal literals render as a fixed overflowing decimal instead of
+  `(1 div 0)`, so recompilation preserves the syntax tree. The strict
+  fuzz assertion is unchanged; evaluation still follows IEEE 754.
 - **XPath rendering groups root-path operands.** A root slash followed
   by `*` or a word operator could absorb that operator as a path step,
   changing or invalidating the expression on recompilation. Grouping
