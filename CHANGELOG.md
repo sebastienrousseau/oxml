@@ -44,6 +44,9 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Changed
 
+- Bound release publication/index probes to 10 seconds for connection
+  setup and 20 seconds total per request. Report indexing exhaustion
+  after 30 checks instead of claiming a five-minute window.
 - Align unpublished conformance/fuzz packages at 0.0.11 while keeping
   them non-publishable, and refresh the lockstep readiness assessment.
 - Match example coverage to the exact source file rather than a sibling

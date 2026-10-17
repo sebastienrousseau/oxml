@@ -97,7 +97,7 @@ jobs:
         id: published
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          if curl -sf -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
+          if curl -sf --connect-timeout 10 --max-time 20 -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
             echo "oxml $tag is already on crates.io; the registry step is skipped"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -134,12 +134,12 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME#v}"
           for i in $(seq 1 30); do
-            if curl -sf -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
+            if curl -sf --connect-timeout 10 --max-time 20 -H "User-Agent: oxml release workflow (https://github.com/sebastienrousseau/oxml)" "https://crates.io/api/v1/crates/oxml/$tag" >/dev/null; then
               echo "oxml $tag is live"; exit 0
             fi
             echo "not indexed yet ($i/30)"; sleep 10
           done
-          echo "::error::oxml $tag did not appear within five minutes"
+          echo "::error::oxml $tag did not appear after 30 checks"
           exit 1
 
   release-page:
