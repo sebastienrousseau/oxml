@@ -89,7 +89,7 @@ version = "0.0.11"
 
 [[package]]
 name = "oxml-fuzz"
-version = "0.0.0"
+version = "0.0.11"
 dependencies = [
  "arbitrary",
  "libfuzzer-sys",

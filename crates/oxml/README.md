@@ -12,7 +12,7 @@
   <a href="https://crates.io/crates/oxml"><img src="https://img.shields.io/crates/v/oxml.svg?style=for-the-badge&color=fc8d62&logo=rust" alt="Crates.io" /></a>
   <a href="https://docs.rs/oxml"><img src="https://img.shields.io/badge/docs.rs-oxml-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" alt="Docs.rs" /></a>
   <a href="https://lib.rs/crates/oxml"><img src="https://img.shields.io/badge/lib.rs-oxml-orange.svg?style=for-the-badge" alt="lib.rs" /></a>
-  <a href="https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/oxml"><img src="https://img.shields.io/ossf-scorecard/github.com/sebastienrousseau/oxml?style=for-the-badge&label=OpenSSF%20Scorecard&logo=openssf" alt="OpenSSF Scorecard" /></a>
+  <a href="https://github.com/sebastienrousseau/oxml/actions/workflows/scorecard.yml"><img src="https://img.shields.io/github/actions/workflow/status/sebastienrousseau/oxml/scorecard.yml?style=for-the-badge&label=Scorecard%20scan&logo=openssf" alt="Scorecard scan workflow status" /></a>
   <a href="https://www.bestpractices.dev/projects/14278"><img src="https://img.shields.io/cii/level/14278?style=for-the-badge&label=OpenSSF%20Best%20Practices&logo=openssf" alt="OpenSSF Best Practices" /></a>
 </p>
 
@@ -336,7 +336,7 @@ Two architectural choices motivate the design:
 
 - **All 2,557** decided W3C conformance tests pass, with
   98.9% of the 2,585-test suite reaching a decision and **zero panics**
-- 668 tests and 35 doctests; line coverage gated at a 95% floor in CI
+- 669 tests and 35 doctests; line coverage gated at a 95% floor in CI
 - Eight fuzz targets, Miri, property tests, and a feature powerset build
 
 **Not here:** XSD validation (that is [`xmlschema`](https://github.com/sebastienrousseau/xmlschema)),
@@ -1207,7 +1207,7 @@ vulnerability.
 ## Development
 
 ```bash
-cargo test --workspace --all-features   # 668 tests, plus 35 doctests
+cargo test --workspace --all-features   # 669 tests, plus 35 doctests
 cargo test --no-default-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check
@@ -1219,6 +1219,11 @@ CI runs all of the above on Linux, macOS and Windows, plus an MSRV
 build and a check that `#![forbid(unsafe_code)]` is still present.
 
 ## Security
+
+Scorecard scans use a digest-pinned upstream image. Results are retained
+as CI artifacts and repository posture findings in GitHub code scanning,
+not published to Scorecard's public service. The badge shows workflow
+status, not a security score; a successful scan can still report findings.
 
 See [SECURITY.md](https://github.com/sebastienrousseau/oxml/blob/main/SECURITY.md) for reporting and the full threat model.
 

@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "oxml-conformance"
-version = "0.0.0"
+version = "0.0.11"
 dependencies = [
  "oxml",
  "sha2",

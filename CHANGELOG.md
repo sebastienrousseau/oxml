@@ -14,6 +14,13 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Security
 
+- Pin Scorecard execution by verified container digest and disable public
+  results publication. Retain SARIF artifacts, categorize posture findings
+  in GitHub code scanning, and display workflow status instead of a score.
+
+- Permit NCSA only for libfuzzer-sys 0.4.13 in the fuzz workspace;
+  retain the root license policy and check both graphs in CI.
+
 - **DTD groups and conditional sections have a nesting limit.**
   `Limits::max_dtd_depth` bounds both; content-model groups use an
   iterative stack instead of recursion proportional to hostile input.
@@ -44,6 +51,13 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Changed
 
+- Bound release publication/index probes to 10 seconds for connection
+  setup and 20 seconds total per request. Report indexing exhaustion
+  after 30 checks instead of claiming a five-minute window.
+- Align unpublished conformance/fuzz packages at 0.0.11 while keeping
+  them non-publishable, and refresh the lockstep readiness assessment.
+- Match example coverage to the exact source file rather than a sibling
+  file with the same suffix; exercise false-pass/failure cases in CI.
 - **Breaking: the MSRV is now Rust 1.89.0** (was 1.86.0), one floor
   shared with the maintainer's other Rust crates.
 - **Exhaustive matches on `EvalError` must handle `LimitExceeded`.**
@@ -84,6 +98,10 @@ the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
 ### Fixed
 
+- **XPath infinity rendering preserves numeric syntax.** Overflowing
+  decimal literals render as a fixed overflowing decimal instead of
+  `(1 div 0)`, so recompilation preserves the syntax tree. The strict
+  fuzz assertion is unchanged; evaluation still follows IEEE 754.
 - **XPath rendering groups root-path operands.** A root slash followed
   by `*` or a word operator could absorb that operator as a path step,
   changing or invalidating the expression on recompilation. Grouping
