@@ -140,6 +140,66 @@ class RegistrySourceMetadata(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode == 0, valid, result.stderr)
 
+    def test_package_sbom_and_checksums_step_executes(self) -> None:
+        cmd = step_command("Package, SBOM and checksums").replace(
+            "${{ needs.preflight.outputs.version }}", "0.0.11"
+        )
+        self.assertNotIn("cargo cyclonedx -p", cmd)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "crates/oxml").mkdir(parents=True)
+            expected_sha = "a" * 40
+            archive = root / "archive.crate"
+            vcs_dir = root / "oxml-0.0.11"
+            vcs_dir.mkdir()
+            (vcs_dir / ".cargo_vcs_info.json").write_text(
+                json.dumps({"git": {"sha1": expected_sha}})
+            )
+            subprocess.run(
+                ["tar", "-czf", str(archive), "oxml-0.0.11/.cargo_vcs_info.json"],
+                cwd=root, check=True,
+            )
+            cksum = subprocess.check_output(
+                ["shasum", "-a", "256", str(archive)], text=True
+            ).split()[0]
+            curl_script = (
+                "#!/bin/sh\n"
+                'case "$*" in\n'
+                '  *--output*) cp "$TEST_ARCHIVE" "dist/oxml-0.0.11.crate" ;;\n'
+                f'  *) printf \'{{"version":{{"crate":"oxml","num":"0.0.11","checksum":"{cksum}"}}}}\' ;;\n'
+                "esac\n"
+            )
+            cargo_script = (
+                "#!/bin/sh\n"
+                'for arg in "$@"; do [ "$arg" = "-p" ] && exit 2; done\n'
+                'printf "{}" > crates/oxml/oxml-0.0.11.cdx.json\n'
+            )
+            sha256sum_script = (
+                "#!/bin/sh\n"
+                'if [ "${1:-}" = "--check" ]; then exec shasum -a 256 -c; '
+                'else exec shasum -a 256 "$@"; fi\n'
+            )
+            for name, src in [
+                ("curl", curl_script),
+                ("cargo", cargo_script),
+                ("sha256sum", sha256sum_script),
+            ]:
+                tool = root / name
+                tool.write_text(src)
+                tool.chmod(0o755)
+            result = subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", cmd],
+                cwd=root, capture_output=True, text=True, check=False,
+                env={
+                    "PATH": str(root) + os.pathsep + os.environ.get("PATH", os.defpath),
+                    "GITHUB_SHA": expected_sha,
+                    "TEST_ARCHIVE": str(archive),
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("oxml-0.0.11.cdx.json", result.stdout)
+            self.assertIn("oxml-0.0.11.crate", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
