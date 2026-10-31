@@ -47,7 +47,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.98.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Test
         run: cargo test --all-features --locked
       - name: Test without default features
@@ -109,10 +109,10 @@ jobs:
         with:
           toolchain: nightly-2026-10-13
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-llvm-cov@0.9.1
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # cargo-llvm-cov has --fail-under-lines but no branch equivalent,
       # so the floor is enforced by reading the summary. Branch
       # coverage is the weaker of the two measures precisely because it
@@ -139,7 +139,7 @@ jobs:
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Format
         run: cargo fmt --all --check
       - name: Format fuzz targets
@@ -168,7 +168,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: The MSRV toolchain is the one in use
         env:
           RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
@@ -207,7 +207,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.98.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # A short measurement: this proves the benchmarks still run and
       # produce numbers, without pretending a shared runner gives
       # trustworthy timings.
@@ -232,7 +232,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.98.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # Each example runs with the features its `required-features`
       # names, read from Cargo metadata so the list cannot drift from
       # Cargo.toml. A bare `cargo run --example` refuses any example
@@ -259,10 +259,10 @@ jobs:
         with:
           toolchain: 1.98.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-llvm-cov@0.9.1
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Cache the conformance suite
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -296,10 +296,10 @@ jobs:
         with:
           toolchain: 1.98.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-llvm-cov@0.9.1
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # The README says the examples cover the public API. Left to
       # itself that claim decays quietly -- a function added in one
       # commit and documented in none looks, from outside, exactly like
@@ -341,7 +341,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.98.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Install rust-code-analysis-cli
         run: cargo install rust-code-analysis-cli --version 0.0.25 --locked
       # Per-function ceilings: cyclomatic 10, cognitive 15, Halstead
@@ -388,7 +388,7 @@ jobs:
         with:
           toolchain: 1.98.0
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # `cargo check --no-default-features` on the host proves nothing:
       # the host target still has std, so std-only calls compile. Only a
       # target without std catches them. This is how `xpath` silently
@@ -428,10 +428,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.98.0
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
           tool: cargo-hack@0.6.45
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # Every combination, so a new feature cannot rot a configuration
       # nobody builds by hand.
       #
@@ -453,7 +453,7 @@ jobs:
         with:
           toolchain: 1.98.0
           targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf,aarch64-unknown-none
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # Every no_std feature combination on every bare-metal target,
       # plus a grep for `std::` that is not behind its feature gate.
       # The builds above catch a std-only call in code they compile;
@@ -481,7 +481,7 @@ jobs:
       # toolchain, giving `error: no such command: fuzz`. Installing
       # with the same cargo that runs it removes the question.
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # Seeds matter more than run time. Starting cold, libFuzzer spends
       # almost the whole budget on inputs that are not valid XML — a run
       # from an empty corpus reached essentially no coverage, while the
@@ -539,7 +539,7 @@ jobs:
         with:
           toolchain: nightly-2026-10-13
           components: miri
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # The parser forbids unsafe code; dependencies and the standard
       # library remain part of its memory-safety trust boundary. Miri
       # checks executed dependency code as well as our overflow and
@@ -562,7 +562,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.98.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Cache the suite
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

@@ -85,11 +85,11 @@ dependencies = [
 
 [[package]]
 name = "oxml"
-version = "0.0.11"
+version = "0.0.12"
 
 [[package]]
 name = "oxml-fuzz"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "arbitrary",
  "libfuzzer-sys",
