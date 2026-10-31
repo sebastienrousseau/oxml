@@ -10,6 +10,29 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [0.0.12] - 2026-10-31
+
+### Fixed
+
+- Remove the invalid backslash inside the single-quoted `jq` filter and
+  drop the unsupported `-p` flag from `cargo cyclonedx` in the
+  post-publish `release-page` job, pinned by an executable regression
+  contract (`scripts/test-release-highlights.py`).
+
+### Changed
+
+- Align the publishable core package, conformance helper, and fuzz
+  harness at `0.0.12`, and refresh root and fuzz `Cargo.lock` files.
+- Include empty `supply-chain/branch-protection` and
+  `supply-chain/online-scm` SARIF configurations on pull-request
+  Scorecard runs so GitHub Code Scanning compares all three Scorecard
+  categories against `main`.
+- Advance reviewed `dtolnay/rust-toolchain`, `Swatinem/rust-cache`,
+  `taiki-e/install-action` (v2.88.0), `github/codeql-action` (v4.39.1),
+  and `rust-lang/crates-io-auth-action` (v1.0.6) workflow revisions, and
+  update `tokio` (1.54.1), `roxmltree` (0.21.2), and `proptest` (1.12.0)
+  in `Cargo.lock`.
+
 ## [0.0.11] - 2026-10-17
 
 ### Security

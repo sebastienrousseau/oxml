@@ -62,11 +62,14 @@ class ScorecardPolicy(unittest.TestCase):
     def test_categorized_code_scanning(self):
         step = self.step('Upload posture results to code scanning')
         self.assertIn('uses: github/codeql-action/upload-sarif@'
-                      '24c54180a607b1449ed407dd24f251e4e9147c8d', step)
+                      '9b3254085494b55a0f7c4c2b3d2d52cc712ce370', step)
         self.assertIn('sarif_file: results.sarif', step)
         self.assertIn('category: /tool:scorecard', step)
         self.assertIn("github.event_name != 'pull_request' || "
                       'github.event.pull_request.head.repo.fork == false', step)
+        sarif_step = self.step('Ensure all Scorecard SARIF configurations are present')
+        self.assertIn('supply-chain/branch-protection', sarif_step)
+        self.assertIn('supply-chain/online-scm', sarif_step)
 
     def test_badge_tracks_this_workflow(self):
         readme = (ROOT / 'README.md').read_text()
