@@ -10,6 +10,18 @@ core is at `0.0.X` then so is every satellite, so there is never a
 compatibility table to consult. Versions advance in `0.0.1` steps along
 the `0.0.x` line; `0.1.0` follows `0.0.999`.
 
+## [0.0.13] - 2026-10-31
+
+### Security
+
+- Enforce `cargo audit --deny warnings` across both `Cargo.lock` and
+  `fuzz/Cargo.lock` in `.github/workflows/security.yml`.
+
+### Changed
+
+- Align the publishable core package, conformance helper, and fuzz
+  harness at `0.0.13` in lockstep with `xmlschema` and `oxml-mcp`.
+
 ## [0.0.12] - 2026-10-31
 
 ### Fixed

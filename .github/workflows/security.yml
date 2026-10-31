@@ -33,9 +33,9 @@ jobs:
         # time, so two runs of the same commit can disagree.
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit
-        run: cargo audit
+        run: cargo audit --deny warnings
       - name: Audit fuzz workspace
-        run: cargo audit --file fuzz/Cargo.lock
+        run: cargo audit --file fuzz/Cargo.lock --deny warnings
 
   deny:
     name: cargo deny

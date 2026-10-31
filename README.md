@@ -37,7 +37,7 @@
 
 - [One-minute migration](#one-minute-migration) — name-for-name mapping from `sxd-xpath`, `roxmltree`, `quick-xml`, `libxml`
 - [Why this approach?](#why-this-approach) — design rationale
-- [Capabilities in 0.0.12](#capabilities-in-0012) — release inventory
+- [Capabilities in 0.0.13](#capabilities-in-0013) — release inventory
 - [Ecosystem comparison](#ecosystem-comparison) — what each crate does and does not do
 - [Benchmarks](#benchmarks) — measured, with the method stated
 - [Features](#features) — cargo feature flags
@@ -77,14 +77,14 @@
 
 ```toml
 [dependencies]
-oxml = "0.0.12"
+oxml = "0.0.13"
 ```
 
 Parsing only, without the XPath engine:
 
 ```toml
 [dependencies]
-oxml = { version = "0.0.12", default-features = false, features = ["std"] }
+oxml = { version = "0.0.13", default-features = false, features = ["std"] }
 ```
 
 From source:
@@ -244,7 +244,7 @@ Two architectural choices motivate the design:
    are usually well-vetted, but their existence makes a
    security-conscious downstream audit meaningfully harder.
 
-## Capabilities in 0.0.12
+## Capabilities in 0.0.13
 
 **Parsing**
 
